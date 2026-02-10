@@ -1,0 +1,141 @@
+# =============================================================================
+# MongoDB Services for the Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+# This manifest defines two Kubernetes Service resources for the MongoDB
+# StatefulSet deployment:
+#
+# 1. Headless Service ("mongodb") — Provides stable DNS names for each
+#    StatefulSet pod, enabling MongoDB replica set member discovery:
+#      - mongodb-0.mongodb.synthetic-erp-platform.svc.cluster.local
+#      - mongodb-1.mongodb.synthetic-erp-platform.svc.cluster.local
+#      - mongodb-2.mongodb.synthetic-erp-platform.svc.cluster.local
+#
+# 2. Client Service ("mongodb-read") — Standard ClusterIP service providing
+#    a single DNS endpoint for read-preference routing and Prometheus
+#    metrics scraping via the MongoDB exporter sidecar.
+#
+# Backend services connect using the replica set connection string:
+#   mongodb://mongodb-0.mongodb,mongodb-1.mongodb,mongodb-2.mongodb:27017/?replicaSet=rs0
+#
+# Collections served: generation_profiles, statistical_profiles,
+#   schema_definitions, audit_logs, tenant_configurations
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Headless Service — Stable DNS for MongoDB StatefulSet Pods
+# -----------------------------------------------------------------------------
+# A headless Service (clusterIP: None) is required by the MongoDB StatefulSet
+# to assign each pod a stable network identity. This is critical for:
+#   - MongoDB replica set initialization (rs.initiate)
+#   - Replica set member discovery and election
+#   - Direct pod-to-pod communication for replication
+#   - Ordered pod startup and shutdown via OrderedReady policy
+#
+# The StatefulSet's spec.serviceName must reference this Service name ("mongodb").
+# publishNotReadyAddresses is set to true so that DNS records are available
+# even before pods pass readiness checks, which is required during initial
+# replica set bootstrap when pods need to discover each other.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: synthetic-erp-platform
+  labels:
+    app: mongodb
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "7.0"
+  annotations:
+    description: >-
+      Headless Service for MongoDB 7.0 StatefulSet providing stable DNS names
+      for replica set members. Used by all backend microservices for metadata
+      persistence across generation_profiles, statistical_profiles,
+      schema_definitions, audit_logs, and tenant_configurations collections.
+spec:
+  # clusterIP: None makes this a headless Service, which is required for
+  # StatefulSet pod identity. Kubernetes DNS will create A records for each
+  # pod in the format: <pod-name>.<service-name>.<namespace>.svc.cluster.local
+  clusterIP: None
+  # Selector matches pods managed by the MongoDB StatefulSet
+  selector:
+    app: mongodb
+  ports:
+    - name: mongodb
+      port: 27017
+      targetPort: 27017
+      protocol: TCP
+  # publishNotReadyAddresses must be true for StatefulSet headless services.
+  # During initial deployment, MongoDB pods need to discover each other to form
+  # the replica set (rs.initiate), but they cannot become "ready" until the
+  # replica set is initialized — creating a circular dependency. This flag
+  # ensures DNS records are published for pods regardless of readiness state,
+  # breaking the deadlock and allowing replica set bootstrapping.
+  publishNotReadyAddresses: true
+  # No session affinity needed — the MongoDB driver handles server selection
+  # and connection routing based on the replica set topology.
+  sessionAffinity: None
+
+---
+
+# -----------------------------------------------------------------------------
+# 2. Client Service — ClusterIP for Read-Preference Routing and Monitoring
+# -----------------------------------------------------------------------------
+# A standard ClusterIP Service that provides a single stable endpoint
+# (mongodb-read.synthetic-erp-platform.svc.cluster.local:27017) for backend
+# services that prefer read-from-secondary routing. This service load-balances
+# traffic across all healthy MongoDB replica set members.
+#
+# This service also exposes the MongoDB exporter metrics endpoint (port 9216)
+# for Prometheus scraping, enabling monitoring of MongoDB performance metrics
+# such as operations per second, connection counts, replication lag, and
+# WiredTiger cache utilization.
+#
+# Usage:
+#   - Backend services can use this for read-heavy workloads with
+#     readPreference=secondaryPreferred
+#   - Prometheus scrapes metrics via the mongodb-exporter sidecar on port 9216
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-read
+  namespace: synthetic-erp-platform
+  labels:
+    app: mongodb
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "7.0"
+  annotations:
+    # Prometheus scraping annotations for the MongoDB exporter sidecar
+    # The exporter runs alongside mongod and exposes metrics on port 9216
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9216"
+    prometheus.io/path: "/metrics"
+    description: >-
+      Standard ClusterIP Service for MongoDB read-preference routing and
+      Prometheus metrics collection. Provides a load-balanced endpoint across
+      all MongoDB replica set members for secondary-preferred reads.
+spec:
+  type: ClusterIP
+  # Selector matches the same pods as the headless service
+  selector:
+    app: mongodb
+  ports:
+    # Primary MongoDB wire protocol port for database operations
+    - name: mongodb
+      port: 27017
+      targetPort: 27017
+      protocol: TCP
+    # MongoDB exporter metrics port for Prometheus scraping
+    # This port is served by the mongodb-exporter sidecar container
+    # defined in the StatefulSet manifest
+    - name: metrics
+      port: 9216
+      targetPort: 9216
+      protocol: TCP
+  sessionAffinity: None
