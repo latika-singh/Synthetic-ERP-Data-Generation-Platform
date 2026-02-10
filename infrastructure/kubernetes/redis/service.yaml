@@ -1,0 +1,162 @@
+# =============================================================================
+# Redis Services for the Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+# This manifest defines two Kubernetes Service resources for the Redis
+# StatefulSet deployment:
+#
+# 1. Headless Service ("redis") — Provides stable DNS names for each
+#    StatefulSet pod, enabling ordered pod addressing and stable network
+#    identities required by Kubernetes StatefulSets:
+#      - redis-0.redis.synthetic-erp-platform.svc.cluster.local
+#      - redis-1.redis.synthetic-erp-platform.svc.cluster.local (HA mode)
+#      - redis-2.redis.synthetic-erp-platform.svc.cluster.local (HA mode)
+#
+# 2. Client Service ("redis-read") — Standard ClusterIP service providing
+#    a single DNS endpoint for general client connectivity from backend
+#    services and Prometheus metrics scraping via the Redis exporter sidecar.
+#
+# Backend services connect using:
+#   redis://:<password>@redis-0.redis:6379/0
+# Or via the redis-read service for load-balanced access:
+#   redis://:<password>@redis-read:6379/0
+#
+# Consumer Services:
+#   - API Gateway: Tiered rate limiting (60/300/1000 req/min) via Redis-backed
+#     counters, session caching, and API response caching
+#   - Generation Engine: Real-time job progress tracking via Redis pub/sub
+#     and key-value state, checkpoint/resume support for long-running jobs
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Headless Service — Stable DNS for Redis StatefulSet Pods
+# -----------------------------------------------------------------------------
+# A headless Service (clusterIP: None) is required by the Redis StatefulSet
+# to assign each pod a stable network identity. This is critical for:
+#   - Stable pod DNS names (redis-0.redis, redis-1.redis, etc.)
+#   - Ordered pod startup and shutdown via OrderedReady policy
+#   - Direct pod addressing for Redis Sentinel or Cluster mode in production
+#   - Consistent network identity across pod rescheduling
+#
+# The StatefulSet's spec.serviceName must reference this Service name ("redis").
+# publishNotReadyAddresses is set to true so that DNS records are available
+# even before pods pass readiness checks, which is required during initial
+# startup when the Redis instance is still loading data from disk (AOF/RDB).
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: synthetic-erp-platform
+  labels:
+    app: redis
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "7"
+  annotations:
+    description: >-
+      Headless Service for Redis 7.x StatefulSet providing stable DNS names
+      for cache pods. Used by the API Gateway for tiered rate limiting
+      (60/300/1000 req/min) and session caching, and by the Generation Engine
+      for Redis-backed job progress tracking and checkpoint/resume state.
+spec:
+  # clusterIP: None makes this a headless Service, which is required for
+  # StatefulSet pod identity. Kubernetes DNS will create A records for each
+  # pod in the format: <pod-name>.<service-name>.<namespace>.svc.cluster.local
+  # For example: redis-0.redis.synthetic-erp-platform.svc.cluster.local
+  clusterIP: None
+  # Selector matches pods managed by the Redis StatefulSet
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+  # publishNotReadyAddresses must be true for StatefulSet headless services.
+  # During initial deployment or pod restart, the Redis instance may take time
+  # to load its AOF/RDB snapshot from persistent storage before becoming ready.
+  # This flag ensures DNS records are published for pods regardless of readiness
+  # state, allowing clients to resolve pod addresses during startup sequences
+  # and enabling Redis Sentinel/Cluster bootstrapping in production HA mode.
+  publishNotReadyAddresses: true
+  # No session affinity needed — backend services connect directly to specific
+  # Redis pods (redis-0) for primary writes or use the redis-read service
+  # for load-balanced read access.
+  sessionAffinity: None
+
+---
+
+# -----------------------------------------------------------------------------
+# 2. Client Service — ClusterIP for General Client Access and Monitoring
+# -----------------------------------------------------------------------------
+# A standard ClusterIP Service that provides a single stable endpoint
+# (redis-read.synthetic-erp-platform.svc.cluster.local:6379) for backend
+# services that need general Redis connectivity without targeting a specific
+# pod. This service load-balances traffic across all healthy Redis pods.
+#
+# This service also exposes the Redis exporter metrics endpoint (port 9121)
+# for Prometheus scraping, enabling monitoring of Redis performance metrics
+# such as connected clients, memory usage, keyspace hits/misses, commands
+# per second, and replication status.
+#
+# Consumer Service Usage:
+#   - API Gateway:
+#     * Tiered rate limiting using Redis-backed sliding window counters
+#       (60 req/min developer, 300 req/min standard, 1000 req/min premium)
+#     * Session caching for authenticated user contexts
+#     * API response caching for frequently accessed resources (50ms cached
+#       vs 100ms uncached response times)
+#   - Generation Engine:
+#     * Real-time job progress tracking via Redis key-value state and pub/sub
+#     * Checkpoint/resume support for long-running generation jobs
+#     * Batch processing buffer management and status updates
+#   - Prometheus scrapes metrics via the redis-exporter sidecar on port 9121
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-read
+  namespace: synthetic-erp-platform
+  labels:
+    app: redis
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "7"
+  annotations:
+    # Prometheus scraping annotations for the Redis exporter sidecar
+    # The exporter runs alongside Redis and exposes metrics on port 9121
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9121"
+    prometheus.io/path: "/metrics"
+    description: >-
+      Standard ClusterIP Service for Redis client connectivity and Prometheus
+      metrics collection. Provides a load-balanced endpoint across all Redis
+      pods for backend services requiring caching, rate limiting, session
+      management, and job progress tracking.
+spec:
+  type: ClusterIP
+  # Selector matches the same pods as the headless service
+  selector:
+    app: redis
+  ports:
+    # Primary Redis protocol port for cache operations
+    # All backend services connect on this port for key-value operations,
+    # pub/sub messaging, and session/rate-limit data
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+    # Redis exporter metrics port for Prometheus scraping
+    # This port is served by the redis-exporter sidecar container
+    # defined in the StatefulSet manifest, exposing Redis server metrics
+    # including memory usage, connected clients, keyspace stats, and
+    # command latency histograms
+    - name: metrics
+      port: 9121
+      targetPort: 9121
+      protocol: TCP
+  sessionAffinity: None
