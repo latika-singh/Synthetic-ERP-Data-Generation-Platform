@@ -1,0 +1,456 @@
+# =============================================================================
+# Provisioning Service — Kubernetes Deployment Manifest
+# =============================================================================
+# Defines the ServiceAccount, ConfigMap, and Deployment for the Provisioning
+# Service, which handles JDBC database provisioning (PostgreSQL, Oracle,
+# SQL Server, SAP HANA) and cloud storage export (AWS S3, Azure Blob, GCP
+# Cloud Storage) for the Synthetic-ERP-Data-Generation-Platform.
+#
+# Resources defined in this file:
+#   1. ServiceAccount  — provisioning-service (with cloud IAM bindings)
+#   2. ConfigMap        — provisioning-service-config (application configuration)
+#   3. Deployment       — provisioning-service (application workload)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. ServiceAccount
+# -----------------------------------------------------------------------------
+# Dedicated ServiceAccount for the Provisioning Service pods, annotated with
+# cloud IAM role bindings for secure access to AWS S3, Azure Blob Storage,
+# and GCP Cloud Storage without embedding long-lived credentials.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provisioning-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: provisioning-service
+    app.kubernetes.io/name: provisioning-service
+    app.kubernetes.io/component: provisioning
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    # AWS EKS — IAM Roles for Service Accounts (IRSA)
+    # Replace with the actual IAM role ARN that grants S3 read/write access
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/provisioning-service-s3-role"
+    # Azure AKS — Workload Identity Federation
+    # Replace with the actual Azure AD client ID for managed identity
+    azure.workload.identity/client-id: "AZURE_CLIENT_ID_PLACEHOLDER"
+    # GCP GKE — Workload Identity
+    # Replace with the actual GCP service account email
+    iam.gke.io/gcp-service-account: "provisioning-service@PROJECT_ID.iam.gserviceaccount.com"
+automountServiceAccountToken: true
+
+---
+# -----------------------------------------------------------------------------
+# 2. ConfigMap — provisioning-service-config
+# -----------------------------------------------------------------------------
+# Non-sensitive application configuration for the Provisioning Service.
+# Includes Flask settings, JDBC driver paths, cloud storage tuning parameters,
+# inter-service URLs, and OpenTelemetry exporter endpoints.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: provisioning-service-config
+  namespace: synthetic-erp-platform
+  labels:
+    app: provisioning-service
+    app.kubernetes.io/name: provisioning-service
+    app.kubernetes.io/component: provisioning
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/version: "1.0.0"
+data:
+  # --- Flask Application Settings ---
+  FLASK_ENV: "production"
+  LOG_LEVEL: "INFO"
+  SERVICE_NAME: "provisioning-service"
+  SERVICE_PORT: "5005"
+
+  # --- Database Insert Settings ---
+  # Default batch size for JDBC bulk inserts (tunable per connector)
+  BATCH_INSERT_SIZE: "5000"
+  # Maximum number of concurrent JDBC connections in the pool
+  CONNECTION_POOL_SIZE: "20"
+
+  # --- Export Settings ---
+  # Temporary staging directory for file exports before cloud upload
+  EXPORT_TEMP_DIR: "/data/exports"
+
+  # --- MongoDB Settings ---
+  MONGODB_DATABASE: "synthetic_erp"
+
+  # --- Inter-Service Communication URLs ---
+  API_GATEWAY_URL: "http://api-gateway:5000"
+  GENERATION_ENGINE_URL: "http://generation-engine:5001"
+
+  # --- OpenTelemetry / Observability ---
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring:4317"
+  OTEL_SERVICE_NAME: "provisioning-service"
+
+  # --- JDBC Driver Paths ---
+  # Paths to JDBC JAR files mounted from the jdbc-drivers volume
+  POSTGRESQL_JDBC_DRIVER: "/opt/jdbc-drivers/postgresql.jar"
+  ORACLE_JDBC_DRIVER: "/opt/jdbc-drivers/ojdbc.jar"
+  SQLSERVER_JDBC_DRIVER: "/opt/jdbc-drivers/mssql-jdbc.jar"
+  HANA_JDBC_DRIVER: "/opt/jdbc-drivers/ngdbc.jar"
+
+  # --- AWS S3 Multipart Upload Tuning ---
+  # Threshold in bytes above which multipart upload is used (100 MiB)
+  S3_MULTIPART_THRESHOLD: "104857600"
+  # Size of each multipart chunk in bytes (8 MiB)
+  S3_MULTIPART_CHUNKSIZE: "8388608"
+
+  # --- Azure Blob Storage Tuning ---
+  # Maximum block size in bytes for Azure Blob uploads (4 MiB)
+  AZURE_BLOB_MAX_BLOCK_SIZE: "4194304"
+
+  # --- GCP Cloud Storage Tuning ---
+  # Resumable upload chunk size in bytes (8 MiB)
+  GCS_CHUNK_SIZE: "8388608"
+
+---
+# -----------------------------------------------------------------------------
+# 3. Deployment — provisioning-service
+# -----------------------------------------------------------------------------
+# Deploys the Provisioning Service with:
+#   - Rolling update strategy (zero-downtime deployments)
+#   - Health, readiness, and startup probes
+#   - Resource requests/limits for QoS scheduling
+#   - Security hardening (non-root, read-only filesystem, dropped capabilities)
+#   - JDBC driver volume mounts for database connectivity
+#   - Export staging volume for temporary file assembly
+#   - Environment variables from ConfigMap and Secrets
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provisioning-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: provisioning-service
+    app.kubernetes.io/name: provisioning-service
+    app.kubernetes.io/component: provisioning
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # Baseline replica count — HPA manages scaling from 1 to 8 replicas
+  replicas: 1
+  # Label selector must match pod template labels
+  selector:
+    matchLabels:
+      app: provisioning-service
+  # Rolling update ensures zero-downtime deployments
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # Minimum seconds a new pod must be ready before old pod is terminated
+  minReadySeconds: 10
+  # Number of old ReplicaSets to retain for rollback
+  revisionHistoryLimit: 5
+  template:
+    metadata:
+      labels:
+        app: provisioning-service
+        app.kubernetes.io/name: provisioning-service
+        app.kubernetes.io/component: provisioning
+        app.kubernetes.io/part-of: synthetic-erp-platform
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        # Prometheus metrics scraping configuration
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5005"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Use the dedicated ServiceAccount for cloud IAM bindings
+      serviceAccountName: provisioning-service
+      # Pod-level security context — enforce non-root execution
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Allow 60s for in-flight JDBC operations and cloud uploads to complete
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: provisioning-service
+          image: synthetic-erp-platform/provisioning-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 5005
+              protocol: TCP
+          # Container-level security hardening
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          # -----------------------------------------------------------------
+          # Resource Requests and Limits
+          # -----------------------------------------------------------------
+          # Requests: guaranteed CPU/memory for Kubernetes scheduler
+          # Limits: hard ceiling to prevent resource starvation
+          # Higher memory limit (4Gi) accommodates large batch inserts and
+          # in-memory file assembly for Parquet/SQL export formats.
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          # -----------------------------------------------------------------
+          # Health Probes
+          # -----------------------------------------------------------------
+          # Startup probe: allows up to 70s (10 + 12*5) for initial startup
+          # including JDBC driver loading and connection pool initialization.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5005
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          # Liveness probe: restarts container if health check fails 3 times
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5005
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Readiness probe: removes pod from Service endpoints if not ready
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5005
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # -----------------------------------------------------------------
+          # Environment Variables — ConfigMap References
+          # -----------------------------------------------------------------
+          env:
+            # Flask application environment
+            - name: FLASK_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: FLASK_ENV
+            # Structured logging level
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: LOG_LEVEL
+            # Service identification
+            - name: SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: SERVICE_NAME
+            - name: SERVICE_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: SERVICE_PORT
+            # Database insert batch size
+            - name: BATCH_INSERT_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: BATCH_INSERT_SIZE
+            # JDBC connection pool size
+            - name: CONNECTION_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: CONNECTION_POOL_SIZE
+            # Temporary directory for file export staging
+            - name: EXPORT_TEMP_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: EXPORT_TEMP_DIR
+            # Internal URL for Generation Engine service
+            - name: GENERATION_ENGINE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: GENERATION_ENGINE_URL
+            # Internal URL for API Gateway service
+            - name: API_GATEWAY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: API_GATEWAY_URL
+            # MongoDB database name
+            - name: MONGODB_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: MONGODB_DATABASE
+            # OpenTelemetry configuration
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: OTEL_SERVICE_NAME
+            # JDBC driver paths
+            - name: POSTGRESQL_JDBC_DRIVER
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: POSTGRESQL_JDBC_DRIVER
+            - name: ORACLE_JDBC_DRIVER
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: ORACLE_JDBC_DRIVER
+            - name: SQLSERVER_JDBC_DRIVER
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: SQLSERVER_JDBC_DRIVER
+            - name: HANA_JDBC_DRIVER
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: HANA_JDBC_DRIVER
+            # Cloud storage tuning parameters
+            - name: S3_MULTIPART_THRESHOLD
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: S3_MULTIPART_THRESHOLD
+            - name: S3_MULTIPART_CHUNKSIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: S3_MULTIPART_CHUNKSIZE
+            - name: AZURE_BLOB_MAX_BLOCK_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: AZURE_BLOB_MAX_BLOCK_SIZE
+            - name: GCS_CHUNK_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: provisioning-service-config
+                  key: GCS_CHUNK_SIZE
+            # -----------------------------------------------------------------
+            # Environment Variables — Secret References
+            # -----------------------------------------------------------------
+            # MongoDB credentials (from mongodb-credentials Secret)
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_URI
+            - name: MONGODB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_USERNAME
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_PASSWORD
+            # Redis credentials (from redis-credentials Secret)
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+            # Cloud provider credentials (from cloud-credentials Secret)
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AZURE_STORAGE_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-credentials
+                  key: AZURE_STORAGE_CONNECTION_STRING
+            - name: GCP_SERVICE_ACCOUNT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-credentials
+                  key: GCP_SERVICE_ACCOUNT_KEY
+            # Encryption keys (from encryption-keys Secret)
+            - name: AES_256_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: AES_256_KEY
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: FLASK_SECRET_KEY
+          # -----------------------------------------------------------------
+          # Volume Mounts
+          # -----------------------------------------------------------------
+          volumeMounts:
+            # JDBC driver JARs (PostgreSQL, Oracle, SQL Server, SAP HANA)
+            - name: jdbc-drivers
+              mountPath: /opt/jdbc-drivers
+              readOnly: true
+            # Writable temp directory required because rootFilesystem is read-only
+            - name: tmp-dir
+              mountPath: /tmp
+            # Staging area for assembled export files before cloud upload
+            - name: export-staging
+              mountPath: /data/exports
+      # -------------------------------------------------------------------
+      # Volumes
+      # -------------------------------------------------------------------
+      volumes:
+        # JDBC driver JARs provided via ConfigMap referencing driver file paths.
+        # In production, this should be replaced with a PersistentVolume or
+        # init container that downloads the actual JAR files.
+        - name: jdbc-drivers
+          configMap:
+            name: jdbc-drivers-config
+            defaultMode: 0444
+        # Writable /tmp directory for temporary file operations
+        # Required when readOnlyRootFilesystem is true
+        - name: tmp-dir
+          emptyDir: {}
+        # Export staging area with size limit to prevent disk exhaustion
+        # Used for assembling CSV, JSON, Parquet, and SQL files before
+        # uploading to cloud storage or inserting via JDBC
+        - name: export-staging
+          emptyDir:
+            sizeLimit: "10Gi"
