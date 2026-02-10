@@ -26,14 +26,14 @@ Usage Example:
     ... )
 """
 
-from enum import Enum
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class TemplateCategory(str, Enum):
+class TemplateCategory(StrEnum):
     """Enumeration of template categories aligned with initial ERP modules (C-005).
 
     Maps to the four ERP modules supported in the initial release plus a custom
@@ -84,7 +84,7 @@ class TemplateTableConfig(BaseModel):
         le=10_000_000,
         description="Default record count for this table (1 to 10,000,000)",
     )
-    column_overrides: Optional[Dict[str, Any]] = Field(
+    column_overrides: dict[str, Any] | None = Field(
         default=None,
         description="Column-specific generation rules mapping column names to override configs",
     )
@@ -129,7 +129,7 @@ class TemplateParameters(BaseModel):
         default="csv",
         description="Default output format: sql, csv, json, parquet",
     )
-    custom_rules: Optional[Dict[str, Any]] = Field(
+    custom_rules: dict[str, Any] | None = Field(
         default=None,
         description="Custom business rules for generation logic overrides",
     )
@@ -186,7 +186,7 @@ class TemplateRequest(BaseModel):
         max_length=255,
         description="Template name (1-255 characters)",
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         max_length=2000,
         description="Template description (up to 2000 characters)",
@@ -203,11 +203,11 @@ class TemplateRequest(BaseModel):
         ...,
         description="Generation method: ai_ml, rules_based, statistical, masking",
     )
-    schema_id: Optional[str] = Field(
+    schema_id: str | None = Field(
         default=None,
         description="Associated schema definition ID from discovery",
     )
-    tables: List[TemplateTableConfig] = Field(
+    tables: list[TemplateTableConfig] = Field(
         ...,
         min_length=1,
         description="Table generation configurations (at least one required)",
@@ -216,7 +216,7 @@ class TemplateRequest(BaseModel):
         default_factory=TemplateParameters,
         description="Generation parameters with defaults",
     )
-    tags: Optional[List[str]] = Field(
+    tags: list[str] | None = Field(
         default=None,
         description="Searchable tags for template catalog filtering",
     )
@@ -224,7 +224,7 @@ class TemplateRequest(BaseModel):
         default=False,
         description="Whether template is visible to all tenants",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Owning tenant namespace for multi-tenant isolation",
     )
@@ -286,8 +286,8 @@ class TemplateRequest(BaseModel):
     @field_validator("tables")
     @classmethod
     def validate_no_duplicate_tables(
-        cls, value: List[TemplateTableConfig]
-    ) -> List[TemplateTableConfig]:
+        cls, value: list[TemplateTableConfig]
+    ) -> list[TemplateTableConfig]:
         """Validate that no duplicate table names exist in the configuration.
 
         Each table should appear at most once in the template to prevent
@@ -355,7 +355,7 @@ class TemplateResponse(BaseModel):
         ...,
         description="Template name",
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         description="Template description",
     )
@@ -371,11 +371,11 @@ class TemplateResponse(BaseModel):
         ...,
         description="Generation method used by this template",
     )
-    schema_id: Optional[str] = Field(
+    schema_id: str | None = Field(
         default=None,
         description="Associated schema definition ID",
     )
-    tables: List[TemplateTableConfig] = Field(
+    tables: list[TemplateTableConfig] = Field(
         default_factory=list,
         description="Table generation configurations",
     )
@@ -383,7 +383,7 @@ class TemplateResponse(BaseModel):
         default_factory=TemplateParameters,
         description="Generation parameter presets",
     )
-    tags: Optional[List[str]] = Field(
+    tags: list[str] | None = Field(
         default=None,
         description="Searchable tags for catalog filtering",
     )
@@ -413,7 +413,7 @@ class TemplateResponse(BaseModel):
         ...,
         description="Last modification timestamp (ISO 8601)",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Owning tenant namespace for multi-tenant isolation",
     )
@@ -435,7 +435,7 @@ class TemplateListResponse(BaseModel):
         page_size: Number of templates per page (1 to 100, default 20).
     """
 
-    templates: List[TemplateResponse] = Field(
+    templates: list[TemplateResponse] = Field(
         default_factory=list,
         description="List of templates for the current page",
     )
