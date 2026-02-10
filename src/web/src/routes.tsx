@@ -78,7 +78,7 @@ function AppLayout(): React.JSX.Element {
         </header>
 
         <main className="flex-1 overflow-y-auto p-6">
-          <Suspense fallback={<LoadingSpinner fullPage={false} message="Loading page..." />}>
+          <Suspense fallback={<LoadingSpinner fullScreen={false} message="Loading page..." />}>
             <Outlet />
           </Suspense>
         </main>
