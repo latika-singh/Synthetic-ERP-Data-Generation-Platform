@@ -43,18 +43,22 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
-from flask import Flask
 from pymongo import ASCENDING, MongoClient
-from pymongo.collection import Collection
-from pymongo.database import Database
 from pymongo.errors import (
     AutoReconnect,
     ConnectionFailure,
     OperationFailure,
     ServerSelectionTimeoutError,
 )
+
+
+if TYPE_CHECKING:
+    from flask import Flask
+    from pymongo.collection import Collection
+    from pymongo.database import Database
+
 
 # ---------------------------------------------------------------------------
 # Module logger — uses standard logging to avoid circular dependency with
@@ -87,7 +91,7 @@ _KNOWN_COLLECTIONS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 # Module-level singleton state — thread-safe via _lock.
 # ---------------------------------------------------------------------------
-_mongo_client: Optional[MongoClient] = None
+_mongo_client: MongoClient | None = None
 _lock: threading.Lock = threading.Lock()
 
 
@@ -156,7 +160,7 @@ def get_mongo_client() -> MongoClient:
         tls_enabled: bool = (
             os.environ.get("MONGODB_TLS_ENABLED", "false").lower() == "true"
         )
-        tls_ca_file: Optional[str] = os.environ.get("MONGODB_TLS_CA_FILE")
+        tls_ca_file: str | None = os.environ.get("MONGODB_TLS_CA_FILE")
         service_name: str = os.environ.get("SERVICE_NAME", "synthetic-erp-service")
 
         # Build keyword arguments for MongoClient construction.
@@ -189,7 +193,7 @@ def get_mongo_client() -> MongoClient:
             )
 
         try:
-            client = MongoClient(**client_kwargs)
+            client: MongoClient = MongoClient(**client_kwargs)
 
             # Force a connection attempt so that configuration errors surface
             # immediately rather than on the first real operation.
@@ -216,7 +220,7 @@ def get_mongo_client() -> MongoClient:
     return _mongo_client
 
 
-def get_mongo_db(database_name: Optional[str] = None) -> Database:
+def get_mongo_db(database_name: str | None = None) -> Database:
     """Return a ``pymongo.database.Database`` handle for the specified database.
 
     If *database_name* is ``None`` the value of the ``MONGODB_DATABASE``
@@ -243,7 +247,7 @@ def get_mongo_db(database_name: Optional[str] = None) -> Database:
 
 def get_collection(
     collection_name: str,
-    database_name: Optional[str] = None,
+    database_name: str | None = None,
 ) -> Collection:
     """Return a ``pymongo.collection.Collection`` handle for direct collection access.
 
@@ -274,7 +278,7 @@ def get_collection(
     return db[collection_name]
 
 
-def close_mongo_connection(exception: Optional[BaseException] = None) -> None:
+def close_mongo_connection(exception: BaseException | None = None) -> None:
     """Safely close the MongoDB connection and reset the singleton state.
 
     Designed to be registered as a Flask ``teardown_appcontext`` handler so
@@ -354,6 +358,22 @@ def check_mongo_health() -> dict[str, Any]:
         )
         return health
 
+    except AutoReconnect as exc:
+        # AutoReconnect is a subclass of ConnectionFailure — it must be
+        # caught *before* ConnectionFailure to distinguish transient
+        # reconnection events from hard connection failures.
+        logger.warning(
+            "MongoDB health check encountered auto-reconnect",
+            extra={"error": str(exc)},
+        )
+        return {
+            "status": "unhealthy",
+            "latency_ms": -1.0,
+            "server_info": {
+                "error": f"AutoReconnect: {exc}",
+                "ok": 0,
+            },
+        }
     except (ConnectionFailure, ServerSelectionTimeoutError) as exc:
         logger.error(
             "MongoDB health check failed",
@@ -364,19 +384,6 @@ def check_mongo_health() -> dict[str, Any]:
             "latency_ms": -1.0,
             "server_info": {
                 "error": str(exc),
-                "ok": 0,
-            },
-        }
-    except AutoReconnect as exc:
-        logger.warning(
-            "MongoDB health check encountered auto-reconnect",
-            extra={"error": str(exc)},
-        )
-        return {
-            "status": "unhealthy",
-            "latency_ms": -1.0,
-            "server_info": {
-                "error": f"AutoReconnect: {exc}",
                 "ok": 0,
             },
         }
