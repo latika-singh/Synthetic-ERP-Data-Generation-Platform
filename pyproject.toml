@@ -68,8 +68,6 @@ src = ["src/backend"]
 
 # Fix all auto-fixable violations
 fix = true
-fixable = ["ALL"]
-unfixable = []
 
 # Exclude standard directories from linting
 exclude = [
@@ -88,6 +86,8 @@ exclude = [
 ]
 
 [tool.ruff.lint]
+fixable = ["ALL"]
+unfixable = []
 # Comprehensive rule selection for enterprise-grade code quality:
 #   E   — pycodestyle errors (PEP 8 style enforcement)
 #   F   — Pyflakes (logical errors, unused imports/variables)
@@ -260,6 +260,35 @@ module = [
     "structlog.*",
 ]
 ignore_missing_imports = true
+
+# Overrides for internal shared sub-packages that may not yet be present during
+# incremental generation.  These will be removed once every shared sub-module
+# has been created and ships a py.typed marker.
+# Overrides for internal sub-packages that may not yet be present during
+# incremental project generation.  Each service's sub-modules are created by
+# independent agents; until they are all present, mypy would emit
+# import-untyped / import-not-found errors for forward references.  These
+# overrides will be removed once every service module ships its own
+# py.typed marker.
+[[tool.mypy.overrides]]
+module = [
+    "shared.auth.*",
+    "shared.middleware.*",
+    "compliance_service.app",
+    "compliance_service.config",
+    "compliance_service.detectors.*",
+    "compliance_service.regulations.gdpr",
+    "compliance_service.regulations.hipaa",
+    "compliance_service.regulations.ccpa",
+    "compliance_service.certification.*",
+    "provisioning_service.app",
+    "provisioning_service.config",
+    "provisioning_service.connectors.*",
+    "provisioning_service.cloud.*",
+    "provisioning_service.exporters.*",
+]
+ignore_missing_imports = true
+follow_untyped_imports = true
 
 # -----------------------------------------------------------------------------
 # 8. mypy — Pydantic Plugin Configuration

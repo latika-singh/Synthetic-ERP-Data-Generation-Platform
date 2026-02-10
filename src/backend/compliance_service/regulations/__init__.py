@@ -38,9 +38,9 @@ Components:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ class Severity(Enum):
 # Severity weight mapping for compliance score calculation
 # ---------------------------------------------------------------------------
 
-_SEVERITY_WEIGHTS: Dict[Severity, float] = {
+_SEVERITY_WEIGHTS: dict[Severity, float] = {
     Severity.CRITICAL: 1.0,
     Severity.HIGH: 0.7,
     Severity.MEDIUM: 0.4,
@@ -134,12 +134,12 @@ class ComplianceViolation:
     severity: Severity
     article_reference: str
     description: str
-    affected_fields: List[str] = field(default_factory=list)
+    affected_fields: list[str] = field(default_factory=list)
     remediation: str = ""
     detected_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -167,15 +167,15 @@ class ComplianceResult:
     regulation_type: RegulationType
     is_compliant: bool
     compliance_score: float
-    violations: List[ComplianceViolation] = field(default_factory=list)
+    violations: list[ComplianceViolation] = field(default_factory=list)
     checked_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
     regulation_name: str = ""
     regulation_version: str = ""
     total_fields_checked: int = 0
     fields_with_violations: int = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +230,8 @@ class BaseRegulationChecker(ABC):
     @abstractmethod
     def check_compliance(
         self,
-        dataset_metadata: Dict[str, Any],
-        scan_results: Dict[str, Any],
+        dataset_metadata: dict[str, Any],
+        scan_results: dict[str, Any],
     ) -> ComplianceResult:
         """Execute the full compliance check for this regulation.
 
@@ -272,7 +272,7 @@ class BaseRegulationChecker(ABC):
 
     def _calculate_compliance_score(
         self,
-        violations: List[ComplianceViolation],
+        violations: list[ComplianceViolation],
         total_fields: int,
     ) -> float:
         """Calculate a weighted compliance score from violations.
@@ -320,10 +320,10 @@ class BaseRegulationChecker(ABC):
     def _create_result(
         self,
         is_compliant: bool,
-        violations: List[ComplianceViolation],
+        violations: list[ComplianceViolation],
         total_fields: int,
-        fields_with_violations: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        fields_with_violations: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ComplianceResult:
         """Construct a fully-populated ``ComplianceResult``.
 
@@ -356,7 +356,7 @@ class BaseRegulationChecker(ABC):
             is_compliant=is_compliant,
             compliance_score=compliance_score,
             violations=violations,
-            checked_at=datetime.now(timezone.utc),
+            checked_at=datetime.now(UTC),
             regulation_name=self.get_regulation_name(),
             regulation_version=self.get_regulation_version(),
             total_fields_checked=total_fields,
@@ -391,14 +391,14 @@ class RegulationRegistry:
         available = RegulationRegistry.get_available_regulations()
     """
 
-    _registry: Dict[RegulationType, Type[BaseRegulationChecker]] = {}
-    _instances: Dict[RegulationType, BaseRegulationChecker] = {}
+    _registry: dict[RegulationType, type[BaseRegulationChecker]] = {}
+    _instances: dict[RegulationType, BaseRegulationChecker] = {}
 
     @classmethod
     def register(
         cls,
         regulation_type: RegulationType,
-        checker_class: Type[BaseRegulationChecker],
+        checker_class: type[BaseRegulationChecker],
     ) -> None:
         """Register a regulation checker class for a given regulation type.
 
@@ -457,7 +457,7 @@ class RegulationRegistry:
         return cls._instances[regulation_type]
 
     @classmethod
-    def get_all_checkers(cls) -> Dict[RegulationType, BaseRegulationChecker]:
+    def get_all_checkers(cls) -> dict[RegulationType, BaseRegulationChecker]:
         """Return singleton instances for all registered regulation checkers.
 
         Lazily instantiates any checkers that have not yet been accessed.
@@ -472,7 +472,7 @@ class RegulationRegistry:
         return dict(cls._instances)
 
     @classmethod
-    def get_available_regulations(cls) -> List[RegulationType]:
+    def get_available_regulations(cls) -> list[RegulationType]:
         """Return the list of regulation types that have registered checkers.
 
         Returns:
@@ -490,39 +490,44 @@ class RegulationRegistry:
 # NLP dependency).  This ensures the package remains importable even in
 # degraded environments.
 
-GDPRRegulationChecker: Optional[Type[BaseRegulationChecker]] = None
-HIPAARegulationChecker: Optional[Type[BaseRegulationChecker]] = None
-CCPARegulationChecker: Optional[Type[BaseRegulationChecker]] = None
+_GDPRRegulationChecker: type[BaseRegulationChecker] | None = None
+_HIPAARegulationChecker: type[BaseRegulationChecker] | None = None
+_CCPARegulationChecker: type[BaseRegulationChecker] | None = None
 
 try:
-    from compliance_service.regulations.gdpr import (  # type: ignore[assignment]
-        GDPRRegulationChecker,
+    from compliance_service.regulations.gdpr import (
+        GDPRRegulationChecker as _GDPRCls,
     )
 
-    if GDPRRegulationChecker is not None:
-        RegulationRegistry.register(RegulationType.GDPR, GDPRRegulationChecker)
+    _GDPRRegulationChecker = _GDPRCls
+    RegulationRegistry.register(RegulationType.GDPR, _GDPRRegulationChecker)
 except ImportError:
     pass
 
 try:
-    from compliance_service.regulations.hipaa import (  # type: ignore[assignment]
-        HIPAARegulationChecker,
+    from compliance_service.regulations.hipaa import (
+        HIPAARegulationChecker as _HIPAACls,
     )
 
-    if HIPAARegulationChecker is not None:
-        RegulationRegistry.register(RegulationType.HIPAA, HIPAARegulationChecker)
+    _HIPAARegulationChecker = _HIPAACls
+    RegulationRegistry.register(RegulationType.HIPAA, _HIPAARegulationChecker)
 except ImportError:
     pass
 
 try:
-    from compliance_service.regulations.ccpa import (  # type: ignore[assignment]
-        CCPARegulationChecker,
+    from compliance_service.regulations.ccpa import (
+        CCPARegulationChecker as _CCPACls,
     )
 
-    if CCPARegulationChecker is not None:
-        RegulationRegistry.register(RegulationType.CCPA, CCPARegulationChecker)
+    _CCPARegulationChecker = _CCPACls
+    RegulationRegistry.register(RegulationType.CCPA, _CCPARegulationChecker)
 except ImportError:
     pass
+
+# Re-export the checker classes (or None if not available)
+GDPRRegulationChecker = _GDPRRegulationChecker
+HIPAARegulationChecker = _HIPAARegulationChecker
+CCPARegulationChecker = _CCPARegulationChecker
 
 
 # ---------------------------------------------------------------------------

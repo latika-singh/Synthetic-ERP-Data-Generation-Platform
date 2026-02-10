@@ -26,8 +26,8 @@ from shared.logging.structured_logger import (
 
 
 __all__: list[str] = [
-    "get_logger",
-    "configure_logging",
     "bind_context",
     "clear_context",
+    "configure_logging",
+    "get_logger",
 ]

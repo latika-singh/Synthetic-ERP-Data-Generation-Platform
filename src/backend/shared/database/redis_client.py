@@ -88,7 +88,7 @@ _PROGRESS_CHANNEL_PREFIX: str = "job:progress:"
 # ============================================================================
 
 
-def get_redis_client() -> redis.Redis:  # type: ignore[type-arg]
+def get_redis_client() -> redis.Redis:
     """Return a singleton ``redis.Redis`` instance backed by a connection pool.
 
     The client is lazily initialised on first call using a thread-safe
@@ -116,12 +116,12 @@ def get_redis_client() -> redis.Redis:  # type: ignore[type-arg]
         assert client.get("hello") == "world"
     """
     if _state["client"] is not None:
-        return _state["client"]  # type: ignore[return-value]
+        return _state["client"]  # type: ignore[no-any-return]
 
     with _lock:
         # Double-checked locking — re-verify after acquiring the lock.
         if _state["client"] is not None:
-            return _state["client"]  # type: ignore[return-value]
+            return _state["client"]
 
         redis_url: str = os.environ.get(
             "REDIS_URL", "redis://localhost:6379/0"
@@ -245,7 +245,7 @@ def check_redis_health() -> dict[str, Any]:
         # Attempt to retrieve connected client count.
         connected_clients: int = -1
         try:
-            info: dict[str, Any] = client.info(section="clients")
+            info: dict[str, Any] = client.info(section="clients")  # type: ignore[assignment]
             connected_clients = int(info.get("connected_clients", -1))
         except (redis.exceptions.RedisError, ValueError):
             pass
@@ -295,7 +295,7 @@ def cache_get(key: str) -> Any | None:
     """
     try:
         client = get_redis_client()
-        raw: str | None = client.get(key)
+        raw: str | None = client.get(key)  # type: ignore[assignment]
         if raw is None:
             logger.debug("Cache miss", extra={"key": key})
             return None
@@ -334,7 +334,7 @@ def cache_set(key: str, value: Any, ttl: int = 3600) -> bool:
         serialised: str = (
             json.dumps(value) if not isinstance(value, str) else value
         )
-        result: bool | None = client.set(key, serialised, ex=ttl)
+        result: bool | None = client.set(key, serialised, ex=ttl)  # type: ignore[assignment]
         logger.debug(
             "Cache set", extra={"key": key, "ttl": ttl}
         )
@@ -358,7 +358,7 @@ def cache_delete(key: str) -> bool:
     """
     try:
         client = get_redis_client()
-        deleted: int = client.delete(key)
+        deleted: int = client.delete(key)  # type: ignore[assignment]
         logger.debug("Cache delete", extra={"key": key, "deleted": deleted})
         return deleted > 0
 
@@ -496,11 +496,13 @@ def cache_invalidate_pattern(pattern: str) -> int:
             cursor_keys.append(key)
             # Flush deletes in batches of 500 to limit memory pressure.
             if len(cursor_keys) >= 500:
-                deleted_count += client.delete(*cursor_keys)
+                batch_deleted: int = client.delete(*cursor_keys)  # type: ignore[assignment]
+                deleted_count += batch_deleted
                 cursor_keys = []
 
         if cursor_keys:
-            deleted_count += client.delete(*cursor_keys)
+            tail_deleted: int = client.delete(*cursor_keys)  # type: ignore[assignment]
+            deleted_count += tail_deleted
 
         logger.info(
             "Cache pattern invalidation completed",
@@ -542,7 +544,7 @@ def session_store(
         client = get_redis_client()
         full_key: str = f"{_SESSION_PREFIX}{session_id}"
         serialised: str = json.dumps(data)
-        result: bool | None = client.set(full_key, serialised, ex=ttl)
+        result: bool | None = client.set(full_key, serialised, ex=ttl)  # type: ignore[assignment]
         logger.debug(
             "Session stored",
             extra={"session_id": session_id, "ttl": ttl},
@@ -570,7 +572,7 @@ def session_get(session_id: str) -> dict[str, Any] | None:
     try:
         client = get_redis_client()
         full_key: str = f"{_SESSION_PREFIX}{session_id}"
-        raw: str | None = client.get(full_key)
+        raw: str | None = client.get(full_key)  # type: ignore[assignment]
         if raw is None:
             logger.debug(
                 "Session not found",
@@ -581,7 +583,7 @@ def session_get(session_id: str) -> dict[str, Any] | None:
         logger.debug(
             "Session retrieved", extra={"session_id": session_id}
         )
-        return json.loads(raw)
+        return json.loads(raw)  # type: ignore[no-any-return]
 
     except (
         redis.exceptions.RedisError,
@@ -607,7 +609,7 @@ def session_delete(session_id: str) -> bool:
     try:
         client = get_redis_client()
         full_key: str = f"{_SESSION_PREFIX}{session_id}"
-        deleted: int = client.delete(full_key)
+        deleted: int = client.delete(full_key)  # type: ignore[assignment]
         logger.debug(
             "Session deleted",
             extra={"session_id": session_id, "deleted": deleted},
@@ -640,7 +642,7 @@ def session_extend(session_id: str, ttl: int = 86400) -> bool:
     try:
         client = get_redis_client()
         full_key: str = f"{_SESSION_PREFIX}{session_id}"
-        result: bool = client.expire(full_key, ttl)
+        result: bool = client.expire(full_key, ttl)  # type: ignore[assignment]
         if result:
             logger.debug(
                 "Session TTL extended",
@@ -706,7 +708,7 @@ def publish_progress(channel: str, message: dict[str, Any]) -> int:
     try:
         client = get_redis_client()
         serialised: str = json.dumps(message)
-        receivers: int = client.publish(channel, serialised)
+        receivers: int = client.publish(channel, serialised)  # type: ignore[assignment]
         logger.debug(
             "Progress published",
             extra={
