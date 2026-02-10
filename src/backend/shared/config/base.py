@@ -38,6 +38,7 @@ from typing import Any
 # Custom exception
 # ---------------------------------------------------------------------------
 
+
 class ConfigurationError(Exception):
     """Raised when a configuration validation check fails.
 
@@ -65,6 +66,7 @@ _UNSET: object = object()
 # ---------------------------------------------------------------------------
 # BaseConfig
 # ---------------------------------------------------------------------------
+
 
 class BaseConfig:
     """Root configuration class implementing the 12-factor app methodology.
@@ -127,9 +129,7 @@ class BaseConfig:
 
     # -- MongoDB ------------------------------------------------------------
 
-    MONGODB_URI: str = os.environ.get(
-        "MONGODB_URI", "mongodb://localhost:27017/synthetic_erp"
-    )
+    MONGODB_URI: str = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/synthetic_erp")
     MONGODB_DATABASE: str = os.environ.get("MONGODB_DATABASE", "synthetic_erp")
     MONGODB_MAX_POOL_SIZE: int = int(os.environ.get("MONGODB_MAX_POOL_SIZE", "100"))
 
@@ -148,9 +148,7 @@ class BaseConfig:
     # -- JWT ----------------------------------------------------------------
 
     JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "")
-    JWT_ACCESS_TOKEN_EXPIRES: int = int(
-        os.environ.get("JWT_ACCESS_TOKEN_EXPIRES", "3600")
-    )
+    JWT_ACCESS_TOKEN_EXPIRES: int = int(os.environ.get("JWT_ACCESS_TOKEN_EXPIRES", "3600"))
     JWT_ALGORITHM: str = os.environ.get("JWT_ALGORITHM", "RS256")
 
     # -- CORS ---------------------------------------------------------------
@@ -191,9 +189,7 @@ class BaseConfig:
         self.SERVICE_NAME = os.environ.get("SERVICE_NAME", "unknown-service")
         self.LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
-        self.MONGODB_URI = os.environ.get(
-            "MONGODB_URI", "mongodb://localhost:27017/synthetic_erp"
-        )
+        self.MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/synthetic_erp")
         self.MONGODB_DATABASE = os.environ.get("MONGODB_DATABASE", "synthetic_erp")
         self.MONGODB_MAX_POOL_SIZE = self._get_int_env("MONGODB_MAX_POOL_SIZE", 100)
 
@@ -206,14 +202,10 @@ class BaseConfig:
         self.AUTH0_AUDIENCE = os.environ.get("AUTH0_AUDIENCE", "")
 
         self.JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
-        self.JWT_ACCESS_TOKEN_EXPIRES = self._get_int_env(
-            "JWT_ACCESS_TOKEN_EXPIRES", 3600
-        )
+        self.JWT_ACCESS_TOKEN_EXPIRES = self._get_int_env("JWT_ACCESS_TOKEN_EXPIRES", 3600)
         self.JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "RS256")
 
-        self.CORS_ORIGINS = self._get_list_env(
-            "CORS_ORIGINS", default=["http://localhost:3000"]
-        )
+        self.CORS_ORIGINS = self._get_list_env("CORS_ORIGINS", default=["http://localhost:3000"])
 
         self.RATE_LIMIT_DEFAULT = self._get_int_env("RATE_LIMIT_DEFAULT", 60)
         self.ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
@@ -257,9 +249,7 @@ class BaseConfig:
 
         if raw_value is None:
             if required:
-                raise ConfigurationError(
-                    f"Required environment variable '{key}' is not set."
-                )
+                raise ConfigurationError(f"Required environment variable '{key}' is not set.")
             return default
 
         # Type-specific casting
@@ -271,9 +261,7 @@ class BaseConfig:
             if cast_type is float:
                 return float(raw_value)
             if cast_type is list:
-                return [
-                    item.strip() for item in raw_value.split(",") if item.strip()
-                ]
+                return [item.strip() for item in raw_value.split(",") if item.strip()]
             return cast_type(raw_value)
         except (ValueError, TypeError) as exc:
             raise ConfigurationError(
@@ -399,12 +387,14 @@ class BaseConfig:
     # -----------------------------------------------------------------------
 
     # Attribute names whose values must never appear in logs
-    _SENSITIVE_KEYS: set[str] = frozenset({
-        "SECRET_KEY",
-        "JWT_SECRET_KEY",
-        "AUTH0_CLIENT_SECRET",
-        "ENCRYPTION_KEY",
-    })
+    _SENSITIVE_KEYS: frozenset[str] = frozenset(
+        {
+            "SECRET_KEY",
+            "JWT_SECRET_KEY",
+            "AUTH0_CLIENT_SECRET",
+            "ENCRYPTION_KEY",
+        }
+    )
 
     _REDACTED: str = "***REDACTED***"
 
@@ -454,6 +444,7 @@ class BaseConfig:
 # Environment-specific subclasses
 # ---------------------------------------------------------------------------
 
+
 class DevelopmentConfig(BaseConfig):
     """Development environment configuration.
 
@@ -495,9 +486,7 @@ class TestingConfig(BaseConfig):
         self.DEBUG = True
         self.TESTING = True
         self.LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
-        self.MONGODB_URI = os.environ.get(
-            "MONGODB_URI", "mongodb://localhost:27017/synthetic_erp_test"
-        )
+        self.MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/synthetic_erp_test")
         self.MONGODB_DATABASE = os.environ.get("MONGODB_DATABASE", "synthetic_erp_test")
         self.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
         self.SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "test-secret-key")
