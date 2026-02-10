@@ -1,0 +1,127 @@
+# =============================================================================
+# Kubernetes Service Manifest — Generation Engine
+# =============================================================================
+# Service: Generation Engine (ClusterIP — Internal Only)
+# Purpose: Provides stable internal DNS-based service discovery for the
+#          Generation Engine pods within the Kubernetes cluster. Routes traffic
+#          from the API Gateway and other backend services to generation-engine
+#          pods running the LangChain-orchestrated multi-method synthetic data
+#          generation service.
+#
+# Type:    ClusterIP (NOT externally accessible)
+# Port:    5001 (Flask application via Gunicorn)
+#
+# Consumers:
+#   - API Gateway: Dispatches generation jobs (POST /api/v1/generation/jobs)
+#                  and retrieves job status/results (GET /api/v1/generation/jobs/{id})
+#   - Quality Service: Receives validation requests from Generation Engine
+#   - Compliance Service: Receives compliance verification requests
+#   - Provisioning Service: Receives export/provisioning dispatch requests
+#
+# DNS Resolution:
+#   Within the cluster, this service is reachable at:
+#     generation-engine.synthetic-erp-platform.svc.cluster.local:5001
+#   Or via short-form within the same namespace:
+#     generation-engine:5001
+#   This matches the GENERATION_ENGINE_URL configured in the API Gateway ConfigMap.
+#
+# Generation Methods Supported:
+#   - AI/ML: GAN (PyTorch) and VAE (TensorFlow) based synthetic data generation
+#   - Rules-Based: Custom business rules engine for constraint-based generation
+#   - Statistical: Distribution fitting and synthesis via SciPy/NumPy
+#   - Intelligent Masking: Privacy-preserving data masking with format retention
+#
+# Throughput Target: 1M+ records/minute via batch processing (10K records/batch)
+#
+# References:
+#   - Deployment: generation-engine (deployment.yaml) — pod selector target
+#   - ConfigMap: generation-engine-config (configmap.yaml) — service configuration
+#   - HPA: generation-engine (hpa.yaml) — auto-scaling 2-20 replicas
+#   - NetworkPolicy: allow-generation-engine (network-policies.yaml) — traffic rules
+#   - Ingress: NOT routed through Ingress (internal-only service)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: generation-engine
+  namespace: synthetic-erp-platform
+  labels:
+    # Primary application identifier — must match Deployment selector
+    app: generation-engine
+    # Kubernetes recommended labels (https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/)
+    app.kubernetes.io/name: generation-engine
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: generation
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Service description for documentation and kubectl describe output
+    description: >-
+      Internal ClusterIP service for multi-method synthetic data generation
+      (AI/ML GAN/VAE, rules-based, statistical, masking) orchestrated via
+      LangChain with PyTorch/TensorFlow. Routes traffic to generation-engine
+      pods for job processing, progress monitoring, and result retrieval.
+    # ---------------------------------------------------------------------------
+    # Prometheus Metrics Scraping Configuration
+    # Enables the Prometheus service monitor to discover and scrape metrics
+    # from the /metrics endpoint exposed by the Generation Engine Flask app.
+    # Metrics include: generation job counts, batch processing latency,
+    # method selection distribution, queue depth, and throughput rates.
+    # ---------------------------------------------------------------------------
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5001"
+    prometheus.io/path: "/metrics"
+spec:
+  # ---------------------------------------------------------------------------
+  # Service Type: ClusterIP (Internal-Only)
+  # ---------------------------------------------------------------------------
+  # ClusterIP is the default and most restrictive service type. It assigns a
+  # cluster-internal IP address, making the service reachable ONLY from within
+  # the Kubernetes cluster. This is the correct choice for the Generation Engine
+  # because:
+  #   1. It should NOT be directly accessible from outside the cluster
+  #   2. All external traffic flows through the API Gateway (LoadBalancer type)
+  #   3. Inter-service communication uses Kubernetes DNS-based service discovery
+  #   4. NetworkPolicies further restrict which pods can reach this service
+  # ---------------------------------------------------------------------------
+  type: ClusterIP
+
+  # ---------------------------------------------------------------------------
+  # Pod Selector
+  # ---------------------------------------------------------------------------
+  # Routes traffic to pods matching these labels. The label "app: generation-engine"
+  # is defined in the Deployment's pod template metadata (deployment.yaml).
+  # When the HPA scales the Deployment from 2 to 20 replicas, the Service
+  # automatically load-balances across all matching pods.
+  # ---------------------------------------------------------------------------
+  selector:
+    app: generation-engine
+
+  # ---------------------------------------------------------------------------
+  # Port Configuration
+  # ---------------------------------------------------------------------------
+  # Exposes port 5001 matching the Flask application port configured via
+  # Gunicorn in the Generation Engine container. The targetPort refers to the
+  # containerPort defined in the Deployment pod spec.
+  #
+  # Traffic flow:
+  #   Client (API Gateway) → Service:5001 → Pod:5001 (Flask/Gunicorn)
+  # ---------------------------------------------------------------------------
+  ports:
+    - name: http
+      protocol: TCP
+      port: 5001
+      targetPort: 5001
+
+  # ---------------------------------------------------------------------------
+  # Session Affinity
+  # ---------------------------------------------------------------------------
+  # None — requests are distributed across all healthy pods using the default
+  # round-robin load balancing strategy. This is optimal for the Generation
+  # Engine because:
+  #   1. Generation jobs are stateless at the HTTP level (state in MongoDB/Redis)
+  #   2. Any pod can process any request (job status, progress, results)
+  #   3. Even distribution maximizes throughput and resource utilization
+  #   4. Checkpoint/resume state is persisted in Redis, not pod-local memory
+  # ---------------------------------------------------------------------------
+  sessionAffinity: None
