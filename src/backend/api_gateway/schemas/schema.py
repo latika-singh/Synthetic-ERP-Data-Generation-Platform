@@ -35,9 +35,8 @@ Typical usage::
 
 from __future__ import annotations
 
-from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from datetime import datetime  # noqa: TC003 — required at runtime by Pydantic field resolution
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -47,7 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # ---------------------------------------------------------------------------
 
 
-class ERPType(str, Enum):
+class ERPType(StrEnum):
     """Supported ERP system types for schema discovery.
 
     Each member maps to a specific ERP platform connector within the
@@ -66,7 +65,7 @@ class ERPType(str, Enum):
     LEGACY = "legacy"
 
 
-class ERPModule(str, Enum):
+class ERPModule(StrEnum):
     """ERP functional modules available for schema discovery.
 
     Per Constraint C-005, the initial release is limited to exactly these
@@ -90,7 +89,7 @@ class ERPModule(str, Enum):
     MATERIAL_MANAGEMENT = "material_management"
 
 
-class ColumnDataType(str, Enum):
+class ColumnDataType(StrEnum):
     """Data types for columns discovered in ERP database schemas.
 
     These values represent the canonical column data types that the Profiling
@@ -141,7 +140,7 @@ class ConnectionParams(BaseModel):
 
     Attributes:
         host: Hostname or IP address of the ERP system or database server.
-        port: Network port for the connection (1–65535).
+        port: Network port for the connection (1-65535).
         database: Optional database or schema name to scope discovery.
         username: Authentication username for the ERP/database connection.
         password: Authentication password (transmitted encrypted via TLS 1.3).
@@ -166,7 +165,7 @@ class ConnectionParams(BaseModel):
         le=65535,
         description="Network port for the ERP connection.",
     )
-    database: Optional[str] = Field(
+    database: str | None = Field(
         default=None,
         max_length=255,
         description="Database or schema name to scope discovery.",
@@ -188,12 +187,12 @@ class ConnectionParams(BaseModel):
         max_length=50,
         description="Connection protocol: 'jdbc', 'odata', 'rfc', or 'web_api'.",
     )
-    driver: Optional[str] = Field(
+    driver: str | None = Field(
         default=None,
         max_length=255,
         description="JDBC driver class name or connector identifier.",
     )
-    additional_params: Optional[Dict[str, str]] = Field(
+    additional_params: dict[str, str] | None = Field(
         default=None,
         description="Driver-specific key-value connection settings.",
     )
@@ -262,7 +261,7 @@ class SchemaDiscoveryRequest(BaseModel):
         ...,
         description="Connection credentials and protocol settings.",
     )
-    modules: List[ERPModule] = Field(
+    modules: list[ERPModule] = Field(
         ...,
         min_length=1,
         description=(
@@ -278,7 +277,7 @@ class SchemaDiscoveryRequest(BaseModel):
         default=False,
         description="Discover index definitions on tables.",
     )
-    table_filter: Optional[List[str]] = Field(
+    table_filter: list[str] | None = Field(
         default=None,
         description=(
             "Optional list of specific table names to discover. "
@@ -286,7 +285,7 @@ class SchemaDiscoveryRequest(BaseModel):
             "are discovered."
         ),
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=128,
@@ -295,7 +294,7 @@ class SchemaDiscoveryRequest(BaseModel):
 
     @field_validator("modules")
     @classmethod
-    def validate_modules_scope(cls, value: List[ERPModule]) -> List[ERPModule]:
+    def validate_modules_scope(cls, value: list[ERPModule]) -> list[ERPModule]:
         """Validate that requested modules conform to Constraint C-005.
 
         Constraint C-005 limits the initial release to exactly four ERP
@@ -345,8 +344,8 @@ class SchemaDiscoveryRequest(BaseModel):
     @field_validator("table_filter")
     @classmethod
     def validate_table_filter(
-        cls, value: Optional[List[str]]
-    ) -> Optional[List[str]]:
+        cls, value: list[str] | None
+    ) -> list[str] | None:
         """Validate that table filter entries are non-empty and unique.
 
         Args:
@@ -362,7 +361,7 @@ class SchemaDiscoveryRequest(BaseModel):
         if value is None:
             return value
 
-        cleaned: List[str] = []
+        cleaned: list[str] = []
         seen_names: set[str] = set()
         for table_name in value:
             stripped = table_name.strip()
@@ -418,18 +417,18 @@ class ColumnDefinition(BaseModel):
         ...,
         description="Canonical data type mapped from the source RDBMS type.",
     )
-    max_length: Optional[int] = Field(
+    max_length: int | None = Field(
         default=None,
         ge=1,
         description="Maximum character length for string-type columns.",
     )
-    precision: Optional[int] = Field(
+    precision: int | None = Field(
         default=None,
         ge=1,
         le=38,
         description="Total digit count for numeric columns.",
     )
-    scale: Optional[int] = Field(
+    scale: int | None = Field(
         default=None,
         ge=0,
         le=38,
@@ -443,19 +442,19 @@ class ColumnDefinition(BaseModel):
         default=False,
         description="Whether this column is part of the primary key.",
     )
-    default_value: Optional[str] = Field(
+    default_value: str | None = Field(
         default=None,
         max_length=1024,
         description="Default value expression from the catalog.",
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         max_length=2000,
         description="Column description or catalog comment.",
     )
 
     @model_validator(mode="after")
-    def validate_precision_scale(self) -> "ColumnDefinition":
+    def validate_precision_scale(self) -> ColumnDefinition:
         """Ensure scale does not exceed precision for numeric columns.
 
         Returns:
@@ -539,7 +538,7 @@ class RelationshipDefinition(BaseModel):
             "'one_to_one', or 'many_to_many'."
         ),
     )
-    on_delete: Optional[str] = Field(
+    on_delete: str | None = Field(
         default=None,
         max_length=50,
         description=(
@@ -578,7 +577,7 @@ class RelationshipDefinition(BaseModel):
 
     @field_validator("on_delete")
     @classmethod
-    def validate_on_delete(cls, value: Optional[str]) -> Optional[str]:
+    def validate_on_delete(cls, value: str | None) -> str | None:
         """Validate the referential delete action.
 
         Args:
@@ -631,20 +630,20 @@ class TableDefinition(BaseModel):
         max_length=255,
         description="Table name as defined in the source schema.",
     )
-    schema_name: Optional[str] = Field(
+    schema_name: str | None = Field(
         default=None,
         max_length=255,
         description="Database schema or namespace containing the table.",
     )
-    columns: List[ColumnDefinition] = Field(
+    columns: list[ColumnDefinition] = Field(
         default_factory=list,
         description="Ordered list of column definitions for this table.",
     )
-    primary_keys: List[str] = Field(
+    primary_keys: list[str] = Field(
         default_factory=list,
         description="Column names forming the table's primary key.",
     )
-    row_count: Optional[int] = Field(
+    row_count: int | None = Field(
         default=None,
         ge=0,
         description=(
@@ -652,18 +651,18 @@ class TableDefinition(BaseModel):
             "None if unavailable without accessing data."
         ),
     )
-    erp_module: Optional[ERPModule] = Field(
+    erp_module: ERPModule | None = Field(
         default=None,
         description="ERP functional module this table belongs to.",
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         max_length=2000,
         description="Table description or catalog comment.",
     )
 
     @model_validator(mode="after")
-    def validate_primary_keys_in_columns(self) -> "TableDefinition":
+    def validate_primary_keys_in_columns(self) -> TableDefinition:
         """Verify that all primary key column names exist in the column list.
 
         Returns:
@@ -720,15 +719,15 @@ class SchemaDefinition(BaseModel):
         ...,
         description="ERP system type that was discovered.",
     )
-    erp_modules: List[ERPModule] = Field(
+    erp_modules: list[ERPModule] = Field(
         default_factory=list,
         description="ERP modules included in this discovery.",
     )
-    tables: List[TableDefinition] = Field(
+    tables: list[TableDefinition] = Field(
         default_factory=list,
         description="Discovered table definitions with column metadata.",
     )
-    relationships: List[RelationshipDefinition] = Field(
+    relationships: list[RelationshipDefinition] = Field(
         default_factory=list,
         description="Foreign key relationships between discovered tables.",
     )
@@ -755,7 +754,7 @@ class SchemaDefinition(BaseModel):
             "or 'failed'."
         ),
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=128,
@@ -786,7 +785,7 @@ class SchemaDefinition(BaseModel):
         return normalised
 
     @model_validator(mode="after")
-    def validate_totals_consistency(self) -> "SchemaDefinition":
+    def validate_totals_consistency(self) -> SchemaDefinition:
         """Ensure total counts are consistent with the actual list lengths.
 
         If ``total_tables`` or ``total_relationships`` are explicitly set to
