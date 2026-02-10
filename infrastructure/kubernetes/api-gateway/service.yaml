@@ -1,0 +1,108 @@
+# =============================================================================
+# Kubernetes Service: API Gateway
+# =============================================================================
+# LoadBalancer Service for the API Gateway — primary entry point for all
+# external REST API traffic (/api/v1/*) to the Synthetic ERP Data Generation
+# Platform. This is the ONLY externally-accessible backend service; all other
+# microservices (generation-engine, profiling-service, quality-service,
+# compliance-service, provisioning-service) use ClusterIP and are reachable
+# only within the cluster.
+#
+# The Ingress controller (ingress.yaml) routes /api/v1/* and /health to this
+# service for TLS 1.3 termination and path-based routing.
+#
+# Service name 'api-gateway' matches Kubernetes DNS-based service discovery,
+# allowing internal services to reach the gateway at http://api-gateway:5000.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: synthetic-erp-platform
+  labels:
+    # Primary selector label — matches the Deployment pod template labels
+    app: api-gateway
+    # Kubernetes recommended labels (https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/)
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: api-gateway
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Human-readable description for operational clarity
+    description: >-
+      LoadBalancer Service for the API Gateway — primary entry point for all
+      REST API traffic (/api/v1/*). Routes external traffic to Flask 3.1.x
+      application running via Gunicorn on port 5000.
+    # Prometheus annotations enable automatic metrics scraping from the
+    # /metrics monitoring endpoint exposed by the API Gateway
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5000"
+    prometheus.io/path: "/metrics"
+spec:
+  # ---------------------------------------------------------------------------
+  # Service Type: LoadBalancer
+  # ---------------------------------------------------------------------------
+  # LoadBalancer provisions a cloud provider load balancer (AWS ELB/NLB,
+  # Azure LB, GCP LB) that routes external traffic to the API Gateway pods.
+  # This is the sole externally-accessible backend service in the platform.
+  # All other services use ClusterIP for internal-only communication.
+  # ---------------------------------------------------------------------------
+  type: LoadBalancer
+
+  # ---------------------------------------------------------------------------
+  # Selector: Matches API Gateway Deployment Pod Labels
+  # ---------------------------------------------------------------------------
+  # The selector targets pods with the label 'app: api-gateway', which is
+  # defined in the API Gateway Deployment (deployment.yaml) pod template.
+  # Kubernetes routes traffic only to pods matching this selector that have
+  # passed their readiness probe (httpGet /ready on port 5000).
+  # ---------------------------------------------------------------------------
+  selector:
+    app: api-gateway
+
+  # ---------------------------------------------------------------------------
+  # Port Configuration
+  # ---------------------------------------------------------------------------
+  # Port 5000 is the Flask application port configured via Gunicorn 21.x.
+  # The WSGI server binds to 0.0.0.0:5000 as specified in the ConfigMap
+  # (GUNICORN_BIND: "0.0.0.0:5000"). Both the service port and the target
+  # container port are 5000 for direct mapping simplicity.
+  # ---------------------------------------------------------------------------
+  ports:
+    - name: http
+      protocol: TCP
+      port: 5000
+      targetPort: 5000
+
+  # ---------------------------------------------------------------------------
+  # Session Affinity: None
+  # ---------------------------------------------------------------------------
+  # No session affinity is required because the API Gateway is stateless;
+  # authentication state is managed via JWT tokens and session data is stored
+  # in Redis. Any pod can handle any request, enabling optimal load balancing.
+  # ---------------------------------------------------------------------------
+  sessionAffinity: None
+
+  # ---------------------------------------------------------------------------
+  # External Traffic Policy: Local
+  # ---------------------------------------------------------------------------
+  # Setting externalTrafficPolicy to Local preserves the original client
+  # source IP address when traffic arrives at the API Gateway pods. This is
+  # critical for two platform requirements:
+  #
+  #   1. Rate Limiting — The tiered rate limiter (60/300/1000 req/min) uses
+  #      client IP as one dimension for per-client throttling via Redis.
+  #      Without source IP preservation, all requests appear from the node IP
+  #      and rate limiting cannot distinguish individual clients.
+  #
+  #   2. Audit Logging — SOC 2 Type II compliance requires tamper-evident
+  #      audit trails that include the originating client IP address. The
+  #      compliance service and audit_logs MongoDB collection record source
+  #      IPs for every authenticated API action.
+  #
+  # Trade-off: 'Local' may cause uneven load distribution if pods are not
+  # evenly spread across nodes. The Deployment's podAntiAffinity rule and
+  # topologySpreadConstraints mitigate this by distributing pods across nodes.
+  # ---------------------------------------------------------------------------
+  externalTrafficPolicy: Local
