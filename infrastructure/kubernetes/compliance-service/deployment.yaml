@@ -1,0 +1,365 @@
+# ============================================================================
+# Compliance Service - Kubernetes Deployment Manifest
+# ============================================================================
+# Deploys the PII detection and regulatory verification service (GDPR, HIPAA,
+# CCPA) for the Synthetic-ERP-Data-Generation-Platform. This Flask application
+# runs on port 5004 and uses spaCy NLP models for entity recognition and regex
+# pattern matching for PII detection. Enforces zero PII leakage in all
+# generated datasets through automated scanning and compliance certification.
+#
+# Higher memory allocation (4Gi limit) is required for spaCy language models
+# (en_core_web_lg ~560MB). The startup probe allows up to ~160s for model
+# loading. An init container pre-downloads spaCy models to support air-gapped
+# deployment scenarios.
+#
+# Referenced by: Compliance Service HPA (1-5 replicas at 70% CPU)
+# Called by: Generation Engine (POST /verify), API Gateway (compliance queries)
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compliance-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: compliance-service
+    app.kubernetes.io/name: compliance-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: compliance
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Compliance Service deployment for PII detection (spaCy NLP + regex),
+      regulatory verification (GDPR, HIPAA, CCPA), dataset compliance
+      certification with tamper-evident signing, and SOC 2 Type II audit
+      logging with 7-year retention.
+spec:
+  # -----------------------------------------------------------------------
+  # Replica and Update Strategy
+  # -----------------------------------------------------------------------
+  # Base replica count is 1; the Compliance Service HPA scales from 1 to 5
+  # replicas based on 70% CPU utilization threshold.
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: compliance-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Allow one extra pod during update for zero-downtime deployments
+      maxSurge: 1
+      # Never reduce below current replica count during rollout
+      maxUnavailable: 0
+
+  # -----------------------------------------------------------------------
+  # Pod Template
+  # -----------------------------------------------------------------------
+  template:
+    metadata:
+      labels:
+        app: compliance-service
+        app.kubernetes.io/name: compliance-service
+        app.kubernetes.io/part-of: synthetic-erp-platform
+        app.kubernetes.io/component: compliance
+      annotations:
+        # Prometheus metrics scraping configuration
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5004"
+        prometheus.io/path: "/metrics"
+    spec:
+      # -------------------------------------------------------------------
+      # Pod-Level Configuration
+      # -------------------------------------------------------------------
+      serviceAccountName: compliance-service
+      terminationGracePeriodSeconds: 60
+
+      # Pod-level security context enforcing non-root execution
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      # Topology spread constraints for high availability across zones
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: compliance-service
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: compliance-service
+
+      # -------------------------------------------------------------------
+      # Init Container - spaCy Model Downloader
+      # -------------------------------------------------------------------
+      # Downloads the en_core_web_lg spaCy model to the shared volume before
+      # the main container starts. In air-gapped environments, replace this
+      # init container with a PersistentVolumeClaim pre-loaded with models
+      # from a private artifact repository.
+      initContainers:
+        - name: download-spacy-models
+          image: synthetic-erp-platform/compliance-service:latest
+          imagePullPolicy: Always
+          command:
+            - "python"
+            - "-c"
+            - |
+              import subprocess
+              import sys
+              import os
+
+              model_path = "/models/spacy"
+              model_name = "en_core_web_lg"
+
+              print(f"Downloading spaCy model '{model_name}' to '{model_path}'...")
+              os.makedirs(model_path, exist_ok=True)
+
+              result = subprocess.run(
+                  [sys.executable, "-m", "spacy", "download", model_name,
+                   "--direct"],
+                  capture_output=True, text=True
+              )
+
+              if result.returncode != 0:
+                  print(f"Error downloading model: {result.stderr}", file=sys.stderr)
+                  sys.exit(1)
+
+              # Copy model to the shared volume mount path
+              import spacy
+              nlp = spacy.load(model_name)
+              nlp.to_disk(os.path.join(model_path, model_name))
+              print(f"Successfully installed spaCy model '{model_name}' at '{model_path}/{model_name}'")
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - "ALL"
+          volumeMounts:
+            - name: spacy-models
+              mountPath: /models/spacy
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: cache-volume
+              mountPath: /app/cache
+
+      # -------------------------------------------------------------------
+      # Main Container - Compliance Service
+      # -------------------------------------------------------------------
+      containers:
+        - name: compliance-service
+          image: synthetic-erp-platform/compliance-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 5004
+              protocol: TCP
+
+          # -----------------------------------------------------------------
+          # Resource Limits
+          # -----------------------------------------------------------------
+          # Higher memory allocation required for spaCy NLP models:
+          # - en_core_web_lg model: ~560MB in memory
+          # - Additional memory for NLP pipeline processing
+          # - Requests: 500m CPU / 1Gi memory (guaranteed)
+          # - Limits: 2 CPU / 4Gi memory (burstable for heavy PII scans)
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+
+          # -----------------------------------------------------------------
+          # Environment Variables from ConfigMap
+          # -----------------------------------------------------------------
+          # Bulk inject non-sensitive configuration from the ConfigMap
+          envFrom:
+            - configMapRef:
+                name: compliance-service-config
+
+          # -----------------------------------------------------------------
+          # Individual Environment Variables
+          # -----------------------------------------------------------------
+          env:
+            # Flask application configuration
+            - name: FLASK_APP
+              value: "app:create_app"
+            - name: SERVICE_NAME
+              value: "compliance-service"
+            - name: SERVICE_PORT
+              value: "5004"
+
+            # Structured JSON logging configuration
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: LOG_FORMAT
+              value: "json"
+
+            # Compliance framework configuration
+            # Enables GDPR, HIPAA, and CCPA regulatory verification
+            - name: COMPLIANCE_FRAMEWORKS
+              value: "GDPR,HIPAA,CCPA"
+
+            # PII detection confidence threshold (0.0 - 1.0)
+            # Set to 0.85 for high-precision PII detection with acceptable recall
+            - name: PII_DETECTION_CONFIDENCE_THRESHOLD
+              value: "0.85"
+
+            # spaCy NLP model configuration for entity recognition
+            - name: SPACY_MODEL_PATH
+              value: "/models/spacy"
+            - name: SPACY_MODEL_NAME
+              value: "en_core_web_lg"
+
+            # Audit logging configuration for SOC 2 Type II compliance
+            - name: AUDIT_LOG_ENABLED
+              value: "true"
+            # 7-year retention as required by SOC 2 Type II
+            - name: AUDIT_LOG_RETENTION_YEARS
+              value: "7"
+
+            # OpenTelemetry distributed tracing configuration
+            - name: OTEL_SERVICE_NAME
+              value: "compliance-service"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring:4317"
+
+            # -----------------------------------------------------------------
+            # Environment Variables from Secrets
+            # -----------------------------------------------------------------
+            # MongoDB connection credentials (from Sealed Secrets)
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_URI
+            - name: MONGODB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_DATABASE
+
+            # JWT authentication key for inter-service token validation
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-keys
+                  key: JWT_SECRET_KEY
+
+            # AES-256 encryption key for data at rest encryption
+            - name: AES_256_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: AES_256_KEY
+
+            # Flask session encryption key
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: FLASK_SECRET_KEY
+
+          # -----------------------------------------------------------------
+          # Container Security Context
+          # -----------------------------------------------------------------
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - "ALL"
+
+          # -----------------------------------------------------------------
+          # Health Probes
+          # -----------------------------------------------------------------
+          # Liveness probe: Detects if the service is stuck or deadlocked.
+          # Uses /health endpoint which performs a basic application check.
+          # initialDelaySeconds: 30 accounts for spaCy model loading time.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5004
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Readiness probe: Determines if the service is ready to accept
+          # traffic. Uses /ready endpoint which verifies MongoDB connectivity
+          # and spaCy model availability.
+          # initialDelaySeconds: 45 allows additional time for model warm-up
+          # after loading.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5004
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Startup probe: Protects slow-starting containers. With
+          # failureThreshold=15 and periodSeconds=10, allows up to ~160s
+          # for initial spaCy model loading before killing the container.
+          # This prevents the liveness probe from interfering during startup.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5004
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 15
+
+          # -----------------------------------------------------------------
+          # Volume Mounts
+          # -----------------------------------------------------------------
+          volumeMounts:
+            # Pre-downloaded spaCy language models (populated by init container)
+            - name: spacy-models
+              mountPath: /models/spacy
+              readOnly: true
+            # Writable /tmp directory required by readOnlyRootFilesystem
+            - name: tmp-volume
+              mountPath: /tmp
+            # Application cache directory for intermediate processing results
+            - name: cache-volume
+              mountPath: /app/cache
+
+      # -------------------------------------------------------------------
+      # Volumes
+      # -------------------------------------------------------------------
+      volumes:
+        # spaCy model volume: populated by init container, read by main
+        # container. In air-gapped environments, replace emptyDir with a
+        # PersistentVolumeClaim pointing to pre-loaded model storage:
+        #   persistentVolumeClaim:
+        #     claimName: spacy-models-pvc
+        - name: spacy-models
+          emptyDir: {}
+        # Temporary directory for scratch files (readOnlyRootFilesystem support)
+        - name: tmp-volume
+          emptyDir: {}
+        # Application cache for compliance scan intermediate results
+        - name: cache-volume
+          emptyDir:
+            sizeLimit: "512Mi"
