@@ -43,11 +43,11 @@ Example:
 
         from profiling_service.app import create_app
 
-        app = create_app('development')
-        app.run(host='0.0.0.0', port=8002)
+        app = create_app("development")
+        app.run(host="0.0.0.0", port=8002)
 """
 
-__version__: str = '1.0.0'
+__version__: str = "1.0.0"
 """Current version of the Profiling Service package.
 
 Follows `Semantic Versioning <https://semver.org/>`_:
@@ -57,12 +57,12 @@ Follows `Semantic Versioning <https://semver.org/>`_:
 """
 
 __all__: list[str] = [
-    'create_app',
-    'ProfilingServiceConfig',
-    'DevelopmentConfig',
-    'TestingConfig',
-    'ProductionConfig',
-    'get_config',
+    "DevelopmentConfig",
+    "ProductionConfig",
+    "ProfilingServiceConfig",
+    "TestingConfig",
+    "create_app",
+    "get_config",
 ]
 """Public API surface of the Profiling Service package.
 
