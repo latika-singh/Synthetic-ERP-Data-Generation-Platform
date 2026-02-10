@@ -1,0 +1,136 @@
+# =============================================================================
+# Namespace Definitions — Synthetic ERP Data Generation Platform
+# =============================================================================
+# This manifest defines the Kubernetes namespaces required for the platform.
+# All other Kubernetes resources (Deployments, Services, StatefulSets, etc.)
+# reference these namespaces and cannot be deployed without them.
+#
+# Namespaces created:
+#   1. synthetic-erp-platform  — Main application namespace hosting all
+#      microservices (API Gateway, Generation Engine, Profiling Service,
+#      Quality Service, Compliance Service, Provisioning Service), data stores
+#      (MongoDB, Redis), and supporting infrastructure.
+#   2. monitoring               — Observability stack namespace hosting
+#      Prometheus, Grafana, OpenTelemetry Collector, and related components.
+#
+# Pod Security Standards (Kubernetes 1.29+):
+#   - The synthetic-erp-platform namespace enforces the "restricted" PSS
+#     profile at all three levels (enforce, audit, warn), requiring containers
+#     to run as non-root, drop ALL capabilities, use a read-only root
+#     filesystem, and set a seccomp profile.
+#   - The monitoring namespace enforces the "baseline" PSS profile (enforce)
+#     and audits against "restricted", allowing observability agents that may
+#     require hostNetwork or hostPort while still logging stricter violations.
+#
+# Multi-Tenant Architecture:
+#   Tenant-specific namespaces are provisioned dynamically by the platform's
+#   tenant management system. This manifest covers the core platform namespaces
+#   only. Tenant namespaces follow the naming convention:
+#     synthetic-erp-tenant-<tenant_id>
+#   and inherit resource quotas from the template in resource-quotas.yaml.
+#
+# Prerequisites:
+#   - Kubernetes cluster version 1.29+ with PodSecurity admission controller
+#   - kubectl configured with cluster-admin or namespace-create RBAC
+#
+# Usage:
+#   kubectl apply -f infrastructure/kubernetes/namespace.yaml
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Namespace: synthetic-erp-platform
+# Purpose: Primary application namespace for all platform workloads
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: synthetic-erp-platform
+  labels:
+    # --- Kubernetes recommended labels ---
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/name: synthetic-erp-platform
+    app.kubernetes.io/version: "1.0.0"
+
+    # --- Pod Security Standards (Kubernetes 1.29+) ---
+    # Enforce: Reject pods that do not satisfy the "restricted" policy.
+    pod-security.kubernetes.io/enforce: restricted
+    # Enforce version pinned to the minimum supported Kubernetes release.
+    pod-security.kubernetes.io/enforce-version: "v1.29"
+    # Audit: Log violations against the "restricted" policy for monitoring.
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: "v1.29"
+    # Warn: Surface warnings to users submitting non-compliant pod specs.
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: "v1.29"
+
+    # --- Istio service mesh injection ---
+    # Enable automatic Envoy sidecar injection for mTLS between services.
+    istio-injection: enabled
+
+    # --- Environment and organizational labels ---
+    environment: production
+    team: platform-engineering
+    cost-center: synthetic-erp
+
+  annotations:
+    # Human-readable description of the namespace purpose.
+    description: "Main application namespace for the Synthetic ERP Data Generation Platform"
+    # Default tolerations for pods scheduled in this namespace.
+    scheduler.alpha.kubernetes.io/defaultTolerations: "[]"
+    # Contact information for the team owning this namespace.
+    contact: "platform-engineering@example.com"
+    # Compliance classification for audit trail purposes (SOC 2 Type II).
+    compliance/classification: "soc2-type-ii"
+    compliance/data-sensitivity: "high"
+
+---
+
+# -----------------------------------------------------------------------------
+# Namespace: monitoring
+# Purpose: Observability stack — Prometheus, Grafana, OpenTelemetry Collector
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    # --- Kubernetes recommended labels ---
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/name: monitoring
+    app.kubernetes.io/version: "1.0.0"
+
+    # --- Pod Security Standards (Kubernetes 1.29+) ---
+    # Enforce: Use "baseline" for monitoring agents that may need host access
+    # (e.g., node-exporter with hostNetwork, or Prometheus with hostPath for
+    # service discovery). "baseline" still prevents known privilege escalations.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: "v1.29"
+    # Audit: Log violations against the stricter "restricted" policy so the
+    # team can track which monitoring components deviate from best practices.
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: "v1.29"
+    # Warn: Surface warnings for "restricted" violations during deploys.
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: "v1.29"
+
+    # --- Istio service mesh injection ---
+    # Disable sidecar injection for monitoring components to avoid
+    # circular dependencies (Prometheus scraping Envoy metrics).
+    istio-injection: disabled
+
+    # --- Environment and organizational labels ---
+    environment: production
+    team: platform-engineering
+    cost-center: synthetic-erp-observability
+
+  annotations:
+    # Human-readable description of the namespace purpose.
+    description: "Observability stack namespace for Prometheus, Grafana, and OpenTelemetry Collector"
+    # Contact information for the team owning this namespace.
+    contact: "platform-engineering@example.com"
+    # Monitoring namespaces do not hold application data, lower sensitivity.
+    compliance/classification: "soc2-type-ii"
+    compliance/data-sensitivity: "low"
