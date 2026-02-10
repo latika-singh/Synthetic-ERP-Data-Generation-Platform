@@ -26,15 +26,16 @@ Typical usage::
 """
 
 import io
-from typing import Optional, Dict, List, Union, Any
-from pathlib import Path
+from datetime import UTC, datetime
 from enum import Enum
-from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pandas as pd
 from pydantic import BaseModel, Field
+
 
 # Import BaseFormatter from sibling base module to implement the formatter interface.
 # All concrete formatters (SQL, CSV, JSON, Parquet) extend BaseFormatter for consistent
@@ -59,8 +60,8 @@ except ImportError:
             self,
             data: pd.DataFrame,
             table_name: str,
-            column_definitions: dict = None,
-        ) -> Union[str, bytes]:
+            column_definitions: dict | None = None,
+        ) -> str | bytes:
             """Format data to output string or bytes."""
             ...
 
@@ -111,7 +112,7 @@ PLATFORM_VERSION: str = "1.0.0"
 # Maps ERP system column type names (uppercase) to PyArrow type constructors.
 # Covers common data types across SAP, Oracle EBS, Microsoft Dynamics, and
 # legacy systems supported by the platform.
-ERP_TYPE_MAP: Dict[str, pa.DataType] = {
+ERP_TYPE_MAP: dict[str, pa.DataType] = {
     # String types
     "VARCHAR": pa.string(),
     "CHAR": pa.string(),
@@ -240,7 +241,7 @@ class ParquetFormatterConfig(BaseModel):
         default=ParquetCompression.SNAPPY,
         description="Compression algorithm for Parquet columns",
     )
-    compression_level: Optional[int] = Field(
+    compression_level: int | None = Field(
         default=None,
         description="Codec-specific compression level (None = use codec default)",
     )
@@ -257,7 +258,7 @@ class ParquetFormatterConfig(BaseModel):
         default=True,
         description="Write min/max/null_count column statistics per row group",
     )
-    coerce_timestamps: Optional[str] = Field(
+    coerce_timestamps: str | None = Field(
         default="us",
         description="Timestamp resolution: 'ms', 'us', or 'ns'",
     )
@@ -273,20 +274,20 @@ class ParquetFormatterConfig(BaseModel):
         default="2.6",
         description="Parquet format version",
     )
-    data_page_size: Optional[int] = Field(
+    data_page_size: int | None = Field(
         default=None,
         gt=0,
         description="Target data page size in bytes",
     )
-    flavor: Optional[str] = Field(
+    flavor: str | None = Field(
         default=None,
         description="Compatibility mode: 'spark' for Spark optimizations",
     )
-    file_metadata: Optional[Dict[str, str]] = Field(
+    file_metadata: dict[str, str] | None = Field(
         default=None,
         description="Custom key-value metadata pairs for Parquet file footer",
     )
-    max_rows_per_file: Optional[int] = Field(
+    max_rows_per_file: int | None = Field(
         default=None,
         gt=0,
         description="Maximum rows per file; enables partitioned output",
@@ -347,16 +348,14 @@ class ParquetFormatter(BaseFormatter):
             configuration with Snappy compression and 100K row groups.
     """
 
-    def __init__(self, config: Optional[ParquetFormatterConfig] = None) -> None:
+    def __init__(self, config: ParquetFormatterConfig | None = None) -> None:
         """Initialize the Parquet formatter with configuration.
 
         Args:
             config: Parquet formatting configuration. If None, creates a default
                 configuration with Snappy compression and 100,000-row groups.
         """
-        self._config: ParquetFormatterConfig = (
-            config if config is not None else ParquetFormatterConfig()
-        )
+        self._config: ParquetFormatterConfig = config if config is not None else ParquetFormatterConfig()
 
     # ------------------------------------------------------------------
     # Public Interface — BaseFormatter Implementation
@@ -366,7 +365,7 @@ class ParquetFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Optional[Dict[str, Any]] = None,
+        column_definitions: dict[str, Any] | None = None,
     ) -> bytes:
         """Format a complete DataFrame to Parquet bytes.
 
@@ -396,15 +395,9 @@ class ParquetFormatter(BaseFormatter):
         Raises:
             pyarrow.ArrowInvalid: If data types cannot be converted to Arrow types.
         """
-        arrow_schema = (
-            self._build_arrow_schema(column_definitions)
-            if column_definitions
-            else None
-        )
+        arrow_schema = self._build_arrow_schema(column_definitions) if column_definitions else None
         table = self._dataframe_to_table(data, arrow_schema)
-        enriched_schema = self._add_file_metadata(
-            table.schema, table_name, record_count=len(data)
-        )
+        enriched_schema = self._add_file_metadata(table.schema, table_name, record_count=len(data))
         table = table.replace_schema_metadata(enriched_schema.metadata)
 
         buffer = io.BytesIO()
@@ -416,8 +409,8 @@ class ParquetFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Optional[Dict[str, Any]] = None,
-        output: Optional[io.IOBase] = None,
+        column_definitions: dict[str, Any] | None = None,
+        output: io.IOBase | None = None,
     ) -> None:
         """Write Parquet data to an output stream.
 
@@ -443,15 +436,9 @@ class ParquetFormatter(BaseFormatter):
                 "Pass a writable binary stream (e.g., open file handle or BytesIO)."
             )
 
-        arrow_schema = (
-            self._build_arrow_schema(column_definitions)
-            if column_definitions
-            else None
-        )
+        arrow_schema = self._build_arrow_schema(column_definitions) if column_definitions else None
         table = self._dataframe_to_table(data, arrow_schema)
-        enriched_schema = self._add_file_metadata(
-            table.schema, table_name, record_count=len(data)
-        )
+        enriched_schema = self._add_file_metadata(table.schema, table_name, record_count=len(data))
         table = table.replace_schema_metadata(enriched_schema.metadata)
 
         write_options = self._get_write_options()
@@ -466,9 +453,7 @@ class ParquetFormatter(BaseFormatter):
             write_statistics=write_options.get("write_statistics", True),
             flavor=self._config.flavor,
             coerce_timestamps=write_options.get("coerce_timestamps"),
-            allow_truncated_timestamps=write_options.get(
-                "allow_truncated_timestamps", False
-            ),
+            allow_truncated_timestamps=write_options.get("allow_truncated_timestamps", False),
             data_page_size=write_options.get("data_page_size"),
             use_deprecated_int96_timestamps=self._config.use_deprecated_int96_timestamps,
         )
@@ -493,8 +478,8 @@ class ParquetFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Optional[Dict[str, Any]] = None,
-        file_path: Optional[str] = None,
+        column_definitions: dict[str, Any] | None = None,
+        file_path: str | None = None,
     ) -> str:
         """Write Parquet data directly to a file path.
 
@@ -519,22 +504,15 @@ class ParquetFormatter(BaseFormatter):
         """
         if file_path is None:
             raise ValueError(
-                "file_path must be provided for format_to_file(). "
-                "Supply the destination path for the Parquet output."
+                "file_path must be provided for format_to_file(). Supply the destination path for the Parquet output."
             )
 
         output_path = Path(file_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        arrow_schema = (
-            self._build_arrow_schema(column_definitions)
-            if column_definitions
-            else None
-        )
+        arrow_schema = self._build_arrow_schema(column_definitions) if column_definitions else None
         table = self._dataframe_to_table(data, arrow_schema)
-        enriched_schema = self._add_file_metadata(
-            table.schema, table_name, record_count=len(data)
-        )
+        enriched_schema = self._add_file_metadata(table.schema, table_name, record_count=len(data))
         table = table.replace_schema_metadata(enriched_schema.metadata)
 
         write_options = self._get_write_options()
@@ -546,9 +524,9 @@ class ParquetFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Optional[Dict[str, Any]] = None,
-        output_dir: Optional[str] = None,
-    ) -> List[str]:
+        column_definitions: dict[str, Any] | None = None,
+        output_dir: str | None = None,
+    ) -> list[str]:
         """Split data into multiple Parquet files based on max_rows_per_file.
 
         Partitions a large DataFrame into multiple Parquet files, each containing
@@ -591,28 +569,20 @@ class ParquetFormatter(BaseFormatter):
         if max_rows is None or total_rows <= max_rows:
             file_name = f"{table_name}_part_00000{self.get_file_extension()}"
             single_path = str(output_path / file_name)
-            written_path = self.format_to_file(
-                data, table_name, column_definitions, single_path
-            )
+            written_path = self.format_to_file(data, table_name, column_definitions, single_path)
             return [written_path]
 
-        written_files: List[str] = []
-        part_index = 0
+        written_files: list[str] = []
 
-        for start_idx in range(0, total_rows, max_rows):
+        for part_index, start_idx in enumerate(range(0, total_rows, max_rows)):
             end_idx = min(start_idx + max_rows, total_rows)
             chunk = data.iloc[start_idx:end_idx].reset_index(drop=True)
 
-            file_name = (
-                f"{table_name}_part_{part_index:05d}{self.get_file_extension()}"
-            )
+            file_name = f"{table_name}_part_{part_index:05d}{self.get_file_extension()}"
             chunk_path = str(output_path / file_name)
 
-            written_path = self.format_to_file(
-                chunk, table_name, column_definitions, chunk_path
-            )
+            written_path = self.format_to_file(chunk, table_name, column_definitions, chunk_path)
             written_files.append(written_path)
-            part_index += 1
 
         return written_files
 
@@ -639,9 +609,7 @@ class ParquetFormatter(BaseFormatter):
     # Private Helpers
     # ------------------------------------------------------------------
 
-    def _build_arrow_schema(
-        self, column_definitions: Optional[Dict[str, Any]]
-    ) -> Optional[pa.Schema]:
+    def _build_arrow_schema(self, column_definitions: dict[str, Any] | None) -> pa.Schema | None:
         """Build a PyArrow Schema from ERP column type definitions.
 
         Maps ERP system column type names to PyArrow data types using the
@@ -677,7 +645,7 @@ class ParquetFormatter(BaseFormatter):
         if not column_definitions:
             return None
 
-        fields: List[pa.Field] = []
+        fields: list[pa.Field] = []
 
         for col_name, col_def in column_definitions.items():
             # Extract type information based on definition format
@@ -716,7 +684,7 @@ class ParquetFormatter(BaseFormatter):
     def _dataframe_to_table(
         self,
         data: pd.DataFrame,
-        schema: Optional[pa.Schema] = None,
+        schema: pa.Schema | None = None,
     ) -> pa.Table:
         """Convert a pandas DataFrame to a PyArrow Table.
 
@@ -756,15 +724,13 @@ class ParquetFormatter(BaseFormatter):
             ):
                 # Fallback: convert without schema, then cast columns individually
                 table = pa.Table.from_pandas(data, preserve_index=False)
-                cast_columns: Dict[str, pa.Array] = {}
+                cast_columns: dict[str, pa.Array] = {}
 
                 for field in schema:
                     if field.name in data.columns:
                         source_col = table.column(field.name)
                         try:
-                            cast_columns[field.name] = source_col.cast(
-                                field.type, safe=False
-                            )
+                            cast_columns[field.name] = source_col.cast(field.type, safe=False)
                         except (
                             pa.ArrowInvalid,
                             pa.ArrowNotImplementedError,
@@ -774,9 +740,7 @@ class ParquetFormatter(BaseFormatter):
                             cast_columns[field.name] = source_col
                     else:
                         # Column defined in schema but absent in data: fill nulls
-                        cast_columns[field.name] = pa.nulls(
-                            len(data), type=field.type
-                        )
+                        cast_columns[field.name] = pa.nulls(len(data), type=field.type)
 
                 # Rebuild table with cast columns in schema field order
                 table = pa.table(cast_columns)
@@ -785,7 +749,7 @@ class ParquetFormatter(BaseFormatter):
 
         return table
 
-    def _get_write_options(self) -> Dict[str, Any]:
+    def _get_write_options(self) -> dict[str, Any]:
         """Build pq.write_table() keyword arguments from configuration.
 
         Translates the ParquetFormatterConfig fields into the keyword arguments
@@ -797,27 +761,22 @@ class ParquetFormatter(BaseFormatter):
             Dict of keyword arguments for ``pq.write_table()``.
         """
         # Determine compression value: None means no compression in PyArrow
-        compression_value: Optional[str] = None
+        compression_value: str | None = None
         if self._config.compression != ParquetCompression.NONE:
             compression_value = self._config.compression.value
 
-        options: Dict[str, Any] = {
+        options: dict[str, Any] = {
             "compression": compression_value,
             "row_group_size": self._config.row_group_size,
             "use_dictionary": self._config.use_dictionary,
             "write_statistics": self._config.write_statistics,
             "version": self._config.version,
-            "use_deprecated_int96_timestamps": (
-                self._config.use_deprecated_int96_timestamps
-            ),
+            "use_deprecated_int96_timestamps": (self._config.use_deprecated_int96_timestamps),
             "allow_truncated_timestamps": self._config.allow_truncated_timestamps,
         }
 
         # Add optional compression level when specified
-        if (
-            self._config.compression_level is not None
-            and compression_value is not None
-        ):
+        if self._config.compression_level is not None and compression_value is not None:
             options["compression_level"] = self._config.compression_level
 
         # Add timestamp coercion setting
@@ -865,12 +824,10 @@ class ParquetFormatter(BaseFormatter):
             immutable, so a new instance is returned.
         """
         # Build platform metadata using bytes keys/values as required by Arrow
-        metadata: Dict[bytes, bytes] = {
+        metadata: dict[bytes, bytes] = {
             b"table_name": table_name.encode("utf-8"),
             b"generated_by": b"Synthetic-ERP-Data-Generation-Platform",
-            b"generated_at": (
-                datetime.now(timezone.utc).isoformat().encode("utf-8")
-            ),
+            b"generated_at": (datetime.now(UTC).isoformat().encode("utf-8")),
             b"record_count": str(record_count).encode("utf-8"),
             b"platform_version": PLATFORM_VERSION.encode("utf-8"),
         }
@@ -882,15 +839,13 @@ class ParquetFormatter(BaseFormatter):
 
         # Preserve any existing schema metadata (e.g., from pandas conversion)
         if schema.metadata:
-            existing: Dict[bytes, bytes] = dict(schema.metadata)
+            existing: dict[bytes, bytes] = dict(schema.metadata)
             existing.update(metadata)
             metadata = existing
 
         return schema.with_metadata(metadata)
 
-    def _get_column_encoding(
-        self, column_name: str, column_type: str
-    ) -> Optional[str]:
+    def _get_column_encoding(self, _column_name: str, column_type: str) -> str | None:
         """Select optimal column encoding based on data type.
 
         Determines the best Parquet encoding for a column based on its ERP

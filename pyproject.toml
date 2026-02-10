@@ -286,6 +286,9 @@ module = [
     "provisioning_service.connectors.*",
     "provisioning_service.cloud.*",
     "provisioning_service.exporters.*",
+    "generation_engine.formatters.sql_formatter",
+    "generation_engine.formatters.csv_formatter",
+    "generation_engine.formatters.json_formatter",
 ]
 ignore_missing_imports = true
 follow_untyped_imports = true
