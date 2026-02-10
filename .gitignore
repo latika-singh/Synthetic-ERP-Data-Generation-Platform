@@ -1,0 +1,434 @@
+# =============================================================================
+# Synthetic-ERP-Data-Generation-Platform — Monorepo .gitignore
+# Covers: Python, Node.js, Terraform, Docker, IDE, Environment, Logs,
+#         Build Artifacts, Test Outputs, and ML Model files
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Python
+# -----------------------------------------------------------------------------
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions and shared objects
+*.pyd
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# Linters and formatters
+.ruff_cache/
+.pylint.d/
+
+# Celery / async task queues
+celerybeat-schedule
+celerybeat.pid
+
+# Sphinx documentation
+docs/_build/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Cython debug symbols
+cython_debug/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+# poetry.lock  (uncomment if not using poetry for dependency locking)
+
+# PEP 582 – local packages directory
+__pypackages__/
+
+# -----------------------------------------------------------------------------
+# 2. Node.js
+# -----------------------------------------------------------------------------
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+
+# Nuxt.js build output
+.nuxt/
+
+# Production build output
+out/
+dist/
+
+# Cache directories
+.cache/
+.parcel-cache/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# ESLint cache
+.eslintcache
+
+# Stylelint cache
+.stylelintcache
+
+# Vite
+.vite/
+
+# Optional npm cache
+.npm/
+
+# Optional eslint cache
+.eslintcache
+
+# yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Storybook build
+storybook-static/
+
+# -----------------------------------------------------------------------------
+# 3. Terraform
+# -----------------------------------------------------------------------------
+# Local .terraform directory
+.terraform/
+
+# State files (contain sensitive information)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfstate.*.backup
+
+# Crash log files
+crash.log
+crash.*.log
+
+# tfvars files — exclude all EXCEPT example files
+# (production, staging, and dev tfvars may contain secrets)
+*.tfvars
+!*.tfvars.example
+!*example.tfvars
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration files
+.terraformrc
+terraform.rc
+
+# Terraform lock file (generated, provider-specific)
+.terraform.lock.hcl
+
+# Terraform plan output
+*.tfplan
+
+# -----------------------------------------------------------------------------
+# 4. Docker
+# -----------------------------------------------------------------------------
+# Docker local config
+.docker/
+
+# Docker Compose override (local developer customizations)
+docker-compose.override.yml
+
+# Docker build context excludes are handled by .dockerignore
+
+# -----------------------------------------------------------------------------
+# 5. IDE and Editor Files
+# -----------------------------------------------------------------------------
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains (IntelliJ, PyCharm, WebStorm, etc.)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim / Neovim
+*.swp
+*.swo
+*.swn
+*~
+Session.vim
+.netrwhist
+tags
+
+# Emacs
+\#*\#
+.#*
+*~
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# -----------------------------------------------------------------------------
+# 6. Operating System Files
+# -----------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+# -----------------------------------------------------------------------------
+# 7. Environment and Secrets
+# -----------------------------------------------------------------------------
+# Environment variable files (may contain secrets)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.staging
+.env.production
+.env.test
+
+# Explicitly allow the example template
+!.env.example
+
+# Secret and credential files
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+secrets.json
+secrets.yaml
+secrets.yml
+credentials.json
+
+# HashiCorp Vault tokens
+.vault-token
+
+# AWS credentials
+.aws/
+
+# Google Cloud credentials
+gcloud/
+service-account*.json
+
+# Azure credentials
+.azure/
+
+# -----------------------------------------------------------------------------
+# 8. Logs
+# -----------------------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+gunicorn-error.log
+gunicorn-access.log
+
+# -----------------------------------------------------------------------------
+# 9. Build Artifacts and Compiled Output
+# -----------------------------------------------------------------------------
+# Python compiled files (also listed in Python section for clarity)
+*.pyc
+*.pyo
+
+# Python egg-info directories
+*.egg-info/
+
+# Java class files (for JDBC drivers if compiled locally)
+*.class
+*.jar
+
+# Coverage and profiling
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+nosetests.xml
+lcov.info
+
+# -----------------------------------------------------------------------------
+# 10. Test Artifacts
+# -----------------------------------------------------------------------------
+# pytest
+.pytest_cache/
+pytest_cache/
+.tox/
+.nox/
+
+# Jest / Vitest
+coverage/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# Locust / k6 reports
+locust_report/
+k6_results/
+
+# Performance test output
+*.jtl
+*.csv.gz
+
+# Allure reports
+allure-results/
+allure-report/
+
+# -----------------------------------------------------------------------------
+# 11. ML Models and Large Binary Files
+# -----------------------------------------------------------------------------
+# Trained model files (too large for version control)
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.onnx
+*.pb
+*.tflite
+*.safetensors
+*.bin
+
+# Model checkpoints
+checkpoints/
+model_cache/
+models/saved/
+
+# Large datasets (generated synthetic data — use cloud storage instead)
+*.parquet
+*.feather
+data/output/
+data/generated/
+data/exports/
+
+# Do NOT ignore small reference/seed data or schema definitions
+# Those should be committed.
+
+# -----------------------------------------------------------------------------
+# 12. Miscellaneous
+# -----------------------------------------------------------------------------
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# Archives
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# Database files (local dev databases)
+*.db
+*.sqlite
+*.sqlite3
+
+# Dump files
+*.dump
+*.sql.gz
+
+# Redis dump
+dump.rdb
+
+# MongoDB local data
+data/db/
+
+# Profiling output
+*.prof
+*.lprof
+
+# Bandit security scan output
+bandit-output.*
+
+# Trivy scan results
+trivy-results.*
+
+# Figma assets downloaded locally (regenerated from Figma)
+figma-assets/
+
+# Sentry CLI
+.sentryclirc
