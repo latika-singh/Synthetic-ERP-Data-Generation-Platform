@@ -29,12 +29,13 @@ Typical usage::
 import base64
 import copy
 import datetime
-from typing import Any, Generic, List, Optional, TypeVar
+from typing import Any, Generic, TypeVar
 
 from bson import ObjectId
 from bson.errors import InvalidId
 from pydantic import BaseModel, Field, field_validator
 from pymongo.collection import Collection
+
 
 # ---------------------------------------------------------------------------
 # Type variable for generic PaginatedResponse
@@ -57,7 +58,7 @@ MIN_PAGE_SIZE: int = 1
 # ---------------------------------------------------------------------------
 # PaginatedResponse model
 # ---------------------------------------------------------------------------
-class PaginatedResponse(BaseModel, Generic[T]):
+class PaginatedResponse(BaseModel, Generic[T]):  # noqa: UP046
     """Standardized paginated response model for MongoDB query results.
 
     Generic Pydantic v2 model that wraps a page of results with cursor tokens
@@ -97,18 +98,18 @@ class PaginatedResponse(BaseModel, Generic[T]):
         True
     """
 
-    items: List[T] = Field(
+    items: list[T] = Field(
         default_factory=list,
         description="The page of result documents.",
     )
-    next_cursor: Optional[str] = Field(
+    next_cursor: str | None = Field(
         default=None,
         description=(
             "Base64-encoded cursor token for the next page. "
             "None when this is the last page."
         ),
     )
-    prev_cursor: Optional[str] = Field(
+    prev_cursor: str | None = Field(
         default=None,
         description=(
             "Base64-encoded cursor token for the previous page. "
@@ -233,7 +234,7 @@ def decode_cursor(cursor: str) -> ObjectId:
 # ---------------------------------------------------------------------------
 # Page-size validation
 # ---------------------------------------------------------------------------
-def validate_page_size(page_size: Optional[int] = None) -> int:
+def validate_page_size(page_size: int | None = None) -> int:
     """Validate and normalize the requested page size.
 
     If *page_size* is ``None``, returns :data:`DEFAULT_PAGE_SIZE`.
@@ -363,12 +364,12 @@ def _serialize_list(items: list) -> list:
 def paginate_query(
     collection: Collection,
     query_filter: dict[str, Any],
-    page_size: Optional[int] = None,
-    cursor: Optional[str] = None,
+    page_size: int | None = None,
+    cursor: str | None = None,
     direction: str = "forward",
     sort_field: str = "_id",
     sort_order: int = 1,
-    projection: Optional[dict[str, Any]] = None,
+    projection: dict[str, Any] | None = None,
 ) -> PaginatedResponse:
     """Execute a cursor-based paginated query on a MongoDB collection.
 
@@ -478,15 +479,14 @@ def paginate_query(
             else:
                 # Descending: fetch documents with _id less than cursor
                 paginated_filter["_id"] = {"$lt": decoded_id}
+        # Backward navigation — temporarily reverse sort so we can
+        # grab the preceding slice, then reverse results later.
+        elif sort_order == 1:
+            paginated_filter["_id"] = {"$lt": decoded_id}
+            effective_sort_order = -1
         else:
-            # Backward navigation — temporarily reverse sort so we can
-            # grab the preceding slice, then reverse results later.
-            if sort_order == 1:
-                paginated_filter["_id"] = {"$lt": decoded_id}
-                effective_sort_order = -1
-            else:
-                paginated_filter["_id"] = {"$gt": decoded_id}
-                effective_sort_order = 1
+            paginated_filter["_id"] = {"$gt": decoded_id}
+            effective_sort_order = 1
 
     # ------------------------------------------------------------------
     # 4. Execute query — fetch page_size + 1 for has_more detection
@@ -497,7 +497,7 @@ def paginate_query(
         .limit(validated_page_size + 1)
     )
 
-    results: List[dict] = list(mongo_cursor)
+    results: list[dict] = list(mongo_cursor)
 
     # ------------------------------------------------------------------
     # 5. Determine has_more and trim
@@ -513,8 +513,8 @@ def paginate_query(
     # ------------------------------------------------------------------
     # 6. Build cursor tokens
     # ------------------------------------------------------------------
-    next_cursor: Optional[str] = None
-    prev_cursor: Optional[str] = None
+    next_cursor: str | None = None
+    prev_cursor: str | None = None
 
     if results:
         if has_more:
@@ -530,7 +530,7 @@ def paginate_query(
     # ------------------------------------------------------------------
     # 8. Serialize documents for JSON-safe output
     # ------------------------------------------------------------------
-    serialized_items: List[dict] = [
+    serialized_items: list[dict] = [
         serialize_document(doc) for doc in results
     ]
 

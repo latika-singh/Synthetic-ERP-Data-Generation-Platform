@@ -57,7 +57,7 @@ from api_gateway.utils.validators import (
 # pagination.py may not exist yet during incremental project generation.
 # ---------------------------------------------------------------------------
 try:
-    from api_gateway.utils.pagination import (  # type: ignore[import-not-found]
+    from api_gateway.utils.pagination import (
         PaginatedResponse,
         decode_cursor,
         encode_cursor,
