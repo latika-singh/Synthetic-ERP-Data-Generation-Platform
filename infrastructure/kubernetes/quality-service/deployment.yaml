@@ -1,0 +1,264 @@
+# =============================================================================
+# Quality Service - Kubernetes Deployment Manifest
+# =============================================================================
+# Deploys the Great Expectations + Pydantic-based data quality validation
+# service as a Flask application on port 5003.
+#
+# Quality Scoring Model:
+#   Q = 0.40 * S_statistical + 0.30 * S_business_rules + 0.30 * S_referential_integrity
+#   Threshold target: >= 0.95 (95% fidelity)
+#
+# Called by the Generation Engine (POST /validate) after batch generation
+# completes to validate synthetic dataset quality before compliance checks.
+#
+# Referenced by the Quality Service HPA for auto-scaling (1-8 replicas at 65% CPU).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quality-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: quality-service
+    app.kubernetes.io/name: quality-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: quality
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Quality Service deployment for the Synthetic ERP Data Generation Platform.
+      Validates generated datasets using Great Expectations with a weighted
+      quality scoring model (40% statistical, 30% business rules, 30% referential
+      integrity) targeting >= 95% fidelity.
+spec:
+  # -------------------------------------------------------------------------
+  # Replica count: starts at 1, HPA scales from 1 to 8 based on 65% CPU
+  # -------------------------------------------------------------------------
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: quality-service
+  # -------------------------------------------------------------------------
+  # Rolling update strategy ensures zero downtime during deployments
+  # maxUnavailable: 0 guarantees no pods are removed before new ones are ready
+  # maxSurge: 1 allows one extra pod during update transitions
+  # -------------------------------------------------------------------------
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: quality-service
+        app.kubernetes.io/name: quality-service
+        app.kubernetes.io/part-of: synthetic-erp-platform
+      annotations:
+        # Prometheus metrics scraping configuration
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5003"
+        prometheus.io/path: "/metrics"
+    spec:
+      # -----------------------------------------------------------------------
+      # Service account for RBAC-based access control within the cluster
+      # -----------------------------------------------------------------------
+      serviceAccountName: quality-service
+      terminationGracePeriodSeconds: 30
+      # -----------------------------------------------------------------------
+      # Pod-level security context enforcing non-root execution for SOC 2
+      # Type II compliance and defense-in-depth container security
+      # -----------------------------------------------------------------------
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      # -----------------------------------------------------------------------
+      # Topology spread constraints ensure high availability by distributing
+      # pods across failure domains (availability zones) when scaled by HPA
+      # -----------------------------------------------------------------------
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: quality-service
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: quality-service
+      containers:
+        - name: quality-service
+          image: synthetic-erp-platform/quality-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5003
+              name: http
+              protocol: TCP
+          # -------------------------------------------------------------------
+          # Resource allocation:
+          #   Requests: 500m CPU / 512Mi memory (scheduling guarantee)
+          #   Limits:   2 CPU / 4Gi memory (hard ceiling)
+          # Quality validation with Great Expectations and statistical analysis
+          # can be memory-intensive during large batch processing (10K records)
+          # -------------------------------------------------------------------
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          # -------------------------------------------------------------------
+          # Environment variables from ConfigMap (bulk injection)
+          # Provides base 12-factor configuration from quality-service-config
+          # -------------------------------------------------------------------
+          envFrom:
+            - configMapRef:
+                name: quality-service-config
+          # -------------------------------------------------------------------
+          # Environment variables: explicit values and secret references
+          # Combines service configuration, quality scoring weights, and
+          # sensitive credentials from Kubernetes Secrets
+          # -------------------------------------------------------------------
+          env:
+            # -- Flask Application Configuration --
+            - name: FLASK_APP
+              value: "app:create_app"
+            - name: SERVICE_NAME
+              value: "quality-service"
+            - name: SERVICE_PORT
+              value: "5003"
+            # -- Logging Configuration --
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: LOG_FORMAT
+              value: "json"
+            # -- Quality Scoring Weights --
+            # Weighted quality scoring model:
+            #   Q = 0.40 * S_statistical + 0.30 * S_business_rules + 0.30 * S_referential_integrity
+            - name: QUALITY_STATISTICAL_WEIGHT
+              value: "0.40"
+            - name: QUALITY_BUSINESS_RULES_WEIGHT
+              value: "0.30"
+            - name: QUALITY_REFERENTIAL_INTEGRITY_WEIGHT
+              value: "0.30"
+            # -- Quality Threshold --
+            # Minimum acceptable quality score (95% fidelity target)
+            - name: QUALITY_THRESHOLD_TARGET
+              value: "0.95"
+            # -- Batch Processing Configuration --
+            - name: QUALITY_BATCH_SIZE
+              value: "10000"
+            # -- Great Expectations Integration --
+            - name: GREAT_EXPECTATIONS_ENABLED
+              value: "true"
+            # -- OpenTelemetry Distributed Tracing --
+            - name: OTEL_SERVICE_NAME
+              value: "quality-service"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring:4317"
+            # -- Secrets: MongoDB Credentials --
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_URI
+            - name: MONGODB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_DATABASE
+            # -- Secrets: JWT Authentication --
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-keys
+                  key: JWT_SECRET_KEY
+            # -- Secrets: Encryption Keys (AES-256 at rest) --
+            - name: AES_256_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: AES_256_KEY
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: FLASK_SECRET_KEY
+          # -------------------------------------------------------------------
+          # Liveness probe: detects hung or deadlocked processes
+          # Restarts container after 3 consecutive failures (45s total)
+          # -------------------------------------------------------------------
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5003
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # -------------------------------------------------------------------
+          # Readiness probe: gates traffic until service is fully initialized
+          # Removes pod from Service endpoints after 3 failures (30s total)
+          # -------------------------------------------------------------------
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5003
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # -------------------------------------------------------------------
+          # Startup probe: allows extended initialization time for first boot
+          # Great Expectations initialization and model loading may take time
+          # Allows up to ~105s (5s delay + 10 failures * 10s period)
+          # -------------------------------------------------------------------
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 10
+          # -------------------------------------------------------------------
+          # Container-level security context: defense-in-depth hardening
+          # - No privilege escalation prevents container breakouts
+          # - Read-only root filesystem prevents runtime tampering
+          # - Drop ALL capabilities enforces least-privilege execution
+          # Required for SOC 2 Type II compliance
+          # -------------------------------------------------------------------
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - "ALL"
+          # -------------------------------------------------------------------
+          # Volume mounts: writable directories required by the application
+          # since the root filesystem is read-only
+          # - /tmp: temporary files for Great Expectations data processing
+          # - /app/cache: cache for validation results and model artifacts
+          # -------------------------------------------------------------------
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: cache-volume
+              mountPath: /app/cache
+      # -----------------------------------------------------------------------
+      # Volumes: ephemeral emptyDir volumes for writable paths
+      # These are recreated on each pod restart, ensuring no stale state
+      # -----------------------------------------------------------------------
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        - name: cache-volume
+          emptyDir: {}
