@@ -1,0 +1,99 @@
+# =============================================================================
+# Generation Engine Service - Python Dependencies
+# =============================================================================
+# Synthetic-ERP-Data-Generation-Platform
+# Service: Generation Engine (Multi-method synthetic data generation)
+# Python: 3.12+
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Core Framework
+# -----------------------------------------------------------------------------
+# Flask lightweight REST API framework for internal service endpoints
+flask>=3.1.0,<3.2.0
+# Flask-CORS for cross-origin request handling from API Gateway and Web Console
+flask-cors>=4.0.0,<5.0.0
+# Gunicorn production-grade WSGI HTTP server
+gunicorn>=21.0.0,<22.0.0
+# Pydantic data validation and schema models for request/response payloads
+pydantic>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# 2. AI/ML Orchestration
+# -----------------------------------------------------------------------------
+# LangChain framework for AI/ML orchestration and intelligent method selection
+langchain>=0.3.0,<0.4.0
+# LangChain community integrations for extended model/tool support
+langchain-community>=0.3.0,<0.4.0
+
+# -----------------------------------------------------------------------------
+# 3. Deep Learning - GAN Generation
+# -----------------------------------------------------------------------------
+# PyTorch for GAN-based (Generator-Discriminator) synthetic data generation
+torch>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# 4. Deep Learning - VAE Generation
+# -----------------------------------------------------------------------------
+# TensorFlow for VAE-based (Encoder-Decoder) synthetic data generation
+tensorflow>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# 5. Statistical Computing
+# -----------------------------------------------------------------------------
+# SciPy for statistical distribution fitting and modeling
+scipy>=1.12.0,<2.0.0
+# NumPy for numerical computing and array operations
+numpy>=1.26.0,<2.0.0
+# Pandas for tabular data manipulation and transformation
+pandas>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# 6. Output Formats
+# -----------------------------------------------------------------------------
+# PyArrow for Apache Parquet columnar format output support
+pyarrow>=15.0.0,<16.0.0
+
+# -----------------------------------------------------------------------------
+# 7. Database and Caching
+# -----------------------------------------------------------------------------
+# PyMongo driver for MongoDB 7.0 metadata repository connectivity
+pymongo>=4.0.0,<5.0.0
+# Redis client for caching, session management, and job progress tracking
+redis>=5.0.0,<6.0.0
+
+# -----------------------------------------------------------------------------
+# 8. Observability
+# -----------------------------------------------------------------------------
+# Structured JSON logging with correlation ID propagation
+structlog>=24.0.0,<25.0.0
+# OpenTelemetry distributed tracing API
+opentelemetry-api>=1.0.0,<2.0.0
+# OpenTelemetry distributed tracing SDK with span exporters
+opentelemetry-sdk>=1.0.0,<2.0.0
+# OpenTelemetry Flask auto-instrumentation for request tracing
+opentelemetry-instrumentation-flask>=0.40b0
+# Prometheus metrics exporter for monitoring and alerting
+prometheus-client>=0.20.0,<1.0.0
+
+# -----------------------------------------------------------------------------
+# 9. Security and Resilience
+# -----------------------------------------------------------------------------
+# Circuit breaker pattern for external dependency resilience
+circuitbreaker>=2.0.0,<3.0.0
+# Cryptography primitives for AES-256 encryption at rest
+cryptography>=42.0.0,<43.0.0
+
+# -----------------------------------------------------------------------------
+# 10. Testing (Development Dependencies)
+# -----------------------------------------------------------------------------
+# pytest unit testing framework
+pytest>=8.0.0,<9.0.0
+# pytest coverage reporting plugin
+pytest-cov>=5.0.0,<6.0.0
+# pytest async test support
+pytest-asyncio>=0.23.0,<1.0.0
+# httpx async HTTP test client for integration testing
+httpx>=0.27.0,<1.0.0
+# mongomock in-memory MongoDB mock for unit testing
+mongomock>=4.0.0,<5.0.0
