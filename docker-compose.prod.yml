@@ -1,0 +1,505 @@
+# =============================================================================
+# Production Docker Compose Overlay — Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+#
+# This file extends docker-compose.yml with production-specific configurations
+# for deploying the Synthetic-ERP-Data-Generation-Platform outside of Kubernetes.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. Create the external production network:
+#      docker network create synthetic-erp-production
+#   2. Configure .env with production-grade secrets and credentials
+#   3. Ensure TLS certificates are provisioned and mounted
+#   4. Review and adjust resource limits for your host capacity
+#
+# Production hardening applied by this overlay:
+#   - Resource limits (CPU, memory) and reservations for all services
+#   - Replica counts for high-availability services (API Gateway, Web Console, Generation Engine)
+#   - Production environment variables (ENVIRONMENT=production, TLS, encryption)
+#   - JSON logging driver with log rotation (max-size: 10m, max-file: 3)
+#   - Stricter health check intervals (10s) with higher retry counts
+#   - Restart policy (unless-stopped) for all services
+#   - External network for integration with reverse proxy / load balancer
+#   - MongoDB production auth with WiredTiger cache tuning
+#   - Redis persistence (AOF + RDB) with maxmemory eviction policy
+#   - Debug ports restricted to loopback (127.0.0.1) only
+#   - Hot-reload volume mounts removed for immutable container deployments
+#
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# YAML Anchors — Shared configuration blocks for DRY production settings
+# ---------------------------------------------------------------------------
+
+x-logging: &production-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    tag: "{{.Name}}/{{.ID}}"
+    labels: "service"
+
+x-production-env: &production-env
+  ENVIRONMENT: production
+  LOG_LEVEL: WARNING
+  LOG_FORMAT: json
+  DEBUG: "false"
+  TLS_ENABLED: "true"
+  TLS_MIN_VERSION: "1.3"
+  ENCRYPTION_ENABLED: "true"
+  ENCRYPTION_ALGORITHM: AES-256-GCM
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+# =============================================================================
+# Services
+# =============================================================================
+services:
+
+  # ---------------------------------------------------------------------------
+  # API Gateway — Flask 3.1.x REST API with JWT authentication
+  # Production: 2 replicas, 1 CPU / 1G RAM, stricter healthcheck
+  # ---------------------------------------------------------------------------
+  api-gateway:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes: []
+    environment:
+      <<: *production-env
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_DEFAULT: "300"
+      CORS_ORIGINS: "https://console.synthetic-erp.com"
+      JWT_ALGORITHM: RS256
+      JWT_ACCESS_TOKEN_EXPIRES: "900"
+      JWT_REFRESH_TOKEN_EXPIRES: "86400"
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_COOKIE_HTTPONLY: "true"
+      SESSION_COOKIE_SAMESITE: Lax
+      PREFERRED_URL_SCHEME: https
+    logging: *production-logging
+    labels:
+      service: api-gateway
+      environment: production
+      tier: api
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/health"]
+      <<: *healthcheck-defaults
+
+  # ---------------------------------------------------------------------------
+  # Generation Engine — LangChain + PyTorch/TensorFlow multi-method generation
+  # Production: 2 replicas, 2 CPU / 4G RAM (ML workloads), GPU optional
+  # ---------------------------------------------------------------------------
+  generation-engine:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"
+    volumes: []
+    environment:
+      <<: *production-env
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
+      BATCH_SIZE: "10000"
+      MAX_WORKERS: "4"
+      GPU_ENABLED: "${GPU_ENABLED:-false}"
+      MODEL_CACHE_DIR: /app/models
+      TORCH_HOME: /app/models/torch
+      TF_CPP_MIN_LOG_LEVEL: "2"
+      CHECKPOINT_ENABLED: "true"
+      CHECKPOINT_INTERVAL: "5000"
+      MAX_GENERATION_TIME: "3600"
+    logging: *production-logging
+    labels:
+      service: generation-engine
+      environment: production
+      tier: service
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+          devices:
+            - capabilities: ["gpu"]
+              count: 1
+              driver: nvidia
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 180s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5001/health"]
+      <<: *healthcheck-defaults
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # Profiling Service — SciPy/NumPy/Pandas ERP schema discovery & profiling
+  # Production: 1 replica, 1 CPU / 2G RAM
+  # ---------------------------------------------------------------------------
+  profiling-service:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5002:5002"
+    volumes: []
+    environment:
+      <<: *production-env
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
+      DISCOVERY_TIMEOUT: "300"
+      PROFILING_SAMPLE_SIZE: "10000"
+      MAX_CONCURRENT_CONNECTIONS: "5"
+      JDBC_POOL_SIZE: "10"
+    logging: *production-logging
+    labels:
+      service: profiling-service
+      environment: production
+      tier: service
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5002/health"]
+      <<: *healthcheck-defaults
+
+  # ---------------------------------------------------------------------------
+  # Quality Service — Great Expectations data quality validation
+  # Production: 1 replica, 1 CPU / 1G RAM
+  # ---------------------------------------------------------------------------
+  quality-service:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5003:5003"
+    volumes: []
+    environment:
+      <<: *production-env
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
+      QUALITY_THRESHOLD: "0.95"
+      STATISTICAL_WEIGHT: "0.40"
+      BUSINESS_RULES_WEIGHT: "0.30"
+      REFERENTIAL_INTEGRITY_WEIGHT: "0.30"
+      VALIDATION_TIMEOUT: "600"
+    logging: *production-logging
+    labels:
+      service: quality-service
+      environment: production
+      tier: service
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5003/health"]
+      <<: *healthcheck-defaults
+
+  # ---------------------------------------------------------------------------
+  # Compliance Service — spaCy NLP PII detection & regulatory verification
+  # Production: 1 replica, 1 CPU / 2G RAM (spaCy model memory requirements)
+  # ---------------------------------------------------------------------------
+  compliance-service:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5004:5004"
+    volumes: []
+    environment:
+      <<: *production-env
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
+      SPACY_MODEL: en_core_web_lg
+      PII_DETECTION_THRESHOLD: "0.85"
+      AUDIT_LOG_RETENTION_DAYS: "2555"
+      COMPLIANCE_FRAMEWORKS: "GDPR,HIPAA,CCPA,SOC2"
+      ENABLE_TAMPER_DETECTION: "true"
+      AUDIT_HASH_ALGORITHM: SHA-256
+    logging: *production-logging
+    labels:
+      service: compliance-service
+      environment: production
+      tier: service
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5004/health"]
+      <<: *healthcheck-defaults
+
+  # ---------------------------------------------------------------------------
+  # Provisioning Service — JDBC connectors & cloud storage export
+  # Production: 1 replica, 1 CPU / 1G RAM
+  # ---------------------------------------------------------------------------
+  provisioning-service:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5005:5005"
+    volumes: []
+    environment:
+      <<: *production-env
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
+      JDBC_POOL_SIZE: "20"
+      JDBC_CONNECTION_TIMEOUT: "30"
+      BATCH_INSERT_SIZE: "5000"
+      EXPORT_COMPRESSION_ENABLED: "true"
+      S3_ENCRYPTION: AES256
+      AZURE_BLOB_ENCRYPTION: "true"
+      GCS_ENCRYPTION: "true"
+      MULTIPART_UPLOAD_THRESHOLD: "104857600"
+      MULTIPART_UPLOAD_CHUNK_SIZE: "8388608"
+    logging: *production-logging
+    labels:
+      service: provisioning-service
+      environment: production
+      tier: service
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5005/health"]
+      <<: *healthcheck-defaults
+
+  # ---------------------------------------------------------------------------
+  # Web Console — React 19.x + TypeScript 5.x + TailwindCSS 4.x (nginx)
+  # Production: 2 replicas, 0.5 CPU / 256M RAM (static asset serving)
+  # ---------------------------------------------------------------------------
+  web-console:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:80"
+    volumes: []
+    environment:
+      REACT_APP_ENVIRONMENT: production
+      REACT_APP_API_BASE_URL: "https://api.synthetic-erp.com"
+      REACT_APP_AUTH0_DOMAIN: "${AUTH0_DOMAIN}"
+      REACT_APP_AUTH0_CLIENT_ID: "${AUTH0_CLIENT_ID}"
+      REACT_APP_AUTH0_AUDIENCE: "${AUTH0_AUDIENCE}"
+      REACT_APP_WEBSOCKET_URL: "wss://ws.synthetic-erp.com"
+      REACT_APP_ENABLE_ANALYTICS: "true"
+      NGINX_WORKER_PROCESSES: "auto"
+      NGINX_WORKER_CONNECTIONS: "1024"
+    logging: *production-logging
+    labels:
+      service: web-console
+      environment: production
+      tier: frontend
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 60s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:80/"]
+      <<: *healthcheck-defaults
+      interval: 15s
+
+  # ---------------------------------------------------------------------------
+  # MongoDB 7.0 — Metadata Repository
+  # Production: WiredTiger cache tuning, authentication enforced, journaling
+  # ---------------------------------------------------------------------------
+  mongodb:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${MONGODB_USERNAME}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGODB_PASSWORD}"
+      MONGO_INITDB_DATABASE: synthetic_erp
+    command: >
+      mongod
+      --auth
+      --bind_ip_all
+      --wiredTigerCacheSizeGB 2
+      --wiredTigerCollectionBlockCompressor zstd
+      --wiredTigerJournalCompressor zstd
+      --setParameter diagnosticDataCollectionEnabled=false
+      --setParameter authenticationMechanisms=SCRAM-SHA-256
+      --quiet
+    logging: *production-logging
+    labels:
+      service: mongodb
+      environment: production
+      tier: data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      <<: *healthcheck-defaults
+      interval: 15s
+      start_period: 45s
+
+  # ---------------------------------------------------------------------------
+  # Redis 7.x — Session cache, API response cache, job progress tracking
+  # Production: AOF + RDB persistence, maxmemory eviction, password auth
+  # ---------------------------------------------------------------------------
+  redis:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 384mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --tcp-backlog 511
+      --timeout 300
+      --tcp-keepalive 60
+      --loglevel warning
+      --databases 16
+      --rename-command FLUSHALL ""
+      --rename-command FLUSHDB ""
+      --rename-command DEBUG ""
+    logging: *production-logging
+    labels:
+      service: redis
+      environment: production
+      tier: data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 60s
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      <<: *healthcheck-defaults
+      interval: 15s
+
+# =============================================================================
+# Networks — External network for reverse proxy / load balancer integration
+# =============================================================================
+networks:
+  synthetic-erp-network:
+    external: true
+    name: synthetic-erp-production
+
+# =============================================================================
+# Volumes — Persistent storage with local driver for production data
+# =============================================================================
+volumes:
+  mongodb_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /data/synthetic-erp/mongodb
+  mongodb_config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /data/synthetic-erp/mongodb-config
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /data/synthetic-erp/redis
