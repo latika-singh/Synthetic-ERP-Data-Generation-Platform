@@ -1,0 +1,315 @@
+# =============================================================================
+# Kubernetes Deployment Manifest — API Gateway Service
+# =============================================================================
+# Service: API Gateway (Flask 3.1.x + Gunicorn 21.x)
+# Purpose: Central REST API entry point for the Synthetic ERP Data Generation
+#          Platform. Provides modular routing via Flask Blueprints (generation,
+#          profiles, schemas, templates, export, auth, admin, health, monitoring),
+#          JWT authentication via Auth0 (RS256), tiered rate limiting via Redis
+#          (60/300/1000 req/min), Pydantic request/response validation, and
+#          Gunicorn 21.x as the production WSGI server on port 5000.
+# Scaling: Base 2 replicas, HPA scales 2-10 at 70% CPU utilization.
+# Compliance: SOC 2 Type II — tamper-evident audit trails, AES-256 at rest,
+#             TLS 1.3 in transit, RBAC with five graduated permission tiers.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: synthetic-erp-platform
+  labels:
+    app: api-gateway
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: api-gateway
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      API Gateway Deployment — Flask 3.1.x REST API with JWT auth (Auth0),
+      tiered rate limiting (Redis-backed), multi-tenant isolation, and
+      Gunicorn 21.x WSGI server. Serves as the single external entry point
+      for all platform REST API traffic (/api/v1/*).
+spec:
+  # -------------------------------------------------------------------------
+  # Replica Configuration
+  # Base replicas: 2 for high availability. The HorizontalPodAutoscaler
+  # (defined in hpa.yaml) manages scaling between 2 and 10 replicas based
+  # on 70% CPU utilization and 80% memory utilization thresholds.
+  # -------------------------------------------------------------------------
+  replicas: 2
+  # -------------------------------------------------------------------------
+  # Selector — must match pod template labels exactly
+  # -------------------------------------------------------------------------
+  selector:
+    matchLabels:
+      app: api-gateway
+  # -------------------------------------------------------------------------
+  # Deployment Strategy — RollingUpdate for zero-downtime deployments
+  # maxSurge: 1 allows one extra pod during rollout
+  # maxUnavailable: 0 ensures no capacity reduction during rollout
+  # -------------------------------------------------------------------------
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # Keep 5 ReplicaSet revisions for rollback capability
+  revisionHistoryLimit: 5
+  # -------------------------------------------------------------------------
+  # Pod Template
+  # -------------------------------------------------------------------------
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        app.kubernetes.io/name: api-gateway
+        app.kubernetes.io/part-of: synthetic-erp-platform
+        app.kubernetes.io/component: api-gateway
+      annotations:
+        # Prometheus metrics scraping configuration
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # -----------------------------------------------------------------------
+      # Service Account — dedicated RBAC identity for the API Gateway
+      # -----------------------------------------------------------------------
+      serviceAccountName: api-gateway
+      # -----------------------------------------------------------------------
+      # Graceful Shutdown — allow 30 seconds for in-flight requests to complete
+      # before SIGKILL. Gunicorn's graceful timeout should be < this value.
+      # -----------------------------------------------------------------------
+      terminationGracePeriodSeconds: 30
+      # -----------------------------------------------------------------------
+      # Pod-Level Security Context
+      # Enforces non-root execution and filesystem group ownership for SOC 2
+      # Type II compliance. Aligns with the restricted Pod Security Standard
+      # enforced on the synthetic-erp-platform namespace.
+      # -----------------------------------------------------------------------
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # -----------------------------------------------------------------------
+      # Pod Anti-Affinity — spread pods across nodes for high availability
+      # Uses preferredDuringSchedulingIgnoredDuringExecution to maximize
+      # availability without making scheduling impossible on small clusters.
+      # -----------------------------------------------------------------------
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - api-gateway
+                topologyKey: kubernetes.io/hostname
+      # -----------------------------------------------------------------------
+      # Topology Spread Constraints — distribute pods across availability zones
+      # Ensures resilience against zone-level failures in multi-zone clusters.
+      # -----------------------------------------------------------------------
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: api-gateway
+      # -----------------------------------------------------------------------
+      # Volumes
+      # tmp-volume: writable scratch space since root filesystem is read-only.
+      # Used by Gunicorn for worker temp files and Flask for transient data.
+      # -----------------------------------------------------------------------
+      volumes:
+        - name: tmp-volume
+          emptyDir:
+            sizeLimit: 256Mi
+      # -----------------------------------------------------------------------
+      # Containers
+      # -----------------------------------------------------------------------
+      containers:
+        - name: api-gateway
+          # -----------------------------------------------------------------
+          # Container Image
+          # Built from infrastructure/docker/api-gateway.Dockerfile using
+          # python:3.12-slim base with multi-stage build and Gunicorn 21.x.
+          # -----------------------------------------------------------------
+          image: synthetic-erp-platform/api-gateway:latest
+          imagePullPolicy: Always
+          # -----------------------------------------------------------------
+          # Exposed Ports
+          # Port 5000: Flask application served by Gunicorn (HTTP)
+          # -----------------------------------------------------------------
+          ports:
+            - containerPort: 5000
+              name: http
+              protocol: TCP
+          # -----------------------------------------------------------------
+          # Resource Requests and Limits
+          # Requests: guaranteed minimum resources for scheduling.
+          # Limits: hard ceiling preventing runaway resource consumption.
+          # These values are tuned for the API Gateway's expected workload
+          # handling REST requests, JWT validation, and Redis-backed caching.
+          # -----------------------------------------------------------------
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          # -----------------------------------------------------------------
+          # Container-Level Security Context
+          # Hardened for SOC 2 Type II: no privilege escalation, read-only
+          # root filesystem, all Linux capabilities dropped.
+          # -----------------------------------------------------------------
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          # -----------------------------------------------------------------
+          # Environment Variables from ConfigMap
+          # Injects all non-sensitive configuration as environment variables
+          # following 12-factor app methodology. Includes FLASK_ENV, LOG_LEVEL,
+          # MONGODB_DATABASE, REDIS_URL_TEMPLATE, AUTH0_DOMAIN, CORS_ORIGINS,
+          # rate limiting thresholds, inter-service URLs, circuit breaker
+          # settings, pagination defaults, and Gunicorn tuning parameters.
+          # -----------------------------------------------------------------
+          envFrom:
+            - configMapRef:
+                name: api-gateway-config
+          # -----------------------------------------------------------------
+          # Environment Variables — Individual and from Secrets
+          # Static service-level variables and sensitive credentials injected
+          # from Kubernetes Secrets (managed via Sealed Secrets).
+          # -----------------------------------------------------------------
+          env:
+            # -- Service Identity --
+            - name: FLASK_APP
+              value: "app:create_app"
+            - name: SERVICE_NAME
+              value: "api-gateway"
+            - name: SERVICE_PORT
+              value: "5000"
+            # -- OpenTelemetry Distributed Tracing --
+            - name: OTEL_SERVICE_NAME
+              value: "api-gateway"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring:4317"
+            # -- MongoDB Credentials (from Secret: mongodb-credentials) --
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_URI
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_PASSWORD
+            # -- Redis Credentials (from Secret: redis-credentials) --
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+            # -- Auth0 Credentials (from Secret: auth0-credentials) --
+            - name: AUTH0_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth0-credentials
+                  key: AUTH0_CLIENT_ID
+            - name: AUTH0_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth0-credentials
+                  key: AUTH0_CLIENT_SECRET
+            - name: AUTH0_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: auth0-credentials
+                  key: AUTH0_AUDIENCE
+            # -- JWT Signing Keys (from Secret: jwt-keys) --
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-keys
+                  key: JWT_SECRET_KEY
+            # -- Encryption Keys (from Secret: encryption-keys) --
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: FLASK_SECRET_KEY
+            - name: AES_256_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: AES_256_KEY
+          # -----------------------------------------------------------------
+          # Volume Mounts
+          # /tmp is needed because readOnlyRootFilesystem: true prevents
+          # writes to the container filesystem. Gunicorn writes worker
+          # heartbeat files to /tmp, and Flask may use it for temp data.
+          # -----------------------------------------------------------------
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+          # -----------------------------------------------------------------
+          # Liveness Probe
+          # Checks if the API Gateway process is alive and responsive.
+          # The /health endpoint returns basic service status without
+          # deep dependency checks. If this fails 3 times, the kubelet
+          # restarts the container.
+          # -----------------------------------------------------------------
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # -----------------------------------------------------------------
+          # Readiness Probe
+          # Checks if the API Gateway is ready to accept traffic. The /ready
+          # endpoint verifies connectivity to MongoDB, Redis, and Auth0.
+          # Pods failing readiness are removed from the Service endpoints
+          # until they recover, preventing traffic to unhealthy instances.
+          # -----------------------------------------------------------------
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # -----------------------------------------------------------------
+          # Startup Probe
+          # Provides a generous startup window for the API Gateway to
+          # initialize Flask extensions, establish MongoDB/Redis connections,
+          # load Auth0 JWKS keys, and warm up caches. Allows up to ~65s
+          # (initialDelaySeconds 5 + failureThreshold 12 * periodSeconds 5)
+          # before marking the container as failed. Prevents premature
+          # liveness probe kills during cold starts.
+          # -----------------------------------------------------------------
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
