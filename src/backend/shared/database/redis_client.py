@@ -36,6 +36,7 @@ Usage::
 
     # Pub/Sub for job progress
     from shared.database.redis_client import publish_progress, create_progress_channel
+
     channel = create_progress_channel("job-abc-123")
     publish_progress(channel, {"percent": 45, "records": 45000})
 """
@@ -70,8 +71,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 # Store mutable singleton references in a dict to avoid PLW0603 (discouraged
 # ``global`` statement).  The dict itself is module-level and never reassigned.
 _state: dict[str, Any] = {
-    "client": None,   # redis.Redis | None
-    "pool": None,     # redis.ConnectionPool | None
+    "client": None,  # redis.Redis | None
+    "pool": None,  # redis.ConnectionPool | None
 }
 _lock: threading.Lock = threading.Lock()
 
@@ -123,12 +124,8 @@ def get_redis_client() -> redis.Redis:
         if _state["client"] is not None:
             return _state["client"]
 
-        redis_url: str = os.environ.get(
-            "REDIS_URL", "redis://localhost:6379/0"
-        )
-        max_connections: int = int(
-            os.environ.get("REDIS_MAX_CONNECTIONS", "50")
-        )
+        redis_url: str = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        max_connections: int = int(os.environ.get("REDIS_MAX_CONNECTIONS", "50"))
 
         logger.info(
             "Initialising Redis connection pool",
@@ -267,9 +264,7 @@ def check_redis_health() -> dict[str, Any]:
         redis.exceptions.TimeoutError,
         redis.exceptions.RedisError,
     ) as exc:
-        logger.error(
-            "Redis health check failed", extra={"error": str(exc)}
-        )
+        logger.error("Redis health check failed", extra={"error": str(exc)})
         return {
             "status": "unhealthy",
             "latency_ms": -1.0,
@@ -308,9 +303,7 @@ def cache_get(key: str) -> Any | None:
             return raw
 
     except redis.exceptions.RedisError as exc:
-        logger.error(
-            "Cache get failed", extra={"key": key, "error": str(exc)}
-        )
+        logger.error("Cache get failed", extra={"key": key, "error": str(exc)})
         return None
 
 
@@ -331,19 +324,13 @@ def cache_set(key: str, value: Any, ttl: int = 3600) -> bool:
     """
     try:
         client = get_redis_client()
-        serialised: str = (
-            json.dumps(value) if not isinstance(value, str) else value
-        )
+        serialised: str = json.dumps(value) if not isinstance(value, str) else value
         result: bool | None = client.set(key, serialised, ex=ttl)  # type: ignore[assignment]
-        logger.debug(
-            "Cache set", extra={"key": key, "ttl": ttl}
-        )
+        logger.debug("Cache set", extra={"key": key, "ttl": ttl})
         return bool(result)
 
     except (redis.exceptions.RedisError, TypeError, ValueError) as exc:
-        logger.error(
-            "Cache set failed", extra={"key": key, "error": str(exc)}
-        )
+        logger.error("Cache set failed", extra={"key": key, "error": str(exc)})
         return False
 
 
@@ -363,9 +350,7 @@ def cache_delete(key: str) -> bool:
         return deleted > 0
 
     except redis.exceptions.RedisError as exc:
-        logger.error(
-            "Cache delete failed", extra={"key": key, "error": str(exc)}
-        )
+        logger.error("Cache delete failed", extra={"key": key, "error": str(exc)})
         return False
 
 
@@ -410,9 +395,7 @@ def cache_set_many(mapping: dict[str, Any], ttl: int = 3600) -> bool:
         pipe = client.pipeline(transaction=False)
 
         for key, value in mapping.items():
-            serialised: str = (
-                json.dumps(value) if not isinstance(value, str) else value
-            )
+            serialised: str = json.dumps(value) if not isinstance(value, str) else value
             pipe.set(key, serialised, ex=ttl)
 
         pipe.execute()
@@ -423,9 +406,7 @@ def cache_set_many(mapping: dict[str, Any], ttl: int = 3600) -> bool:
         return True
 
     except (redis.exceptions.RedisError, TypeError, ValueError) as exc:
-        logger.error(
-            "Cache set_many failed", extra={"error": str(exc)}
-        )
+        logger.error("Cache set_many failed", extra={"error": str(exc)})
         return False
 
 
@@ -468,9 +449,7 @@ def cache_get_many(keys: list[str]) -> dict[str, Any]:
         return result
 
     except redis.exceptions.RedisError as exc:
-        logger.error(
-            "Cache get_many failed", extra={"error": str(exc)}
-        )
+        logger.error("Cache get_many failed", extra={"error": str(exc)})
         return result
 
 
@@ -523,9 +502,7 @@ def cache_invalidate_pattern(pattern: str) -> int:
 # ============================================================================
 
 
-def session_store(
-    session_id: str, data: dict[str, Any], ttl: int = 86400
-) -> bool:
+def session_store(session_id: str, data: dict[str, Any], ttl: int = 86400) -> bool:
     """Store session data (e.g. cached JWT claims) with a TTL.
 
     Session keys are namespaced under ``session:<session_id>`` so they
@@ -580,9 +557,7 @@ def session_get(session_id: str) -> dict[str, Any] | None:
             )
             return None
 
-        logger.debug(
-            "Session retrieved", extra={"session_id": session_id}
-        )
+        logger.debug("Session retrieved", extra={"session_id": session_id})
         return json.loads(raw)  # type: ignore[no-any-return]
 
     except (
@@ -757,9 +732,7 @@ def subscribe_progress(channel: str) -> redis.client.PubSub:
     client = get_redis_client()
     pubsub: redis.client.PubSub = client.pubsub()
     pubsub.subscribe(channel)
-    logger.info(
-        "Subscribed to progress channel", extra={"channel": channel}
-    )
+    logger.info("Subscribed to progress channel", extra={"channel": channel})
     return pubsub
 
 
@@ -842,10 +815,7 @@ def release_lock(lock: redis.lock.Lock) -> bool:
         return True
 
     except redis.exceptions.LockNotOwnedError:
-        logger.warning(
-            "Attempted to release a lock no longer owned (expired or "
-            "released by another process)"
-        )
+        logger.warning("Attempted to release a lock no longer owned (expired or released by another process)")
         return False
 
     except redis.exceptions.RedisError as exc:

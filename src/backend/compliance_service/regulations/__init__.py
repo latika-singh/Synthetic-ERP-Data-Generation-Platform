@@ -136,9 +136,7 @@ class ComplianceViolation:
     description: str
     affected_fields: list[str] = field(default_factory=list)
     remediation: str = ""
-    detected_at: datetime = field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    detected_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -168,9 +166,7 @@ class ComplianceResult:
     is_compliant: bool
     compliance_score: float
     violations: list[ComplianceViolation] = field(default_factory=list)
-    checked_at: datetime = field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    checked_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     regulation_name: str = ""
     regulation_version: str = ""
     total_fields_checked: int = 0
@@ -414,14 +410,8 @@ class RegulationRegistry:
             TypeError: If ``checker_class`` is not a subclass of
                 ``BaseRegulationChecker``.
         """
-        if not (
-            isinstance(checker_class, type)
-            and issubclass(checker_class, BaseRegulationChecker)
-        ):
-            raise TypeError(
-                f"checker_class must be a subclass of BaseRegulationChecker, "
-                f"got {checker_class!r}"
-            )
+        if not (isinstance(checker_class, type) and issubclass(checker_class, BaseRegulationChecker)):
+            raise TypeError(f"checker_class must be a subclass of BaseRegulationChecker, got {checker_class!r}")
         cls._registry[regulation_type] = checker_class
         # Evict any cached instance so the new class is used on next access
         cls._instances.pop(regulation_type, None)
@@ -445,9 +435,7 @@ class RegulationRegistry:
         if regulation_type not in cls._registry:
             registered = [rt.value for rt in cls._registry]
             raise ValueError(
-                f"No checker registered for regulation type "
-                f"'{regulation_type.value}'. "
-                f"Registered types: {registered}"
+                f"No checker registered for regulation type '{regulation_type.value}'. Registered types: {registered}"
             )
 
         if regulation_type not in cls._instances:

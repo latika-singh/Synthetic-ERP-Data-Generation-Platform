@@ -20,15 +20,18 @@ Usage::
 
     # At service startup (in create_app()):
     from shared.logging.structured_logger import configure_logging
+
     configure_logging(service_name="api-gateway")
 
     # In any module:
     from shared.logging.structured_logger import get_logger
+
     logger = get_logger(__name__)
     logger.info("processing_request", user_id="abc123")
 
     # In request middleware:
     from shared.logging.structured_logger import bind_context, clear_context
+
     bind_context(request_id=req_id, tenant_id=tenant)
     # ... process request ...
     clear_context()
@@ -178,10 +181,7 @@ def add_correlation_id(
     if correlation_id is None and _FLASK_AVAILABLE:
         try:
             if has_request_context():
-                correlation_id = (
-                    request.headers.get("X-Correlation-ID")
-                    or request.headers.get("X-Request-ID")
-                )
+                correlation_id = request.headers.get("X-Correlation-ID") or request.headers.get("X-Request-ID")
         except Exception:  # noqa: S110
             # Graceful degradation when Flask context is unavailable.
             # Cannot log here — we are inside the log processor chain.
@@ -265,9 +265,7 @@ def add_request_context(
                 event_dict["http_method"] = request.method
                 event_dict["path"] = request.path
                 event_dict["remote_addr"] = request.remote_addr
-                event_dict["user_agent"] = str(
-                    request.headers.get("User-Agent", "")
-                )
+                event_dict["user_agent"] = str(request.headers.get("User-Agent", ""))
 
                 # user_id is set by the JWT / auth middleware on flask.g
                 user_id = getattr(g, "user_id", None)

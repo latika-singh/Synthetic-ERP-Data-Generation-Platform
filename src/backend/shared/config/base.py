@@ -265,8 +265,7 @@ class BaseConfig:
             return cast_type(raw_value)
         except (ValueError, TypeError) as exc:
             raise ConfigurationError(
-                f"Environment variable '{key}' with value '{raw_value}' "
-                f"cannot be cast to {cast_type.__name__}: {exc}"
+                f"Environment variable '{key}' with value '{raw_value}' cannot be cast to {cast_type.__name__}: {exc}"
             ) from exc
 
     @staticmethod

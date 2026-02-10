@@ -153,13 +153,9 @@ def get_mongo_client() -> MongoClient:
         if _mongo_client is not None:
             return _mongo_client
 
-        uri: str = os.environ.get(
-            "MONGODB_URI", "mongodb://localhost:27017/synthetic_erp"
-        )
+        uri: str = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/synthetic_erp")
         max_pool_size: int = int(os.environ.get("MONGODB_MAX_POOL_SIZE", "100"))
-        tls_enabled: bool = (
-            os.environ.get("MONGODB_TLS_ENABLED", "false").lower() == "true"
-        )
+        tls_enabled: bool = os.environ.get("MONGODB_TLS_ENABLED", "false").lower() == "true"
         tls_ca_file: str | None = os.environ.get("MONGODB_TLS_CA_FILE")
         service_name: str = os.environ.get("SERVICE_NAME", "synthetic-erp-service")
 
@@ -266,6 +262,7 @@ def get_collection(
     Example::
 
         from shared.database.mongodb import get_collection, COLLECTION_AUDIT_LOGS
+
         audit = get_collection(COLLECTION_AUDIT_LOGS)
         audit.insert_one({"event": "login", "user_id": "u-123"})
     """
@@ -583,6 +580,7 @@ def init_mongodb(app: Flask) -> None:
         from flask import Flask
         from shared.database.mongodb import init_mongodb
 
+
         def create_app() -> Flask:
             app = Flask(__name__)
             init_mongodb(app)
@@ -606,8 +604,7 @@ def init_mongodb(app: Flask) -> None:
             # once MongoDB becomes available (e.g. in Kubernetes rolling
             # deployments where the database pod starts after the app pod).
             logger.error(
-                "MongoDB unavailable during Flask initialisation; "
-                "service will retry on first request",
+                "MongoDB unavailable during Flask initialisation; service will retry on first request",
                 extra={"error": str(exc), "app_name": app.name},
             )
 
