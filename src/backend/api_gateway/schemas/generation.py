@@ -10,7 +10,7 @@ endpoints:
 
 Models enforce strict type checking, field constraints, and cross-field validation
 to ensure data integrity throughout the generation pipeline. All enums inherit from
-``(str, Enum)`` for seamless JSON serialization with Pydantic v2.
+``StrEnum`` for seamless JSON serialization with Pydantic v2.
 
 Typical usage::
 
@@ -31,8 +31,8 @@ Typical usage::
 """
 
 from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -42,7 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # ---------------------------------------------------------------------------
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Enumeration of generation job lifecycle states.
 
     A generation job progresses through the following state machine:
@@ -77,7 +77,7 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-class GenerationMethod(str, Enum):
+class GenerationMethod(StrEnum):
     """Enumeration of supported synthetic data generation methods.
 
     The generation engine supports four distinct methods, each suited to
@@ -107,7 +107,7 @@ class GenerationMethod(str, Enum):
     MASKING = "masking"
 
 
-class OutputFormat(str, Enum):
+class OutputFormat(StrEnum):
     """Enumeration of supported output formats for generated data.
 
     The generation engine produces output in the requested format via
@@ -172,9 +172,9 @@ class TableConfig(BaseModel):
         ...,
         gt=0,
         le=10_000_000,
-        description="Number of synthetic records to generate (1–10M).",
+        description="Number of synthetic records to generate (1-10M).",
     )
-    columns: Optional[Dict[str, Any]] = Field(
+    columns: dict[str, Any] | None = Field(
         default=None,
         description="Column-specific generation overrides keyed by column name.",
     )
@@ -196,7 +196,7 @@ class GenerationJobRequest(BaseModel):
     * No duplicate table names in the ``tables`` list.
     * Masking method requests include a valid ``schema_id`` referencing
       an existing statistical profile.
-    * Batch size is within the supported range (1,000–100,000).
+    * Batch size is within the supported range (1,000-100,000).
     * Quality threshold defaults to 0.95 (≥95% fidelity target per the
       weighted scoring formula).
 
@@ -208,8 +208,8 @@ class GenerationJobRequest(BaseModel):
         tables: One or more per-table generation configurations.
         output_format: Desired output format; defaults to CSV.
         batch_size: Number of records per processing batch; defaults to
-            10,000 (tunable 1K–100K).
-        quality_threshold: Minimum acceptable quality score on the 0–1
+            10,000 (tunable 1K-100K).
+        quality_threshold: Minimum acceptable quality score on the 0-1
             scale; defaults to 0.95.
         template_id: Optional reference to a reusable generation template.
         tenant_id: Tenant namespace for multi-tenant isolation.  Populated
@@ -229,7 +229,7 @@ class GenerationJobRequest(BaseModel):
         min_length=1,
         description="Reference to a discovered ERP schema in schema_definitions.",
     )
-    tables: List[TableConfig] = Field(
+    tables: list[TableConfig] = Field(
         ...,
         min_length=1,
         description="Per-table generation configurations; at least one required.",
@@ -242,23 +242,23 @@ class GenerationJobRequest(BaseModel):
         default=10_000,
         ge=1_000,
         le=100_000,
-        description="Records per processing batch (1K–100K, default 10K).",
+        description="Records per processing batch (1K-100K, default 10K).",
     )
     quality_threshold: float = Field(
         default=0.95,
         ge=0.0,
         le=1.0,
-        description="Minimum quality score on a 0–1 scale (default 0.95 / 95%).",
+        description="Minimum quality score on a 0-1 scale (default 0.95 / 95%).",
     )
-    template_id: Optional[str] = Field(
+    template_id: str | None = Field(
         default=None,
         description="Optional generation template identifier for reuse.",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Tenant namespace; auto-populated by tenant middleware if omitted.",
     )
-    metadata: Optional[Dict[str, Any]] = Field(
+    metadata: dict[str, Any] | None = Field(
         default=None,
         description="Arbitrary key-value metadata for auditing and filtering.",
     )
@@ -270,8 +270,8 @@ class GenerationJobRequest(BaseModel):
     @field_validator("tables")
     @classmethod
     def validate_tables_no_duplicates(
-        cls, tables: List[TableConfig]
-    ) -> List[TableConfig]:
+        cls, tables: list[TableConfig]
+    ) -> list[TableConfig]:
         """Ensure at least one table config exists and table names are unique.
 
         Args:
@@ -320,13 +320,14 @@ class GenerationJobRequest(BaseModel):
             ValueError: If the masking method is selected without a usable
                 ``schema_id``.
         """
-        if self.method == GenerationMethod.MASKING:
-            if not self.schema_id or not self.schema_id.strip():
-                raise ValueError(
-                    "The 'masking' generation method requires a valid 'schema_id' "
-                    "referencing an existing statistical profile.  Please run the "
-                    "Profiling Service on the target schema before using masking."
-                )
+        if self.method == GenerationMethod.MASKING and (
+            not self.schema_id or not self.schema_id.strip()
+        ):
+            raise ValueError(
+                "The 'masking' generation method requires a valid 'schema_id' "
+                "referencing an existing statistical profile.  Please run the "
+                "Profiling Service on the target schema before using masking."
+            )
         return self
 
 
@@ -350,11 +351,11 @@ class GenerationJobResponse(BaseModel):
         job_id: Unique identifier for this generation job (UUID string).
         status: Current lifecycle state of the job.
         method: The generation method used for this job.
-        progress: Completion percentage (0.0–100.0) updated in real time
+        progress: Completion percentage (0.0-100.0) updated in real time
             via Redis pub/sub.
         total_records: Aggregate record count requested across all tables.
         generated_records: Number of records produced so far.
-        quality_score: Weighted quality score (0.0–1.0) computed after
+        quality_score: Weighted quality score (0.0-1.0) computed after
             validation.  ``None`` until validation completes.
         output_location: URI or path to the generated output (file path,
             S3 URI, database identifier).  ``None`` until provisioning.
@@ -385,7 +386,7 @@ class GenerationJobResponse(BaseModel):
         default=0.0,
         ge=0.0,
         le=100.0,
-        description="Job completion percentage (0–100).",
+        description="Job completion percentage (0-100).",
     )
     total_records: int = Field(
         default=0,
@@ -397,17 +398,17 @@ class GenerationJobResponse(BaseModel):
         ge=0,
         description="Records generated so far.",
     )
-    quality_score: Optional[float] = Field(
+    quality_score: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
-        description="Weighted quality score (0.0–1.0) after validation.",
+        description="Weighted quality score (0.0-1.0) after validation.",
     )
-    output_location: Optional[str] = Field(
+    output_location: str | None = Field(
         default=None,
         description="URI/path of the generated output.",
     )
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None,
         description="Error details when status is FAILED.",
     )
@@ -419,11 +420,11 @@ class GenerationJobResponse(BaseModel):
         ...,
         description="Last status update timestamp (ISO 8601).",
     )
-    completed_at: Optional[datetime] = Field(
+    completed_at: datetime | None = Field(
         default=None,
         description="Job completion timestamp (ISO 8601); None while in progress.",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Tenant namespace for multi-tenant isolation.",
     )
@@ -444,10 +445,10 @@ class GenerationJobListResponse(BaseModel):
         jobs: List of generation job response objects for the current page.
         total: Total number of jobs matching the query filters.
         page: Current page number (1-based).
-        page_size: Maximum number of jobs per page (1–100, default 20).
+        page_size: Maximum number of jobs per page (1-100, default 20).
     """
 
-    jobs: List[GenerationJobResponse] = Field(
+    jobs: list[GenerationJobResponse] = Field(
         default_factory=list,
         description="Generation job items for the current page.",
     )
@@ -465,5 +466,5 @@ class GenerationJobListResponse(BaseModel):
         default=20,
         ge=1,
         le=100,
-        description="Number of items per page (1–100).",
+        description="Number of items per page (1-100).",
     )
