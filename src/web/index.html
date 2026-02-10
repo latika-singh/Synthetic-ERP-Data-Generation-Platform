@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!--
+      Synthetic ERP Data Generation Platform - Web Console
+      HTML entry point for the Vite 5.x + React 19.x application.
+      Vite uses this file as the template for both the development server
+      and production builds. All asset injection (CSS, JS chunks) is handled
+      automatically by Vite during the build process.
+
+      IMPORTANT: No external CDN links are included to support air-gapped
+      deployment environments (Constraint C-003). All dependencies are
+      bundled locally via Vite.
+    -->
+
+    <!-- Character encoding - must be first meta tag -->
+    <meta charset="UTF-8" />
+
+    <!-- Viewport configuration for responsive design across devices -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Application metadata -->
+    <meta
+      name="description"
+      content="Synthetic ERP Data Generation Platform - Enterprise-grade solution for generating high-fidelity synthetic data that mirrors the structure, relationships, and statistical properties of production ERP systems."
+    />
+    <meta name="application-name" content="Synthetic ERP Data Generation Platform" />
+    <meta name="author" content="Synthetic ERP Data Generation Platform" />
+
+    <!--
+      Content-Security-Policy (CSP) meta tag
+      Configured to allow:
+      - self: All resources from the same origin (bundled by Vite)
+      - Auth0 domains: Required for OAuth 2.0 / OpenID Connect authentication
+      - API Gateway: Backend service communication
+      - Inline styles: Required by TailwindCSS runtime and component libraries
+      - Data/Blob URIs: Required for chart rendering (Recharts) and dynamic assets
+      - WebSocket: Required for real-time job progress updates
+
+      NOTE: In production Kubernetes deployments, CSP should be enforced via
+      the nginx reverse proxy or Ingress controller HTTP headers, which take
+      precedence over this meta tag. This meta tag provides baseline protection
+      during development and as a defense-in-depth measure.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob:;
+        font-src 'self' data:;
+        connect-src 'self' https://*.auth0.com wss://*.auth0.com;
+        frame-src 'self' https://*.auth0.com;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+        frame-ancestors 'none';
+        upgrade-insecure-requests;
+      "
+    />
+
+    <!-- Theme color for browser chrome and mobile UI -->
+    <meta name="theme-color" content="#1e40af" />
+
+    <!-- Prevent search engine indexing of internal enterprise tool -->
+    <meta name="robots" content="noindex, nofollow" />
+
+    <!-- Application title displayed in browser tab -->
+    <title>Synthetic ERP Data Generation Platform</title>
+
+    <!--
+      Favicon link - Vite resolves this path during build.
+      Place favicon.ico in the public/ directory for Vite to serve it.
+      Falls back gracefully if the favicon file is not present.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate icon" href="/favicon.ico" />
+  </head>
+
+  <body>
+    <!--
+      Noscript fallback for browsers with JavaScript disabled.
+      The Synthetic ERP Data Generation Platform Web Console is a
+      single-page React application that requires JavaScript to function.
+    -->
+    <noscript>
+      <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,-apple-system,sans-serif;padding:2rem;text-align:center;">
+        <div>
+          <h1 style="font-size:1.5rem;font-weight:600;margin-bottom:1rem;color:#1e40af;">
+            Synthetic ERP Data Generation Platform
+          </h1>
+          <p style="color:#4b5563;max-width:32rem;">
+            You need to enable JavaScript to run this app. The Web Console
+            requires a modern browser with JavaScript enabled for full
+            functionality including data generation, schema browsing,
+            quality reporting, and compliance management.
+          </p>
+        </div>
+      </div>
+    </noscript>
+
+    <!--
+      React 19.x application root mount point.
+      The React application renders its entire component tree into this
+      element via ReactDOM.createRoot(). Do not place any content inside
+      this div as it will be replaced by React during hydration.
+    -->
+    <div id="root"></div>
+
+    <!--
+      Vite module entry point.
+      Vite uses ES module script tags to load the application entry point.
+      During development, Vite serves this file directly with hot module
+      replacement (HMR). During production builds, Vite replaces this
+      script tag with optimized, hashed chunk references.
+    -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
