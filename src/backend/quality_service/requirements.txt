@@ -1,0 +1,84 @@
+# =============================================================================
+# Quality Service - Python Dependencies
+# =============================================================================
+# Service-specific dependency manifest for the Quality Service of the
+# Synthetic ERP Data Generation Platform. Declares all required pip packages
+# with version constraints for data quality validation (Great Expectations),
+# schema validation (Pydantic), statistical computations (SciPy), Flask
+# ecosystem, MongoDB/Redis clients, observability, security, and testing.
+#
+# Install: pip install -r requirements.txt
+# Install dev only: pip install -r requirements.txt (testing deps included)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Framework
+# -----------------------------------------------------------------------------
+# Flask 3.1.x lightweight REST API framework with Application Factory pattern
+flask>=3.1.0,<4.0.0
+# Resource-based REST API structure for quality validation endpoints
+flask-restful>=0.3.10,<1.0.0
+# Cross-origin request handling for Web Console frontend integration
+flask-cors>=4.0.0,<5.0.0
+# JWT token authentication with Auth0 integration
+flask-jwt-extended>=4.6.0,<5.0.0
+# Production WSGI HTTP server
+gunicorn>=21.0.0,<22.0.0
+
+# -----------------------------------------------------------------------------
+# Quality Validation (Service-Specific)
+# -----------------------------------------------------------------------------
+# Primary data quality validation framework for statistical fidelity checking
+# Integrates with the weighted scoring model (40% statistical, 30% business
+# rules, 30% referential integrity) targeting >=95% quality fidelity
+great-expectations>=0.18.0,<0.19.0
+# Request/response schema validation and quality report data models
+pydantic>=2.0.0,<3.0.0
+# Statistical distribution fitting and hypothesis testing for quality scoring
+scipy>=1.12.0,<2.0.0
+# Numerical computations for statistical validation operations
+numpy>=1.26.0,<2.0.0
+# DataFrame operations for data quality analysis and batch validation
+pandas>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# Data Layer
+# -----------------------------------------------------------------------------
+# MongoDB 7.0 driver for storing quality reports and accessing generation results
+pymongo>=4.0.0,<5.0.0
+# Redis 7.x client for caching quality scores and session management
+redis>=5.0.0,<6.0.0
+
+# -----------------------------------------------------------------------------
+# Observability
+# -----------------------------------------------------------------------------
+# Structured JSON logging with correlation ID propagation
+structlog>=24.0.0,<25.0.0
+# OpenTelemetry distributed tracing API
+opentelemetry-api>=1.0.0,<2.0.0
+# OpenTelemetry distributed tracing SDK
+opentelemetry-sdk>=1.0.0,<2.0.0
+# Flask auto-instrumentation for request tracing
+opentelemetry-instrumentation-flask>=0.40b0
+# Prometheus metrics exporter for monitoring and alerting
+prometheus-client>=0.20.0,<1.0.0
+
+# -----------------------------------------------------------------------------
+# Security
+# -----------------------------------------------------------------------------
+# JWT signing and verification for Auth0 RS256 tokens
+python-jose>=3.3.0,<4.0.0
+# AES-256 encryption primitives for data-at-rest security
+cryptography>=42.0.0,<43.0.0
+
+# -----------------------------------------------------------------------------
+# Testing
+# -----------------------------------------------------------------------------
+# Python unit testing framework
+pytest>=8.0.0,<9.0.0
+# Test coverage reporting
+pytest-cov>=5.0.0,<6.0.0
+# Async HTTP test client for endpoint testing
+httpx>=0.27.0,<1.0.0
+# MongoDB mock for unit testing without a live database
+mongomock>=4.0.0,<5.0.0
