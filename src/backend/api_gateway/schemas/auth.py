@@ -36,9 +36,8 @@ Typical usage::
 from __future__ import annotations
 
 import re
-from datetime import datetime
-from enum import Enum
-from typing import Dict, List, Optional
+from datetime import datetime  # noqa: TC003 — required at runtime by Pydantic field resolution
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -60,7 +59,7 @@ _EMAIL_REGEX = re.compile(
 # ===================================================================
 
 
-class UserRole(str, Enum):
+class UserRole(StrEnum):
     """Enumeration of the five RBAC user roles supported by the platform.
 
     Each role maps to a graduated set of :class:`Permission` values via the
@@ -89,7 +88,7 @@ class UserRole(str, Enum):
     DATA_ANALYST = "data_analyst"
 
 
-class Permission(str, Enum):
+class Permission(StrEnum):
     """Fine-grained permission tokens used for RBAC authorization checks.
 
     Permissions follow a ``<domain>:<action>`` naming convention and are
@@ -143,7 +142,7 @@ class Permission(str, Enum):
 # Role → Permission mapping
 # ===================================================================
 
-ROLE_PERMISSIONS: Dict[UserRole, List[Permission]] = {
+ROLE_PERMISSIONS: dict[UserRole, list[Permission]] = {
     UserRole.PLATFORM_ADMIN: [
         # Platform Admin has unrestricted access to every permission.
         Permission.GENERATION_CREATE,
@@ -247,7 +246,7 @@ class LoginRequest(BaseModel):
         request = LoginRequest(return_url="/generation/wizard")
     """
 
-    return_url: Optional[str] = Field(
+    return_url: str | None = Field(
         default=None,
         description="URL to redirect after login",
     )
@@ -367,7 +366,7 @@ class UserProfile(BaseModel):
         ...,
         description="Assigned RBAC role",
     )
-    permissions: List[Permission] = Field(
+    permissions: list[Permission] = Field(
         default_factory=list,
         description="Derived permissions from role",
     )
@@ -376,7 +375,7 @@ class UserProfile(BaseModel):
         min_length=1,
         description="Assigned tenant namespace",
     )
-    avatar_url: Optional[str] = Field(
+    avatar_url: str | None = Field(
         default=None,
         description="Profile picture URL",
     )
@@ -384,7 +383,7 @@ class UserProfile(BaseModel):
         default=True,
         description="Account active status",
     )
-    last_login: Optional[datetime] = Field(
+    last_login: datetime | None = Field(
         default=None,
         description="Last login timestamp",
     )
