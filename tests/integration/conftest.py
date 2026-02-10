@@ -21,7 +21,8 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime, timedelta
+from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pymongo
@@ -180,13 +181,15 @@ def wait_for_services() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
-def mongo_client() -> pymongo.MongoClient:
+def mongo_client() -> Generator[pymongo.MongoClient, None, None]:
     """Session-scoped real MongoDB client connected to the test instance.
 
     Uses ``pymongo.MongoClient`` with ``maxPoolSize=10`` suitable for a
     test runner.  The client is closed at session teardown.
     """
-    client = pymongo.MongoClient(MONGODB_TEST_URI, maxPoolSize=10)
+    client: pymongo.MongoClient = pymongo.MongoClient(
+        MONGODB_TEST_URI, maxPoolSize=10
+    )
     # Verify connectivity immediately so failures surface early.
     client.admin.command("ping")
     yield client
@@ -331,14 +334,16 @@ def clean_collections(mongo_db: pymongo.database.Database) -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
-def redis_client() -> redis_lib.Redis:
+def redis_client() -> Generator[redis_lib.Redis, None, None]:
     """Session-scoped real Redis client connected to the test instance.
 
     Uses ``redis.Redis.from_url`` with ``decode_responses=True`` so that
     string values are returned as Python ``str`` instead of ``bytes``.
     Connectivity is verified with a ``PING`` command immediately.
     """
-    client = redis_lib.Redis.from_url(REDIS_TEST_URL, decode_responses=True)
+    client: redis_lib.Redis = redis_lib.Redis.from_url(
+        REDIS_TEST_URL, decode_responses=True
+    )
     client.ping()
     yield client
     client.close()
@@ -359,7 +364,7 @@ def clean_redis(redis_client: redis_lib.Redis) -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
-def api_client() -> httpx.Client:
+def api_client() -> Generator[httpx.Client, None, None]:
     """HTTP client targeting the **API Gateway** (port 5000, timeout 30 s).
 
     Exposes ``get()``, ``post()``, ``put()``, ``delete()``, ``patch()``.
@@ -370,7 +375,7 @@ def api_client() -> httpx.Client:
 
 
 @pytest.fixture(scope="session")
-def generation_client() -> httpx.Client:
+def generation_client() -> Generator[httpx.Client, None, None]:
     """HTTP client targeting the **Generation Engine** (port 5001, timeout 60 s).
 
     Generation jobs may take longer; a 60 s default timeout accommodates
@@ -383,7 +388,7 @@ def generation_client() -> httpx.Client:
 
 
 @pytest.fixture(scope="session")
-def profiling_client() -> httpx.Client:
+def profiling_client() -> Generator[httpx.Client, None, None]:
     """HTTP client targeting the **Profiling Service** (port 5002, timeout 30 s).
 
     Exposes ``get()``, ``post()``, ``put()``, ``delete()``, ``patch()``.
@@ -394,7 +399,7 @@ def profiling_client() -> httpx.Client:
 
 
 @pytest.fixture(scope="session")
-def quality_client() -> httpx.Client:
+def quality_client() -> Generator[httpx.Client, None, None]:
     """HTTP client targeting the **Quality Service** (port 5003, timeout 30 s).
 
     Exposes ``get()``, ``post()``, ``put()``, ``delete()``, ``patch()``.
@@ -405,7 +410,7 @@ def quality_client() -> httpx.Client:
 
 
 @pytest.fixture(scope="session")
-def compliance_client() -> httpx.Client:
+def compliance_client() -> Generator[httpx.Client, None, None]:
     """HTTP client targeting the **Compliance Service** (port 5004, timeout 30 s).
 
     Exposes ``get()``, ``post()``, ``put()``, ``delete()``, ``patch()``.
@@ -416,7 +421,7 @@ def compliance_client() -> httpx.Client:
 
 
 @pytest.fixture(scope="session")
-def provisioning_client() -> httpx.Client:
+def provisioning_client() -> Generator[httpx.Client, None, None]:
     """HTTP client targeting the **Provisioning Service** (port 5005, timeout 30 s).
 
     Exposes ``get()``, ``post()``, ``put()``, ``delete()``, ``patch()``.
@@ -474,7 +479,7 @@ def _create_test_jwt(
         A compact JWS string suitable for use in an ``Authorization: Bearer``
         header.
     """
-    now = datetime.utcnow()
+    now = datetime.now(tz=UTC)
     payload: dict = {
         "sub": user_id or str(uuid.uuid4()),
         "iss": JWT_TEST_ISSUER,
@@ -487,7 +492,8 @@ def _create_test_jwt(
     }
     if extra_claims:
         payload.update(extra_claims)
-    return jwt.encode(payload, JWT_TEST_SECRET, algorithm=JWT_TEST_ALGORITHM)
+    token: str = jwt.encode(payload, JWT_TEST_SECRET, algorithm=JWT_TEST_ALGORITHM)
+    return token
 
 
 @pytest.fixture(scope="session")
@@ -607,7 +613,7 @@ def secondary_tenant_headers(secondary_tenant_id: str) -> dict[str, str]:
 # 9. Test Data Seeding Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture()
+@pytest.fixture
 def seed_schema_definition(
     schema_definitions_collection: pymongo.collection.Collection,
     sample_tenant_id: str,
@@ -618,7 +624,7 @@ def seed_schema_definition(
     two tables (``GL_ACCOUNTS`` and ``JOURNAL_ENTRIES``) and one
     foreign-key relationship.
     """
-    now = datetime.utcnow()
+    now = datetime.now(tz=UTC)
     schema_id = str(uuid.uuid4())
     doc: dict = {
         "schema_id": schema_id,
@@ -673,7 +679,7 @@ def seed_schema_definition(
     return doc
 
 
-@pytest.fixture()
+@pytest.fixture
 def seed_statistical_profile(
     statistical_profiles_collection: pymongo.collection.Collection,
     sample_tenant_id: str,
@@ -684,7 +690,7 @@ def seed_statistical_profile(
     References the schema created by ``seed_schema_definition`` so that
     cross-collection integrity tests can verify the linkage.
     """
-    now = datetime.utcnow()
+    now = datetime.now(tz=UTC)
     profile_id = str(uuid.uuid4())
     doc: dict = {
         "profile_id": profile_id,
@@ -823,7 +829,7 @@ def seed_statistical_profile(
     return doc
 
 
-@pytest.fixture()
+@pytest.fixture
 def seed_generation_job(
     generation_profiles_collection: pymongo.collection.Collection,
     sample_tenant_id: str,
@@ -835,7 +841,7 @@ def seed_generation_job(
     seeded in ``completed`` status to enable downstream tests that read
     finished jobs.
     """
-    now = datetime.utcnow()
+    now = datetime.now(tz=UTC)
     job_id = str(uuid.uuid4())
     doc: dict = {
         "job_id": job_id,
@@ -881,7 +887,7 @@ def seed_generation_job(
     return doc
 
 
-@pytest.fixture()
+@pytest.fixture
 def seed_tenant_config(
     tenant_configurations_collection: pymongo.collection.Collection,
     sample_tenant_id: str,
@@ -891,7 +897,7 @@ def seed_tenant_config(
     Defines resource quotas, allowed ERP modules, and notification
     preferences for the primary integration-test tenant.
     """
-    now = datetime.utcnow()
+    now = datetime.now(tz=UTC)
     doc: dict = {
         "tenant_id": sample_tenant_id,
         "name": "Integration Test Tenant",
@@ -927,7 +933,7 @@ def seed_tenant_config(
     return doc
 
 
-@pytest.fixture()
+@pytest.fixture
 def seed_audit_logs(
     audit_logs_collection: pymongo.collection.Collection,
     sample_tenant_id: str,
@@ -939,7 +945,7 @@ def seed_audit_logs(
     to form a tamper-evident chain (SOC 2 Type II).  Returns the list of
     inserted documents.
     """
-    now = datetime.utcnow()
+    now = datetime.now(tz=UTC)
     user_id = str(uuid.uuid4())
     actions = [
         ("generation.job.created", "Generation job created", {"job_id": str(uuid.uuid4()), "method": "statistical"}),
@@ -991,7 +997,7 @@ def seed_audit_logs(
     return docs
 
 
-@pytest.fixture()
+@pytest.fixture
 def seed_test_data(
     seed_schema_definition: dict,
     seed_statistical_profile: dict,
@@ -1018,7 +1024,7 @@ def seed_test_data(
 # 10. Sample Request Payload Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture()
+@pytest.fixture
 def sample_generation_job_request(
     sample_tenant_id: str,
     seed_schema_definition: dict,
@@ -1047,7 +1053,7 @@ def sample_generation_job_request(
     }
 
 
-@pytest.fixture()
+@pytest.fixture
 def sample_profile_request(sample_tenant_id: str) -> dict:
     """Sample JSON payload for ``POST /api/v1/profiles``.
 
@@ -1076,7 +1082,7 @@ def sample_profile_request(sample_tenant_id: str) -> dict:
     }
 
 
-@pytest.fixture()
+@pytest.fixture
 def sample_template_request(
     sample_tenant_id: str,
     seed_schema_definition: dict,
@@ -1116,7 +1122,7 @@ def sample_template_request(
     }
 
 
-@pytest.fixture()
+@pytest.fixture
 def sample_export_request(
     sample_tenant_id: str,
     seed_generation_job: dict,
