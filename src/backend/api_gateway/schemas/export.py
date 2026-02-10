@@ -39,11 +39,10 @@ Typical usage::
     )
 """
 
-from enum import Enum
 from datetime import datetime
-from typing import Optional, Dict, Any
+from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -51,11 +50,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator, ConfigD
 # ---------------------------------------------------------------------------
 
 
-class ExportFormat(str, Enum):
+class ExportFormat(StrEnum):
     """Supported output formats for synthetic data export.
 
-    All members inherit from ``str`` for JSON serialization compatibility
-    with Pydantic v2.
+    All members inherit from ``StrEnum`` for JSON serialization compatibility
+    with Pydantic v2 on Python 3.12+.
 
     Attributes:
         SQL: SQL INSERT / COPY statement format for direct DB ingestion.
@@ -70,7 +69,7 @@ class ExportFormat(str, Enum):
     PARQUET = "parquet"
 
 
-class DestinationType(str, Enum):
+class DestinationType(StrEnum):
     """Export destination type classification.
 
     Determines the provisioning pathway and which sub-configuration
@@ -87,7 +86,7 @@ class DestinationType(str, Enum):
     LOCAL_FILE = "local_file"
 
 
-class DatabaseType(str, Enum):
+class DatabaseType(StrEnum):
     """Supported target database types for JDBC provisioning.
 
     Attributes:
@@ -103,7 +102,7 @@ class DatabaseType(str, Enum):
     SAP_HANA = "sap_hana"
 
 
-class CloudProvider(str, Enum):
+class CloudProvider(StrEnum):
     """Supported cloud storage providers for export upload.
 
     Attributes:
@@ -117,7 +116,7 @@ class CloudProvider(str, Enum):
     GCP_STORAGE = "gcp_storage"
 
 
-class ExportStatus(str, Enum):
+class ExportStatus(StrEnum):
     """Export operation lifecycle status.
 
     Tracks the current state of an export job from creation to completion.
@@ -151,14 +150,14 @@ class DatabaseConnectionConfig(BaseModel):
         database_type: Target database engine
             (PostgreSQL, Oracle, SQL Server, SAP HANA).
         host: Database server hostname or IP address.
-        port: Database server port number (1–65 535).
+        port: Database server port number (1-65535).
         database: Target database / catalog name.
         schema_name: Optional target schema within the database.
         username: Database authentication username.
         password: Database authentication password (encrypted in transit).
         jdbc_driver: Optional JDBC driver class name override.
         connection_params: Optional additional JDBC connection parameters.
-        batch_size: Number of records per batch insert (100–50 000, default 5 000).
+        batch_size: Number of records per batch insert (100-50000, default 5000).
     """
 
     database_type: DatabaseType = Field(
@@ -181,7 +180,7 @@ class DatabaseConnectionConfig(BaseModel):
         min_length=1,
         description="Database name",
     )
-    schema_name: Optional[str] = Field(
+    schema_name: str | None = Field(
         default=None,
         description="Target schema",
     )
@@ -195,11 +194,11 @@ class DatabaseConnectionConfig(BaseModel):
         min_length=1,
         description="Database password",
     )
-    jdbc_driver: Optional[str] = Field(
+    jdbc_driver: str | None = Field(
         default=None,
         description="JDBC driver class",
     )
-    connection_params: Optional[Dict[str, str]] = Field(
+    connection_params: dict[str, str] | None = Field(
         default=None,
         description="Additional JDBC params",
     )
@@ -241,15 +240,15 @@ class CloudStorageConfig(BaseModel):
         min_length=1,
         description="Bucket/container name",
     )
-    path_prefix: Optional[str] = Field(
+    path_prefix: str | None = Field(
         default=None,
         description="Object key prefix/path",
     )
-    region: Optional[str] = Field(
+    region: str | None = Field(
         default=None,
         description="Cloud region",
     )
-    credentials: Optional[Dict[str, str]] = Field(
+    credentials: dict[str, str] | None = Field(
         default=None,
         description=(
             "Provider-specific credentials "
@@ -282,11 +281,11 @@ class ProvisioningConfig(BaseModel):
             provided.
     """
 
-    database_config: Optional[DatabaseConnectionConfig] = Field(
+    database_config: DatabaseConnectionConfig | None = Field(
         default=None,
         description="Database provisioning config",
     )
-    cloud_config: Optional[CloudStorageConfig] = Field(
+    cloud_config: CloudStorageConfig | None = Field(
         default=None,
         description="Cloud storage config",
     )
@@ -367,7 +366,7 @@ class ExportRequest(BaseModel):
         ...,
         description="Export destination type",
     )
-    provisioning_config: Optional[ProvisioningConfig] = Field(
+    provisioning_config: ProvisioningConfig | None = Field(
         default=None,
         description="Database or cloud config",
     )
@@ -383,7 +382,7 @@ class ExportRequest(BaseModel):
         default=False,
         description="Include CREATE TABLE DDL with SQL exports",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Tenant namespace",
     )
@@ -414,11 +413,10 @@ class ExportRequest(BaseModel):
         Raises:
             ValueError: If the value is not a supported export format.
         """
-        supported_formats = {member for member in ExportFormat}
+        supported_formats = set(ExportFormat)
         if value not in supported_formats:
             raise ValueError(
-                f"Unsupported export format '{value}'. "
-                f"Supported formats: {[f.value for f in ExportFormat]}"
+                f"Unsupported export format '{value}'. Supported formats: {[f.value for f in ExportFormat]}"
             )
         return value
 
@@ -462,13 +460,12 @@ class ExportRequest(BaseModel):
                     "'database_config' specified. Provide JDBC connection "
                     "details for the target database."
                 )
-        elif dest == DestinationType.CLOUD_STORAGE:
-            if config is None or config.cloud_config is None:
-                raise ValueError(
-                    "Cloud storage destination requires 'provisioning_config' "
-                    "with 'cloud_config' specified. Provide cloud "
-                    "bucket/container details for the target storage."
-                )
+        elif dest == DestinationType.CLOUD_STORAGE and (config is None or config.cloud_config is None):
+            raise ValueError(
+                "Cloud storage destination requires 'provisioning_config' "
+                "with 'cloud_config' specified. Provide cloud "
+                "bucket/container details for the target storage."
+            )
         # LOCAL_FILE — provisioning_config is optional; no constraint
 
         # ----- Format ↔ destination compatibility -----
@@ -525,11 +522,11 @@ class ExportResponse(BaseModel):
         ...,
         description="Export destination",
     )
-    download_url: Optional[str] = Field(
+    download_url: str | None = Field(
         default=None,
         description="Signed download URL for file exports",
     )
-    file_size_bytes: Optional[int] = Field(
+    file_size_bytes: int | None = Field(
         default=None,
         ge=0,
         description="File size in bytes",
@@ -539,19 +536,19 @@ class ExportResponse(BaseModel):
         ge=0,
         description="Total records exported",
     )
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None,
         description="Error details if failed",
     )
-    started_at: Optional[datetime] = Field(
+    started_at: datetime | None = Field(
         default=None,
         description="Export start time",
     )
-    completed_at: Optional[datetime] = Field(
+    completed_at: datetime | None = Field(
         default=None,
         description="Export completion time",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Tenant namespace",
     )
