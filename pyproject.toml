@@ -293,7 +293,9 @@ follow_untyped_imports = true
 # -----------------------------------------------------------------------------
 # 8. mypy — Pydantic Plugin Configuration
 # -----------------------------------------------------------------------------
-[tool.mypy.pydantic-mypy]
+# NOTE: pydantic mypy plugin reads from [tool.pydantic-mypy], not
+# [tool.mypy.pydantic-mypy], in pyproject.toml.
+[tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
