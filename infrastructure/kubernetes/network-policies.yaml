@@ -1,0 +1,744 @@
+# ============================================================================
+# NetworkPolicy Definitions - Synthetic ERP Data Generation Platform
+# ============================================================================
+# Implements zero-trust network segmentation for multi-tenant traffic isolation
+# and SOC 2 Type II compliance. Each service can only communicate with
+# explicitly allowed peers via whitelisted ingress and egress rules.
+#
+# Architecture Overview:
+#   External Traffic -> Ingress Controller -> API Gateway -> Backend Services -> Data Stores
+#
+# Service Communication Matrix:
+#   +-----------------------+----------------------------------------------------+
+#   | Service               | Allowed Egress Targets                             |
+#   +-----------------------+----------------------------------------------------+
+#   | api-gateway (5000)    | all backend services, mongodb, redis, Auth0 (ext)  |
+#   | generation-engine     | quality, compliance, provisioning, mongodb, redis   |
+#   | profiling-service     | mongodb, external ERP systems (JDBC/OData)         |
+#   | quality-service       | mongodb                                            |
+#   | compliance-service    | mongodb                                            |
+#   | provisioning-service  | mongodb, external DBs (JDBC), cloud storage (HTTPS)|
+#   +-----------------------+----------------------------------------------------+
+#
+# Data Store Ingress Matrix:
+#   +-----------+------------------------------------------------------------+
+#   | Store     | Allowed Ingress Sources                                    |
+#   +-----------+------------------------------------------------------------+
+#   | mongodb   | all 6 backend services, mongodb (replica set)              |
+#   | redis     | api-gateway, generation-engine, redis (sentinel/HA)        |
+#   +-----------+------------------------------------------------------------+
+#
+# Namespace: synthetic-erp-platform
+# API Version: networking.k8s.io/v1 (Kubernetes 1.29+)
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# 1. Default Deny All Ingress Traffic
+# --------------------------------------------------------------------------
+# Baseline zero-trust policy: blocks ALL inbound traffic to every pod in the
+# namespace. Individual service policies below selectively allow required
+# ingress. This ensures no unintended communication paths exist.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: synthetic-erp-platform
+  labels:
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Default deny all ingress traffic to enforce zero-trust network model.
+      All inbound traffic is blocked unless explicitly allowed by
+      service-specific NetworkPolicies. Required for SOC 2 Type II compliance
+      and multi-tenant traffic isolation.
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+# --------------------------------------------------------------------------
+# 2. Default Deny All Egress Traffic
+# --------------------------------------------------------------------------
+# Completes the zero-trust baseline by blocking ALL outbound traffic from
+# every pod. Service-specific policies below selectively allow required
+# egress destinations and ports, preventing data exfiltration.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: synthetic-erp-platform
+  labels:
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Default deny all egress traffic to complete zero-trust network posture.
+      All outbound traffic is blocked unless explicitly allowed by
+      service-specific NetworkPolicies. Prevents unauthorized data
+      exfiltration and lateral movement.
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+
+# --------------------------------------------------------------------------
+# 3. Allow DNS Resolution for All Pods
+# --------------------------------------------------------------------------
+# Essential infrastructure policy: all pods require DNS resolution for
+# Kubernetes service discovery. Without this, no pod can resolve service
+# names (e.g., mongodb, redis, generation-engine) to cluster IPs.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-access
+  namespace: synthetic-erp-platform
+  labels:
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Allows all pods to perform DNS resolution via kube-dns in the
+      kube-system namespace. Required for Kubernetes service discovery
+      to function. Permits UDP and TCP on port 53 only.
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# --------------------------------------------------------------------------
+# 4. API Gateway NetworkPolicy
+# --------------------------------------------------------------------------
+# The API Gateway is the ONLY service accepting external ingress traffic.
+# It serves as the single entry point for all REST API requests (/api/v1/*)
+# and routes them to the appropriate backend microservice. Connects to
+# Auth0 externally for JWT token validation via HTTPS.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway-ingress
+  namespace: synthetic-erp-platform
+  labels:
+    app: api-gateway
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      API Gateway network policy. Accepts ingress from NGINX Ingress Controller
+      and web-console pods on port 5000. Egress to all five backend services,
+      MongoDB, Redis, and external Auth0 (HTTPS 443) for JWT validation.
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from NGINX Ingress Controller namespace for external
+    # API requests routed through TLS 1.3 termination and path-based routing
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 5000
+    # Allow traffic from web-console pods for server-side API calls
+    - from:
+        - podSelector:
+            matchLabels:
+              app: web-console
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    # Backend microservices — API Gateway routes requests to all five services
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - generation-engine
+                  - profiling-service
+                  - quality-service
+                  - compliance-service
+                  - provisioning-service
+      ports:
+        - protocol: TCP
+          port: 5001
+        - protocol: TCP
+          port: 5002
+        - protocol: TCP
+          port: 5003
+        - protocol: TCP
+          port: 5004
+        - protocol: TCP
+          port: 5005
+    # MongoDB metadata repository for generation profiles, audit logs,
+    # tenant configurations, and other persistent data
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+    # Redis for tiered rate limiting (60/300/1000 req/min), session caching,
+    # and API response caching
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # External HTTPS — Auth0 for JWT token validation, JWKS key retrieval,
+    # and OAuth 2.0/OpenID Connect flows. Excludes RFC 1918 private IP
+    # ranges to restrict egress to public endpoints only.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+# --------------------------------------------------------------------------
+# 5. Generation Engine NetworkPolicy
+# --------------------------------------------------------------------------
+# Receives generation job dispatches from the API Gateway. After generating
+# synthetic data in batches (10K records/batch), it forwards results to the
+# Quality Service for validation, Compliance Service for PII verification,
+# and Provisioning Service for output delivery.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-generation-engine
+  namespace: synthetic-erp-platform
+  labels:
+    app: generation-engine
+    app.kubernetes.io/name: generation-engine
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Generation Engine network policy. Ingress from API Gateway only on
+      port 5001. Egress to Quality Service, Compliance Service, Provisioning
+      Service, MongoDB (job state), and Redis (progress tracking/checkpointing).
+spec:
+  podSelector:
+    matchLabels:
+      app: generation-engine
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only the API Gateway can dispatch generation jobs
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 5001
+  egress:
+    # Quality Service for post-generation data quality validation
+    # Weighted scoring: 40% statistical, 30% business rules, 30% referential integrity
+    - to:
+        - podSelector:
+            matchLabels:
+              app: quality-service
+      ports:
+        - protocol: TCP
+          port: 5003
+    # Compliance Service for PII detection and regulatory verification
+    # (GDPR, HIPAA, CCPA, SOC 2 Type II)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: compliance-service
+      ports:
+        - protocol: TCP
+          port: 5004
+    # Provisioning Service for output delivery to target databases
+    # and cloud storage (SQL, CSV, JSON, Parquet formats)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: provisioning-service
+      ports:
+        - protocol: TCP
+          port: 5005
+    # MongoDB for generation job state persistence and audit trail
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+    # Redis for real-time progress tracking via pub/sub, job checkpointing,
+    # and checkpoint/resume support for long-running generation jobs
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+# --------------------------------------------------------------------------
+# 6. Profiling Service NetworkPolicy
+# --------------------------------------------------------------------------
+# Receives schema discovery requests from the API Gateway. Connects to
+# external ERP systems (SAP, Oracle EBS, Dynamics 365, legacy JDBC) to
+# extract schema metadata ONLY (Constraint C-001: no production data access).
+# Stores statistical profiles and schema definitions in MongoDB.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-profiling-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: profiling-service
+    app.kubernetes.io/name: profiling-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Profiling Service network policy. Ingress from API Gateway only on
+      port 5002. Egress to MongoDB for profile/schema storage and to external
+      ERP systems via JDBC/OData for metadata-only schema extraction
+      (Constraint C-001: no production data access).
+spec:
+  podSelector:
+    matchLabels:
+      app: profiling-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only the API Gateway can request schema discovery and profiling
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 5002
+  egress:
+    # MongoDB for schema definitions and statistical profile storage
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+    # External ERP systems for schema metadata extraction
+    # Configurable CIDR blocks — adjust ipBlock to match your ERP network ranges.
+    # In production, replace 0.0.0.0/0 with specific ERP system CIDRs for
+    # tighter security. Private IP ranges excluded by default.
+    # Supported protocols and ports:
+    #   - SAP RFC/BAPI: TCP 3300-3301 (SAP application server)
+    #   - Oracle EBS / JDBC: TCP 1521 (Oracle listener)
+    #   - Microsoft Dynamics 365 OData: TCP 443 (HTTPS)
+    #   - PostgreSQL JDBC: TCP 5432
+    #   - SQL Server JDBC: TCP 1433
+    #   - SAP HANA JDBC: TCP 30015, 30013
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 3300
+        - protocol: TCP
+          port: 3301
+        - protocol: TCP
+          port: 1521
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 1433
+        - protocol: TCP
+          port: 30015
+        - protocol: TCP
+          port: 30013
+
+# --------------------------------------------------------------------------
+# 7. Quality Service NetworkPolicy
+# --------------------------------------------------------------------------
+# Receives quality validation requests from the API Gateway (on-demand) and
+# the Generation Engine (post-generation pipeline). Validates generated data
+# against statistical fidelity, business rules compliance, and referential
+# integrity using a weighted scoring model (>=95% target).
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-quality-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: quality-service
+    app.kubernetes.io/name: quality-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Quality Service network policy. Ingress from API Gateway and Generation
+      Engine on port 5003. Egress to MongoDB only for quality report storage.
+      Implements weighted quality scoring (40% statistical fidelity, 30%
+      business rules, 30% referential integrity) targeting >=95% fidelity.
+spec:
+  podSelector:
+    matchLabels:
+      app: quality-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # API Gateway (on-demand quality checks) and Generation Engine
+    # (post-generation pipeline validation)
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - api-gateway
+                  - generation-engine
+      ports:
+        - protocol: TCP
+          port: 5003
+  egress:
+    # MongoDB for quality report persistence and validation result storage
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+
+# --------------------------------------------------------------------------
+# 8. Compliance Service NetworkPolicy
+# --------------------------------------------------------------------------
+# Receives compliance verification requests from the API Gateway and
+# Generation Engine. Performs PII detection using spaCy NLP and regex pattern
+# matching, then verifies regulatory compliance (GDPR, HIPAA, CCPA).
+# Issues tamper-evident compliance certificates and logs to audit_logs.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-compliance-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: compliance-service
+    app.kubernetes.io/name: compliance-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Compliance Service network policy. Ingress from API Gateway and
+      Generation Engine on port 5004. Egress to MongoDB only for audit log
+      storage and compliance certification records. Enforces GDPR, HIPAA,
+      CCPA, and SOC 2 Type II compliance with tamper-evident audit trails.
+spec:
+  podSelector:
+    matchLabels:
+      app: compliance-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # API Gateway (on-demand compliance checks) and Generation Engine
+    # (post-validation compliance verification in generation pipeline)
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - api-gateway
+                  - generation-engine
+      ports:
+        - protocol: TCP
+          port: 5004
+  egress:
+    # MongoDB for audit logs (7-year retention), compliance certification
+    # records, and tamper-evident SHA-256 checksummed entries
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+
+# --------------------------------------------------------------------------
+# 9. Provisioning Service NetworkPolicy
+# --------------------------------------------------------------------------
+# Receives export and database provisioning requests from the API Gateway
+# and Generation Engine. Connects to external target databases via JDBC
+# (PostgreSQL, Oracle, SQL Server, SAP HANA) and cloud storage providers
+# (AWS S3, Azure Blob, GCP Cloud Storage) for data delivery.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-provisioning-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: provisioning-service
+    app.kubernetes.io/name: provisioning-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Provisioning Service network policy. Ingress from API Gateway and
+      Generation Engine on port 5005. Egress to MongoDB for job tracking,
+      external target databases via JDBC (PostgreSQL 5432, Oracle 1521,
+      SQL Server 1433, SAP HANA 30015/30013), and cloud storage providers
+      (AWS S3, Azure Blob, GCP Cloud Storage) via HTTPS 443.
+spec:
+  podSelector:
+    matchLabels:
+      app: provisioning-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # API Gateway (on-demand export requests) and Generation Engine
+    # (automated provisioning in generation pipeline)
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - api-gateway
+                  - generation-engine
+      ports:
+        - protocol: TCP
+          port: 5005
+  egress:
+    # MongoDB for provisioning job tracking and export metadata
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+    # External target databases via JDBC and cloud storage via HTTPS.
+    # In production, replace 0.0.0.0/0 with specific target database and
+    # cloud provider CIDRs for tighter security controls.
+    # Supported target database ports:
+    #   - PostgreSQL: TCP 5432
+    #   - Oracle: TCP 1521
+    #   - SQL Server: TCP 1433
+    #   - SAP HANA: TCP 30015 (indexserver), TCP 30013 (nameserver)
+    # Cloud storage (AWS S3, Azure Blob, GCP Cloud Storage): TCP 443
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 1521
+        - protocol: TCP
+          port: 1433
+        - protocol: TCP
+          port: 30015
+        - protocol: TCP
+          port: 30013
+        - protocol: TCP
+          port: 443
+
+# --------------------------------------------------------------------------
+# 10. MongoDB NetworkPolicy
+# --------------------------------------------------------------------------
+# MongoDB serves as the metadata repository storing five core collections:
+# generation_profiles, statistical_profiles, schema_definitions, audit_logs,
+# and tenant_configurations. All six backend services require access.
+# Replica set members must communicate with each other for elections,
+# heartbeats, and data replication.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mongodb
+  namespace: synthetic-erp-platform
+  labels:
+    app: mongodb
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      MongoDB network policy. Ingress from all six backend microservices
+      (api-gateway, generation-engine, profiling-service, quality-service,
+      compliance-service, provisioning-service) on port 27017, and from
+      other MongoDB pods for replica set communication (elections,
+      heartbeats, oplog replication).
+spec:
+  podSelector:
+    matchLabels:
+      app: mongodb
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # All six backend microservices connect to MongoDB for data persistence
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - api-gateway
+                  - generation-engine
+                  - profiling-service
+                  - quality-service
+                  - compliance-service
+                  - provisioning-service
+      ports:
+        - protocol: TCP
+          port: 27017
+    # MongoDB replica set internal communication — required for primary
+    # elections, secondary heartbeats, and oplog replication between
+    # mongodb-0, mongodb-1, and mongodb-2 StatefulSet pods
+    - from:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+  egress:
+    # MongoDB replica set internal communication — members must initiate
+    # connections to other members for elections and replication
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+
+# --------------------------------------------------------------------------
+# 11. Redis NetworkPolicy
+# --------------------------------------------------------------------------
+# Redis serves as the caching and session layer. The API Gateway uses it
+# for tiered rate limiting (60/300/1000 req/min) and session caching.
+# The Generation Engine uses it for real-time progress tracking via pub/sub
+# and checkpoint/resume state for long-running jobs.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis
+  namespace: synthetic-erp-platform
+  labels:
+    app: redis
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: network-security
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Redis network policy. Ingress from API Gateway (rate limiting, session
+      caching) and Generation Engine (progress tracking, checkpointing) on
+      port 6379, and from other Redis pods for Sentinel/HA replication.
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # API Gateway uses Redis for tiered rate limiting counters (60/300/1000
+    # req/min by user tier) and session/API response caching
+    # Generation Engine uses Redis for real-time progress tracking via
+    # pub/sub and checkpoint/resume state management
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - api-gateway
+                  - generation-engine
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Redis Sentinel/HA internal communication — required for leader
+    # election, failover detection, and data replication in production
+    # multi-replica configurations
+    - from:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        # Redis Sentinel port for HA monitoring and failover coordination
+        - protocol: TCP
+          port: 26379
+  egress:
+    # Redis Sentinel/HA internal communication — members must initiate
+    # connections to other members for replication and failover
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
