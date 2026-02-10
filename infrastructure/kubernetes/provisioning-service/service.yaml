@@ -1,0 +1,67 @@
+# =============================================================================
+# Provisioning Service - Kubernetes ClusterIP Service
+# =============================================================================
+# Internal-only service exposing the Provisioning Service on port 5005 within
+# the synthetic-erp-platform namespace. Provides database provisioning via JDBC
+# batch inserts (PostgreSQL, Oracle, SQL Server, SAP HANA) and cloud storage
+# export (AWS S3, Azure Blob Storage, GCP Cloud Storage).
+#
+# Consumers:
+#   - API Gateway (http://provisioning-service:5005) — export orchestration
+#   - Generation Engine (http://provisioning-service:5005) — output delivery
+#
+# This service is NOT externally accessible. All provisioning operations are
+# triggered by internal service-to-service REST calls routed through the
+# API Gateway.
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: provisioning-service
+  namespace: synthetic-erp-platform
+  labels:
+    # Primary selector label — must match Deployment pod template labels
+    app: provisioning-service
+    # Kubernetes recommended labels for resource identification
+    app.kubernetes.io/name: provisioning-service
+    app.kubernetes.io/component: provisioning
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Prometheus metrics scraping configuration
+    # Enables automatic discovery by Prometheus ServiceMonitor in the monitoring namespace
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5005"
+    prometheus.io/path: "/metrics"
+    # Service description for documentation and operational clarity
+    description: >-
+      Internal ClusterIP service for the Provisioning Service — handles database
+      provisioning via JDBC batch inserts to PostgreSQL, Oracle, SQL Server, and
+      SAP HANA, plus cloud storage export to AWS S3, Azure Blob Storage, and GCP
+      Cloud Storage. Supports multi-format export (SQL, CSV, JSON, Parquet).
+spec:
+  # ClusterIP type ensures this service is only reachable within the Kubernetes
+  # cluster. The Provisioning Service is a purely internal backend service with
+  # no direct external access. External provisioning requests flow through the
+  # API Gateway which routes to this service via Kubernetes DNS.
+  type: ClusterIP
+
+  # Pod selector — routes traffic to pods with matching labels from the
+  # provisioning-service Deployment's pod template specification
+  selector:
+    app: provisioning-service
+
+  # Port configuration — exposes the Flask application on port 5005
+  # matching the Gunicorn bind address configured in the Deployment ConfigMap
+  ports:
+    - name: http
+      protocol: TCP
+      port: 5005
+      targetPort: 5005
+
+  # No session affinity required — provisioning requests are stateless and
+  # can be handled by any available pod replica. Load balancing is handled
+  # by kube-proxy using the default round-robin algorithm.
+  sessionAffinity: None
