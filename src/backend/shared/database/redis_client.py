@@ -47,13 +47,17 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import redis
 import redis.client
 import redis.exceptions
 import redis.lock
-from flask import Flask
+
+
+if TYPE_CHECKING:
+    from flask import Flask
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -63,8 +67,12 @@ logger: logging.Logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Module-level singleton state
 # ---------------------------------------------------------------------------
-_redis_client: Optional[redis.Redis] = None  # type: ignore[type-arg]
-_redis_pool: Optional[redis.ConnectionPool] = None
+# Store mutable singleton references in a dict to avoid PLW0603 (discouraged
+# ``global`` statement).  The dict itself is module-level and never reassigned.
+_state: dict[str, Any] = {
+    "client": None,   # redis.Redis | None
+    "pool": None,     # redis.ConnectionPool | None
+}
 _lock: threading.Lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
@@ -107,15 +115,13 @@ def get_redis_client() -> redis.Redis:  # type: ignore[type-arg]
         client.set("hello", "world")
         assert client.get("hello") == "world"
     """
-    global _redis_client, _redis_pool
-
-    if _redis_client is not None:
-        return _redis_client
+    if _state["client"] is not None:
+        return _state["client"]  # type: ignore[return-value]
 
     with _lock:
         # Double-checked locking — re-verify after acquiring the lock.
-        if _redis_client is not None:
-            return _redis_client
+        if _state["client"] is not None:
+            return _state["client"]  # type: ignore[return-value]
 
         redis_url: str = os.environ.get(
             "REDIS_URL", "redis://localhost:6379/0"
@@ -132,7 +138,7 @@ def get_redis_client() -> redis.Redis:  # type: ignore[type-arg]
             },
         )
 
-        _redis_pool = redis.ConnectionPool.from_url(
+        pool = redis.ConnectionPool.from_url(
             url=redis_url,
             max_connections=max_connections,
             decode_responses=True,
@@ -142,11 +148,11 @@ def get_redis_client() -> redis.Redis:  # type: ignore[type-arg]
             health_check_interval=30,
         )
 
-        _redis_client = redis.Redis(connection_pool=_redis_pool)
+        client = redis.Redis(connection_pool=pool)
 
         # Validate connectivity eagerly so callers get a clear error early.
         try:
-            _redis_client.ping()
+            client.ping()
             logger.info("Redis connection established successfully")
         except redis.exceptions.ConnectionError as exc:
             logger.error(
@@ -155,10 +161,12 @@ def get_redis_client() -> redis.Redis:  # type: ignore[type-arg]
             )
             raise
 
-        return _redis_client
+        _state["pool"] = pool
+        _state["client"] = client
+        return client
 
 
-def close_redis_connection(exception: Optional[BaseException] = None) -> None:
+def close_redis_connection(exception: BaseException | None = None) -> None:
     """Safely close the Redis connection pool and reset singleton state.
 
     This function is designed to be registered as a Flask
@@ -171,8 +179,6 @@ def close_redis_connection(exception: Optional[BaseException] = None) -> None:
             Logged at warning level when present but does not prevent
             cleanup.
     """
-    global _redis_client, _redis_pool
-
     with _lock:
         if exception is not None:
             logger.warning(
@@ -180,27 +186,29 @@ def close_redis_connection(exception: Optional[BaseException] = None) -> None:
                 extra={"error": str(exception)},
             )
 
-        if _redis_client is not None:
+        client = _state["client"]
+        if client is not None:
             try:
-                _redis_client.close()
+                client.close()
                 logger.debug("Redis client closed")
             except redis.exceptions.RedisError as exc:
                 logger.error(
                     "Error closing Redis client",
                     extra={"error": str(exc)},
                 )
-            _redis_client = None
+            _state["client"] = None
 
-        if _redis_pool is not None:
+        pool = _state["pool"]
+        if pool is not None:
             try:
-                _redis_pool.disconnect()
+                pool.disconnect()
                 logger.debug("Redis connection pool disconnected")
             except redis.exceptions.RedisError as exc:
                 logger.error(
                     "Error disconnecting Redis pool",
                     extra={"error": str(exc)},
                 )
-            _redis_pool = None
+            _state["pool"] = None
 
         logger.info("Redis connection resources released")
 
@@ -275,7 +283,7 @@ def check_redis_health() -> dict[str, Any]:
 # ============================================================================
 
 
-def cache_get(key: str) -> Optional[Any]:
+def cache_get(key: str) -> Any | None:
     """Retrieve a cached value, deserialising JSON for complex types.
 
     Args:
@@ -287,7 +295,7 @@ def cache_get(key: str) -> Optional[Any]:
     """
     try:
         client = get_redis_client()
-        raw: Optional[str] = client.get(key)
+        raw: str | None = client.get(key)
         if raw is None:
             logger.debug("Cache miss", extra={"key": key})
             return None
@@ -326,7 +334,7 @@ def cache_set(key: str, value: Any, ttl: int = 3600) -> bool:
         serialised: str = (
             json.dumps(value) if not isinstance(value, str) else value
         )
-        result: Optional[bool] = client.set(key, serialised, ex=ttl)
+        result: bool | None = client.set(key, serialised, ex=ttl)
         logger.debug(
             "Cache set", extra={"key": key, "ttl": ttl}
         )
@@ -534,7 +542,7 @@ def session_store(
         client = get_redis_client()
         full_key: str = f"{_SESSION_PREFIX}{session_id}"
         serialised: str = json.dumps(data)
-        result: Optional[bool] = client.set(full_key, serialised, ex=ttl)
+        result: bool | None = client.set(full_key, serialised, ex=ttl)
         logger.debug(
             "Session stored",
             extra={"session_id": session_id, "ttl": ttl},
@@ -549,7 +557,7 @@ def session_store(
         return False
 
 
-def session_get(session_id: str) -> Optional[dict[str, Any]]:
+def session_get(session_id: str) -> dict[str, Any] | None:
     """Retrieve session data.
 
     Args:
@@ -562,7 +570,7 @@ def session_get(session_id: str) -> Optional[dict[str, Any]]:
     try:
         client = get_redis_client()
         full_key: str = f"{_SESSION_PREFIX}{session_id}"
-        raw: Optional[str] = client.get(full_key)
+        raw: str | None = client.get(full_key)
         if raw is None:
             logger.debug(
                 "Session not found",
@@ -762,7 +770,7 @@ def acquire_lock(
     lock_name: str,
     timeout: int = 30,
     blocking_timeout: int = 10,
-) -> Optional[redis.lock.Lock]:
+) -> redis.lock.Lock | None:
     """Acquire a Redis distributed lock for concurrent job coordination.
 
     Uses the Redis ``SET NX`` based locking mechanism provided by
