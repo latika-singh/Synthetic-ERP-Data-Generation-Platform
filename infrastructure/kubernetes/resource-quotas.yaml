@@ -1,0 +1,361 @@
+# =============================================================================
+# ResourceQuota & LimitRange Definitions — Synthetic ERP Data Generation Platform
+# =============================================================================
+# This manifest defines ResourceQuota and LimitRange objects that enforce
+# compute and object-count budgets per Kubernetes namespace.  Together they
+# prevent noisy-neighbor problems in the multi-tenant architecture and guarantee
+# that every container receives a baseline allocation while being capped at a
+# safe maximum.
+#
+# Documents included (separated by ---):
+#   1. platform-resource-quota        — Aggregate budget for the main
+#      synthetic-erp-platform namespace (all six microservices, MongoDB, Redis,
+#      and supporting infrastructure).
+#   2. tenant-resource-quota-template — Reference template that the platform's
+#      tenant-provisioning system copies into each dynamically-created
+#      synthetic-erp-tenant-<tenant_id> namespace.
+#   3. platform-limit-range           — Per-container and per-pod defaults and
+#      ceilings for the synthetic-erp-platform namespace.
+#   4. tenant-limit-range-template    — Per-container and per-pod defaults and
+#      ceilings for tenant namespaces (lower limits than the platform).
+#
+# Multi-Tenant Resource Isolation:
+#   When a new tenant is on-boarded the platform controller creates a dedicated
+#   namespace (synthetic-erp-tenant-<tenant_id>), then instantiates copies of
+#   documents 2 and 4 inside that namespace.  This ensures every tenant is
+#   isolated to its own CPU/memory/object budget, with sane per-container
+#   defaults so that pods that omit resource requests/limits still receive them.
+#
+# Relationship to Other Manifests:
+#   - namespace.yaml       — Defines the synthetic-erp-platform namespace that
+#                             documents 1 and 3 target.
+#   - network-policies.yaml — Provides network-level tenant isolation.
+#   - hpa.yaml             — HPA maxReplicas must be chosen such that max-scale
+#                             pods fit within the ResourceQuota budget.
+#
+# Prerequisites:
+#   - Kubernetes cluster version 1.29+
+#   - Namespaces from namespace.yaml must exist before applying this manifest.
+#
+# Usage:
+#   kubectl apply -f infrastructure/kubernetes/resource-quotas.yaml
+# =============================================================================
+
+
+# =============================================================================
+# 1. Platform Services ResourceQuota
+# =============================================================================
+# Aggregate resource budget for the synthetic-erp-platform namespace.
+# This covers all platform microservices (API Gateway, Generation Engine,
+# Profiling Service, Quality Service, Compliance Service, Provisioning Service),
+# data stores (MongoDB, Redis), and any auxiliary pods (jobs, init-containers).
+#
+# Budget rationale:
+#   - 20 CPU / 40 Gi requests accommodate the base footprint of ~12 pods each
+#     requesting ~1-2 CPU and ~2-4 Gi (generation-engine pods run heavier).
+#   - 40 CPU / 80 Gi limits provide 2× headroom for burst workloads while
+#     preventing any single namespace from starving the cluster.
+#   - 100 pods covers min-replicas for all services plus HPA scale-out and
+#     short-lived job pods for batch generation.
+#   - 3 LoadBalancers: API Gateway, Web Console, and one spare for monitoring.
+# =============================================================================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: platform-resource-quota
+  namespace: synthetic-erp-platform
+  labels:
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/name: platform-resource-quota
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    description: "Aggregate compute and object-count quota for the main platform namespace"
+    compliance/classification: "soc2-type-ii"
+    quota-type: "platform"
+spec:
+  hard:
+    # ----- Compute: requests -----
+    requests.cpu: "20"
+    requests.memory: "40Gi"
+
+    # ----- Compute: limits -----
+    limits.cpu: "40"
+    limits.memory: "80Gi"
+
+    # ----- Object counts -----
+    pods: "100"
+    services: "20"
+    configmaps: "30"
+    secrets: "30"
+    persistentvolumeclaims: "20"
+
+    # ----- Service sub-types -----
+    services.loadbalancers: "3"
+
+    # ----- Storage -----
+    requests.storage: "500Gi"
+
+    # ----- Ephemeral storage -----
+    requests.ephemeral-storage: "100Gi"
+    limits.ephemeral-storage: "200Gi"
+
+    # ----- Replication controllers (legacy) and jobs -----
+    replicationcontrollers: "0"
+    count/jobs.batch: "50"
+    count/cronjobs.batch: "10"
+    count/deployments.apps: "20"
+    count/statefulsets.apps: "10"
+
+---
+
+# =============================================================================
+# 2. Tenant ResourceQuota Template
+# =============================================================================
+# This document serves as a REFERENCE TEMPLATE for per-tenant namespace quotas.
+# It is NOT applied directly to a live namespace.  The platform's tenant
+# provisioning controller copies this template into each new
+# synthetic-erp-tenant-<tenant_id> namespace, adjusting the namespace field
+# and optionally scaling values based on the tenant's subscription tier.
+#
+# Default tier budget rationale:
+#   - 4 CPU / 8 Gi requests is sufficient for a standard-tier tenant running
+#     a handful of generation jobs concurrently.
+#   - 8 CPU / 16 Gi limits provide 2× burst headroom.
+#   - 20 pods is enough for 2-3 small services + generation workers.
+#   - 5 PVCs covers temporary generation output and checkpoint storage.
+#
+# Tier overrides (applied programmatically):
+#   Standard : values as shown below
+#   Premium  : requests.cpu="8", limits.cpu="16", pods="40", etc.
+#   Enterprise: requests.cpu="16", limits.cpu="32", pods="80", etc.
+# =============================================================================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-resource-quota-template
+  # NOTE: The namespace is intentionally set to "synthetic-erp-tenant-template".
+  # The tenant provisioning controller replaces this with the actual tenant
+  # namespace (synthetic-erp-tenant-<tenant_id>) at creation time.
+  namespace: synthetic-erp-tenant-template
+  labels:
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/name: tenant-resource-quota-template
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    description: "Template ResourceQuota copied into each per-tenant namespace"
+    quota-type: "tenant-template"
+    quota-tier: "standard"
+    compliance/classification: "soc2-type-ii"
+    # Machine-readable flag so the provisioning controller can identify templates
+    synthetic-erp.io/is-template: "true"
+    synthetic-erp.io/template-version: "1"
+spec:
+  hard:
+    # ----- Compute: requests -----
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+
+    # ----- Compute: limits -----
+    limits.cpu: "8"
+    limits.memory: "16Gi"
+
+    # ----- Object counts -----
+    pods: "20"
+    services: "10"
+    configmaps: "10"
+    secrets: "10"
+    persistentvolumeclaims: "5"
+
+    # ----- Storage -----
+    requests.storage: "100Gi"
+
+    # ----- Ephemeral storage -----
+    requests.ephemeral-storage: "20Gi"
+    limits.ephemeral-storage: "40Gi"
+
+    # ----- Jobs & deployments -----
+    count/jobs.batch: "10"
+    count/cronjobs.batch: "2"
+    count/deployments.apps: "10"
+    count/statefulsets.apps: "2"
+
+    # ----- Disallow load-balancers in tenant namespaces; traffic ingresses
+    #       through the platform Ingress controller instead. -----
+    services.loadbalancers: "0"
+    services.nodeports: "0"
+
+---
+
+# =============================================================================
+# 3. Platform LimitRange
+# =============================================================================
+# Provides per-container and per-pod default resource requests/limits within
+# the synthetic-erp-platform namespace.  Any container that does not explicitly
+# set resource requests or limits receives these defaults, preventing unbounded
+# resource consumption and ensuring that the ResourceQuota can be enforced
+# (Kubernetes requires requests/limits when a ResourceQuota is active).
+#
+# Container defaults:
+#   default request   100m CPU / 128 Mi  — lightweight baseline for sidecars
+#   default limit     500m CPU / 512 Mi  — prevents runaway containers
+#   min               50m CPU / 64 Mi    — rejects extremely small containers
+#   max               4 CPU / 8 Gi       — single-container ceiling
+#
+# Pod maximum:
+#   8 CPU / 16 Gi    — prevents a multi-container pod from consuming excessive
+#                       resources even if individual containers are within range.
+#
+# The generation-engine Deployment explicitly sets higher requests/limits in
+# its own pod spec; those values must still fall within these ranges.
+# =============================================================================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: platform-limit-range
+  namespace: synthetic-erp-platform
+  labels:
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/name: platform-limit-range
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    description: "Default and maximum resource limits for containers and pods in the platform namespace"
+    compliance/classification: "soc2-type-ii"
+spec:
+  limits:
+    # -----------------------------------------------------------------
+    # Container-level limits
+    # -----------------------------------------------------------------
+    - type: Container
+      # Default limits assigned to containers that omit limits.
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+        ephemeral-storage: "1Gi"
+      # Default requests assigned to containers that omit requests.
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "256Mi"
+      # Maximum resources a single container may request/limit.
+      max:
+        cpu: "4"
+        memory: "8Gi"
+        ephemeral-storage: "10Gi"
+      # Minimum resources — rejects pod specs with absurdly small values
+      # that would cause OOM kills or CPU starvation.
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+        ephemeral-storage: "16Mi"
+      # Maximum limit-to-request ratio.  A ratio of 4 means a container
+      # can burst up to 4× its request before being throttled.
+      maxLimitRequestRatio:
+        cpu: "10"
+        memory: "8"
+
+    # -----------------------------------------------------------------
+    # Pod-level limits (aggregate of all containers in a single pod)
+    # -----------------------------------------------------------------
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: "16Gi"
+
+    # -----------------------------------------------------------------
+    # PersistentVolumeClaim limits
+    # -----------------------------------------------------------------
+    - type: PersistentVolumeClaim
+      max:
+        storage: "50Gi"
+      min:
+        storage: "1Gi"
+
+---
+
+# =============================================================================
+# 4. Tenant LimitRange Template
+# =============================================================================
+# Template LimitRange for per-tenant namespaces.  Mirrors the structure of
+# the platform LimitRange (document 3) but with lower ceilings appropriate
+# for individual tenant workloads.  The provisioning controller copies this
+# into each synthetic-erp-tenant-<tenant_id> namespace.
+#
+# Tenant container defaults:
+#   default request   100m CPU / 128 Mi  — same lightweight baseline
+#   default limit     250m CPU / 256 Mi  — more conservative than platform
+#   min               50m CPU / 64 Mi    — same floor
+#   max               2 CPU / 4 Gi       — tenant containers cannot be as large
+#
+# Tenant pod maximum:
+#   4 CPU / 8 Gi     — half the platform pod ceiling
+# =============================================================================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-limit-range-template
+  # NOTE: Placeholder namespace — replaced by the provisioning controller.
+  namespace: synthetic-erp-tenant-template
+  labels:
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/component: resource-management
+    app.kubernetes.io/name: tenant-limit-range-template
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    description: "Template LimitRange copied into each per-tenant namespace"
+    compliance/classification: "soc2-type-ii"
+    synthetic-erp.io/is-template: "true"
+    synthetic-erp.io/template-version: "1"
+spec:
+  limits:
+    # -----------------------------------------------------------------
+    # Container-level limits (tenant)
+    # -----------------------------------------------------------------
+    - type: Container
+      # Default limits — more conservative than the platform namespace.
+      default:
+        cpu: "250m"
+        memory: "256Mi"
+        ephemeral-storage: "512Mi"
+      # Default requests — lightweight baseline identical to platform.
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+        ephemeral-storage: "128Mi"
+      # Maximum resources for a single tenant container.
+      max:
+        cpu: "2"
+        memory: "4Gi"
+        ephemeral-storage: "5Gi"
+      # Minimum resources — prevents trivially small containers.
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+        ephemeral-storage: "16Mi"
+      # Maximum burst ratio for tenant containers.
+      maxLimitRequestRatio:
+        cpu: "8"
+        memory: "8"
+
+    # -----------------------------------------------------------------
+    # Pod-level limits (tenant — aggregate of all containers)
+    # -----------------------------------------------------------------
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: "8Gi"
+
+    # -----------------------------------------------------------------
+    # PersistentVolumeClaim limits (tenant)
+    # -----------------------------------------------------------------
+    - type: PersistentVolumeClaim
+      max:
+        storage: "20Gi"
+      min:
+        storage: "1Gi"
