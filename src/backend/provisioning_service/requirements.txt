@@ -1,0 +1,68 @@
+# =============================================================================
+# Provisioning Service - Python Dependencies
+# =============================================================================
+# Dependency manifest for the Provisioning Service of the
+# Synthetic-ERP-Data-Generation-Platform. This service handles database
+# provisioning (PostgreSQL, Oracle, SQL Server, SAP HANA via JDBC) and
+# cloud storage export (AWS S3, Azure Blob, GCP Cloud Storage).
+#
+# All versions are pinned with a minimum floor and major version ceiling
+# to ensure reproducible builds while allowing compatible patch updates.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Framework
+# -----------------------------------------------------------------------------
+flask>=3.1.0,<4.0.0                           # Lightweight REST API framework
+flask-restful>=0.3.10,<1.0.0                  # Resource-based REST API structure
+flask-cors>=4.0.0,<5.0.0                      # Cross-origin request handling
+gunicorn>=21.0.0,<22.0.0                      # Production WSGI HTTP server
+
+# -----------------------------------------------------------------------------
+# Database Connectors (JDBC)
+# -----------------------------------------------------------------------------
+jaydebeapi>=1.2.3,<2.0.0                      # JDBC database connectivity for PostgreSQL, Oracle, SQL Server, SAP HANA
+JPype1>=1.5.0,<2.0.0                          # JVM interface required by jaydebeapi
+
+# -----------------------------------------------------------------------------
+# Cloud Storage SDKs
+# -----------------------------------------------------------------------------
+boto3>=1.34.0,<2.0.0                          # AWS S3 SDK for multi-part upload with AES-256 encryption
+azure-storage-blob>=12.0.0,<13.0.0            # Azure Blob Storage SDK
+azure-identity>=1.15.0,<2.0.0                 # Azure managed identity authentication
+google-cloud-storage>=2.0.0,<3.0.0            # GCP Cloud Storage SDK with service account auth
+
+# -----------------------------------------------------------------------------
+# Data Formats
+# -----------------------------------------------------------------------------
+pyarrow>=15.0.0,<16.0.0                       # Apache Parquet columnar format support
+
+# -----------------------------------------------------------------------------
+# Data Layer
+# -----------------------------------------------------------------------------
+pymongo>=4.0.0,<5.0.0                         # MongoDB 7.0 Python driver with connection pooling
+redis>=5.0.0,<6.0.0                           # Redis 7.x Python client for caching and session management
+
+# -----------------------------------------------------------------------------
+# Validation & Models
+# -----------------------------------------------------------------------------
+pydantic>=2.0.0,<3.0.0                        # Data validation and schema models
+
+# -----------------------------------------------------------------------------
+# Security
+# -----------------------------------------------------------------------------
+cryptography>=42.0.0,<43.0.0                  # AES-256 encryption primitives for data at rest
+
+# -----------------------------------------------------------------------------
+# Observability
+# -----------------------------------------------------------------------------
+structlog>=24.0.0,<25.0.0                     # Structured JSON logging
+opentelemetry-api>=1.0.0,<2.0.0              # Distributed tracing API
+opentelemetry-sdk>=1.0.0,<2.0.0              # Distributed tracing SDK
+opentelemetry-instrumentation-flask>=0.40b0   # Flask auto-instrumentation for OpenTelemetry
+prometheus-client>=0.20.0,<1.0.0              # Prometheus metrics exporter
+
+# -----------------------------------------------------------------------------
+# Resilience
+# -----------------------------------------------------------------------------
+circuitbreaker>=2.0.0,<3.0.0                  # Circuit breaker pattern for external service calls
