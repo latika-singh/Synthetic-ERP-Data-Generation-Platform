@@ -1,0 +1,461 @@
+# =============================================================================
+# Synthetic-ERP-Data-Generation-Platform — Local Development Docker Compose
+# =============================================================================
+# This Docker Compose configuration orchestrates the entire platform locally.
+# Launch all services with:  docker-compose up -d
+# Tear down with:            docker-compose down -v
+#
+# Services:
+#   api-gateway          (Flask 3.1.x)  — REST API Gateway with JWT/Auth0
+#   generation-engine    (LangChain)    — Multi-method synthetic data generation
+#   profiling-service    (SciPy/NumPy)  — ERP schema discovery & profiling
+#   quality-service      (GE/Pydantic)  — Data quality validation & scoring
+#   compliance-service   (spaCy/regex)  — PII detection & regulatory compliance
+#   provisioning-service (JDBC/SDKs)    — Database connectors & cloud export
+#   web-console          (React 19.x)   — Self-service web console
+#   mongodb              (7.0)          — Metadata repository
+#   redis                (7-alpine)     — Session cache & progress tracking
+#
+# Network:  synthetic-erp-network  (bridge)
+# Volumes:  mongodb_data, redis_data
+# =============================================================================
+
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+
+  # =========================================================================
+  # Data Stores
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # MongoDB 7.0 — Metadata Repository
+  # Collections: generation_profiles, statistical_profiles, schema_definitions,
+  #              audit_logs, tenant_configurations
+  # -------------------------------------------------------------------------
+  mongodb:
+    image: mongo:7.0
+    container_name: synthetic-erp-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-changeme}
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-synthetic_erp}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  # Redis 7.x — Session Cache, API Cache, Progress Tracking (Pub/Sub)
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: synthetic-erp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-changeme}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      --save 60 1000
+      --loglevel notice
+    volumes:
+      - redis_data:/data
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  # Backend Microservices
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # API Gateway — Flask 3.1.x REST API (Blueprints, JWT/Auth0, rate limiting)
+  # Serves as the single ingress point for the Web Console and external clients
+  # -------------------------------------------------------------------------
+  api-gateway:
+    build:
+      context: .
+      dockerfile: src/backend/api_gateway/Dockerfile
+    container_name: synthetic-erp-api-gateway
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - API_PORT=5000
+      - API_HOST=0.0.0.0
+      - MONGODB_URI=mongodb://${MONGODB_USERNAME:-admin}:${MONGODB_PASSWORD:-changeme}@mongodb:27017/${MONGODB_DATABASE:-synthetic_erp}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - GENERATION_ENGINE_URL=http://generation-engine:5001
+      - PROFILING_SERVICE_URL=http://profiling-service:5002
+      - QUALITY_SERVICE_URL=http://quality-service:5003
+      - COMPLIANCE_SERVICE_URL=http://compliance-service:5004
+      - PROVISIONING_SERVICE_URL=http://provisioning-service:5005
+      - PYTHONPATH=/app/src/backend
+      - CORS_ORIGINS=http://localhost:3000,http://web-console:80
+    volumes:
+      - ./src/backend/api_gateway:/app/src/backend/api_gateway
+      - ./src/backend/shared:/app/src/backend/shared
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  # Generation Engine — LangChain + PyTorch/TensorFlow
+  # Orchestrates AI/ML (GAN/VAE), rules-based, statistical, and masking
+  # generation methods with batch processing (10K records/batch default)
+  # -------------------------------------------------------------------------
+  generation-engine:
+    build:
+      context: .
+      dockerfile: src/backend/generation_engine/Dockerfile
+    container_name: synthetic-erp-generation-engine
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - API_PORT=5001
+      - API_HOST=0.0.0.0
+      - MONGODB_URI=mongodb://${MONGODB_USERNAME:-admin}:${MONGODB_PASSWORD:-changeme}@mongodb:27017/${MONGODB_DATABASE:-synthetic_erp}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - QUALITY_SERVICE_URL=http://quality-service:5003
+      - COMPLIANCE_SERVICE_URL=http://compliance-service:5004
+      - PROVISIONING_SERVICE_URL=http://provisioning-service:5005
+      - BATCH_SIZE=${BATCH_SIZE:-10000}
+      - MAX_WORKERS=${MAX_WORKERS:-4}
+      - GPU_ENABLED=${GPU_ENABLED:-false}
+      - MODEL_PATH=/app/models
+      - PYTHONPATH=/app/src/backend
+    volumes:
+      - ./src/backend/generation_engine:/app/src/backend/generation_engine
+      - ./src/backend/shared:/app/src/backend/shared
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  # Profiling Service — SciPy/NumPy/Pandas + JDBC
+  # Connects to source ERP systems, extracts schema metadata (no raw data),
+  # and stores statistical profiles in MongoDB
+  # -------------------------------------------------------------------------
+  profiling-service:
+    build:
+      context: .
+      dockerfile: src/backend/profiling_service/Dockerfile
+    container_name: synthetic-erp-profiling-service
+    restart: unless-stopped
+    ports:
+      - "5002:5002"
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - API_PORT=5002
+      - API_HOST=0.0.0.0
+      - MONGODB_URI=mongodb://${MONGODB_USERNAME:-admin}:${MONGODB_PASSWORD:-changeme}@mongodb:27017/${MONGODB_DATABASE:-synthetic_erp}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - DISCOVERY_TIMEOUT=${DISCOVERY_TIMEOUT:-300}
+      - PYTHONPATH=/app/src/backend
+    volumes:
+      - ./src/backend/profiling_service:/app/src/backend/profiling_service
+      - ./src/backend/shared:/app/src/backend/shared
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  # Quality Service — Great Expectations + Pydantic
+  # Weighted scoring model: 40% statistical, 30% business rules,
+  # 30% referential integrity — target ≥95% fidelity
+  # -------------------------------------------------------------------------
+  quality-service:
+    build:
+      context: .
+      dockerfile: src/backend/quality_service/Dockerfile
+    container_name: synthetic-erp-quality-service
+    restart: unless-stopped
+    ports:
+      - "5003:5003"
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - API_PORT=5003
+      - API_HOST=0.0.0.0
+      - MONGODB_URI=mongodb://${MONGODB_USERNAME:-admin}:${MONGODB_PASSWORD:-changeme}@mongodb:27017/${MONGODB_DATABASE:-synthetic_erp}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - QUALITY_THRESHOLD=${QUALITY_THRESHOLD:-0.95}
+      - PYTHONPATH=/app/src/backend
+    volumes:
+      - ./src/backend/quality_service:/app/src/backend/quality_service
+      - ./src/backend/shared:/app/src/backend/shared
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  # Compliance Service — spaCy NLP + regex pattern matching
+  # Dual-layer PII detection, GDPR/HIPAA/CCPA verification,
+  # tamper-evident compliance certification
+  # -------------------------------------------------------------------------
+  compliance-service:
+    build:
+      context: .
+      dockerfile: src/backend/compliance_service/Dockerfile
+    container_name: synthetic-erp-compliance-service
+    restart: unless-stopped
+    ports:
+      - "5004:5004"
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - API_PORT=5004
+      - API_HOST=0.0.0.0
+      - MONGODB_URI=mongodb://${MONGODB_USERNAME:-admin}:${MONGODB_PASSWORD:-changeme}@mongodb:27017/${MONGODB_DATABASE:-synthetic_erp}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - SPACY_MODEL=${SPACY_MODEL:-en_core_web_lg}
+      - PYTHONPATH=/app/src/backend
+    volumes:
+      - ./src/backend/compliance_service:/app/src/backend/compliance_service
+      - ./src/backend/shared:/app/src/backend/shared
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # -------------------------------------------------------------------------
+  # Provisioning Service — JDBC + Cloud SDKs (AWS S3, Azure Blob, GCP GCS)
+  # Batch inserts to PostgreSQL/Oracle/SQL Server/SAP HANA,
+  # multi-part upload with AES-256 encryption for cloud storage
+  # -------------------------------------------------------------------------
+  provisioning-service:
+    build:
+      context: .
+      dockerfile: src/backend/provisioning_service/Dockerfile
+    container_name: synthetic-erp-provisioning-service
+    restart: unless-stopped
+    ports:
+      - "5005:5005"
+    env_file:
+      - .env
+    environment:
+      - FLASK_APP=app
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - API_PORT=5005
+      - API_HOST=0.0.0.0
+      - MONGODB_URI=mongodb://${MONGODB_USERNAME:-admin}:${MONGODB_PASSWORD:-changeme}@mongodb:27017/${MONGODB_DATABASE:-synthetic_erp}?authSource=admin
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - PYTHONPATH=/app/src/backend
+    volumes:
+      - ./src/backend/provisioning_service:/app/src/backend/provisioning_service
+      - ./src/backend/shared:/app/src/backend/shared
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =========================================================================
+  # Frontend
+  # =========================================================================
+
+  # -------------------------------------------------------------------------
+  # Web Console — React 19.x + TypeScript 5.x + TailwindCSS 4.x
+  # Multi-step generation wizard, dashboard, template library, job monitoring,
+  # schema browser, admin panel, and settings screens (S-001 through S-010)
+  # -------------------------------------------------------------------------
+  web-console:
+    build:
+      context: .
+      dockerfile: src/web/Dockerfile
+    container_name: synthetic-erp-web-console
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    env_file:
+      - .env
+    environment:
+      - VITE_API_BASE_URL=http://localhost:5000/api/v1
+      - VITE_AUTH0_DOMAIN=${AUTH0_DOMAIN:-your-tenant.auth0.com}
+      - VITE_AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID:-your-client-id}
+      - VITE_AUTH0_AUDIENCE=${AUTH0_AUDIENCE:-https://api.synthetic-erp.com}
+      - VITE_AUTH0_CALLBACK_URL=${AUTH0_CALLBACK_URL:-http://localhost:3000/callback}
+      - VITE_WS_URL=ws://localhost:5000/ws
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - synthetic-erp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  synthetic-erp-network:
+    driver: bridge
+    name: synthetic-erp-network
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ---------------------------------------------------------------------------
+# Volumes — Persistent storage for data stores
+# ---------------------------------------------------------------------------
+volumes:
+  mongodb_data:
+    driver: local
+    name: synthetic-erp-mongodb-data
+  mongodb_config:
+    driver: local
+    name: synthetic-erp-mongodb-config
+  redis_data:
+    driver: local
+    name: synthetic-erp-redis-data
