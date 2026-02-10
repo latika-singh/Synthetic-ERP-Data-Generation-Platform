@@ -1,0 +1,120 @@
+/**
+ * Global TailwindCSS Stylesheet
+ *
+ * Root stylesheet for the Synthetic ERP Data Generation Platform Web Console.
+ * Imports TailwindCSS directives and defines custom global styles for:
+ *   - HTML/body base resets
+ *   - Custom scrollbar appearance (webkit)
+ *   - Text selection highlighting
+ *   - Global focus-visible ring for accessibility
+ *   - Smooth scrolling behavior
+ *   - Custom utility classes for text truncation
+ *
+ * Imported by src/main.tsx as a side-effect to inject the complete CSS
+ * design system into the application.
+ */
+
+/* TailwindCSS Directives — inject base resets, component classes, and utilities */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Base Layer — HTML element resets and global defaults.
+ * Applied to bare HTML elements without class selectors.
+ */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html,
+  body {
+    @apply h-full m-0 font-sans text-neutral-900 bg-neutral-50;
+  }
+
+  /**
+   * React root mount point — ensures the application fills the viewport
+   * and provides a flex column layout for sticky footer patterns.
+   */
+  #root {
+    @apply min-h-screen flex flex-col;
+  }
+
+  /**
+   * Custom text selection highlighting using the primary brand color.
+   * Provides consistent selection appearance across all browsers.
+   */
+  ::selection {
+    @apply bg-primary-200 text-primary-900;
+  }
+
+  /**
+   * Global focus-visible ring for keyboard accessibility.
+   * Uses the primary color to indicate focus state for interactive elements.
+   * Only shows on keyboard navigation (not mouse clicks) via :focus-visible.
+   */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  }
+}
+
+/**
+ * Components Layer — reusable component patterns built from utilities.
+ * These are higher-level abstractions that combine multiple utilities.
+ */
+@layer components {
+  /**
+   * Custom scrollbar styles for webkit-based browsers (Chrome, Edge, Safari).
+   * Provides a thin, themed scrollbar that matches the platform's design system.
+   */
+  .custom-scrollbar::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-neutral-100 rounded-full;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-neutral-300 rounded-full;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-neutral-400;
+  }
+}
+
+/**
+ * Utilities Layer — custom utility class extensions.
+ * Single-purpose utility classes that extend TailwindCSS defaults.
+ */
+@layer utilities {
+  /**
+   * Text truncation utility — single line with ellipsis overflow.
+   * Usage: class="text-truncate" on any text element.
+   */
+  .text-truncate {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  /**
+   * Line clamp utilities — multi-line text truncation with ellipsis.
+   * Usage: class="line-clamp-2" for 2-line maximum.
+   */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
