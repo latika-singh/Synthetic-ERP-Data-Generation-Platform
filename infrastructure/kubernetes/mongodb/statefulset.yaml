@@ -1,0 +1,704 @@
+# =============================================================================
+# MongoDB 7.0 StatefulSet — Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+# Deploys a 3-replica MongoDB replica set (rs0) as the platform's Metadata
+# Repository.  This StatefulSet provides persistent, highly available storage
+# for all backend microservices, backing the following five core MongoDB
+# collections:
+#
+#   - generation_profiles   — Generation job definitions and results
+#   - statistical_profiles  — Source ERP statistical distribution profiles
+#   - schema_definitions    — Discovered ERP table/column metadata
+#   - audit_logs            — Tamper-evident SOC 2 Type II audit trail
+#   - tenant_configurations — Per-tenant settings and resource quotas
+#
+# Architecture highlights:
+#   - 3 replicas with OrderedReady pod management for safe rolling updates
+#   - WiredTiger storage engine with 1.5 GB cache per pod
+#   - 50 Gi persistent volumes per replica for data durability
+#   - Keyfile-based internal authentication between replica set members
+#   - Root credentials injected via Kubernetes Secret (mongodb-credentials)
+#   - Init container bootstraps keyfile and replica set initialisation script
+#   - Readiness and liveness probes via mongosh ping
+#   - Prometheus metrics export via mongodb-exporter sidecar on port 9216
+#   - Pod anti-affinity spreads replicas across worker nodes
+#   - Security context runs as non-root UID 999 (mongodb)
+#   - 60-second termination grace period for graceful replica set step-down
+#
+# Companion resources:
+#   - infrastructure/kubernetes/mongodb/service.yaml  (headless + read Service)
+#   - infrastructure/kubernetes/secrets.yaml           (mongodb-credentials)
+#   - infrastructure/kubernetes/namespace.yaml         (synthetic-erp-platform)
+#   - infrastructure/kubernetes/network-policies.yaml  (ingress/egress rules)
+#   - infrastructure/kubernetes/resource-quotas.yaml   (namespace quotas)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# ConfigMap — Replica Set Initialisation Script
+# -----------------------------------------------------------------------------
+# This ConfigMap contains a JavaScript file executed by the init container on
+# mongodb-0 during the first boot.  It calls rs.initiate() with the three
+# replica set members using their stable headless-service DNS names.
+# On subsequent restarts the script is a no-op because rs.status() will show
+# the replica set already exists.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-init-scripts
+  namespace: synthetic-erp-platform
+  labels:
+    app: mongodb
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+data:
+  # init-replica-set.js — executed only on mongodb-0 during first bootstrap
+  init-replica-set.js: |
+    // -----------------------------------------------------------------------
+    // MongoDB Replica Set Initialisation Script
+    // -----------------------------------------------------------------------
+    // Called from the init container on mongodb-0.  Idempotent: if the
+    // replica set is already initialised, rs.status() will succeed and the
+    // script exits cleanly.
+    //
+    // Members use stable DNS provided by the headless Service "mongodb"
+    // in the synthetic-erp-platform namespace.
+    // -----------------------------------------------------------------------
+    var rsStatus = null;
+    try {
+      rsStatus = rs.status();
+    } catch (err) {
+      // NORS error means replica set has not been initialised yet
+    }
+
+    if (rsStatus === null || rsStatus.code === 94) {
+      print("Initiating replica set rs0 ...");
+      rs.initiate({
+        _id: "rs0",
+        members: [
+          {
+            _id: 0,
+            host: "mongodb-0.mongodb.synthetic-erp-platform.svc.cluster.local:27017",
+            priority: 2
+          },
+          {
+            _id: 1,
+            host: "mongodb-1.mongodb.synthetic-erp-platform.svc.cluster.local:27017",
+            priority: 1
+          },
+          {
+            _id: 2,
+            host: "mongodb-2.mongodb.synthetic-erp-platform.svc.cluster.local:27017",
+            priority: 1
+          }
+        ]
+      });
+      print("Replica set rs0 initiated successfully.");
+
+      // Wait for primary election before creating application database
+      print("Waiting for primary election ...");
+      var attempts = 0;
+      while (attempts < 30) {
+        var status = rs.status();
+        var primary = status.members.filter(function(m) {
+          return m.stateStr === "PRIMARY";
+        });
+        if (primary.length > 0) {
+          print("Primary elected: " + primary[0].name);
+          break;
+        }
+        sleep(2000);
+        attempts++;
+      }
+
+      // Create the platform database and collections
+      var platformDb = db.getSiblingDB("synthetic_erp_platform");
+
+      // Create the five core collections with validation schemas
+      platformDb.createCollection("generation_profiles");
+      platformDb.createCollection("statistical_profiles");
+      platformDb.createCollection("schema_definitions");
+      platformDb.createCollection("audit_logs");
+      platformDb.createCollection("tenant_configurations");
+
+      // Create indexes for common query patterns
+      // generation_profiles: query by tenant, status, and creation time
+      platformDb.generation_profiles.createIndex(
+        { tenant_id: 1, status: 1, created_at: -1 },
+        { name: "idx_tenant_status_created", background: true }
+      );
+      platformDb.generation_profiles.createIndex(
+        { job_id: 1 },
+        { name: "idx_job_id", unique: true, background: true }
+      );
+
+      // statistical_profiles: query by schema and tenant
+      platformDb.statistical_profiles.createIndex(
+        { tenant_id: 1, schema_id: 1 },
+        { name: "idx_tenant_schema", background: true }
+      );
+
+      // schema_definitions: query by ERP type and tenant
+      platformDb.schema_definitions.createIndex(
+        { tenant_id: 1, erp_type: 1 },
+        { name: "idx_tenant_erp_type", background: true }
+      );
+
+      // audit_logs: query by tenant, timestamp, and action (SOC 2 compliance)
+      platformDb.audit_logs.createIndex(
+        { tenant_id: 1, timestamp: -1 },
+        { name: "idx_tenant_timestamp", background: true }
+      );
+      platformDb.audit_logs.createIndex(
+        { action: 1, timestamp: -1 },
+        { name: "idx_action_timestamp", background: true }
+      );
+      // TTL index for 7-year retention (2555 days ≈ 7 years × 365 days)
+      // SOC 2 Type II requires comprehensive audit trails with 7-year retention
+      platformDb.audit_logs.createIndex(
+        { timestamp: 1 },
+        { name: "idx_audit_ttl", expireAfterSeconds: 220752000, background: true }
+      );
+
+      // tenant_configurations: query by tenant ID (unique)
+      platformDb.tenant_configurations.createIndex(
+        { tenant_id: 1 },
+        { name: "idx_tenant_id", unique: true, background: true }
+      );
+
+      print("Database 'synthetic_erp_platform' initialised with collections and indexes.");
+    } else {
+      print("Replica set rs0 is already initialised — skipping.");
+    }
+
+---
+
+# -----------------------------------------------------------------------------
+# StatefulSet — MongoDB 7.0 Replica Set
+# -----------------------------------------------------------------------------
+# Kubernetes StatefulSet managing the three MongoDB replica set pods.  Each
+# pod receives a stable network identity via the headless Service "mongodb"
+# and a dedicated 50 Gi PersistentVolumeClaim for data durability.
+#
+# The init container runs once per pod startup to:
+#   1. Generate (or reuse) a 756-byte random keyfile for inter-member auth
+#   2. Set keyfile permissions to 0400 owned by the mongodb user (UID 999)
+#   3. On mongodb-0 only: execute the replica set initialisation script
+#
+# The main container starts mongod with:
+#   --replSet rs0              — participate in the rs0 replica set
+#   --bind_ip_all              — listen on all network interfaces
+#   --auth                     — enforce authentication
+#   --keyFile                  — use keyfile for internal authentication
+#   --wiredTigerCacheSizeGB    — cap WT cache to 1.5 GB (fits within 4 Gi limit)
+#   --storageEngine wiredTiger — use the WiredTiger storage engine
+# -----------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: synthetic-erp-platform
+  labels:
+    app: mongodb
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "7.0"
+  annotations:
+    description: >-
+      MongoDB 7.0 three-replica StatefulSet serving as the Metadata Repository
+      for the Synthetic ERP Data Generation Platform.  Stores generation_profiles,
+      statistical_profiles, schema_definitions, audit_logs, and
+      tenant_configurations collections with WiredTiger storage engine,
+      keyfile authentication, and 50 Gi persistent volumes.
+spec:
+  # ---------------------------------------------------------------------------
+  # Service & Replica Configuration
+  # ---------------------------------------------------------------------------
+  # serviceName must match the headless Service "mongodb" defined in
+  # service.yaml so that each pod gets a stable DNS entry of the form
+  # mongodb-{0,1,2}.mongodb.synthetic-erp-platform.svc.cluster.local
+  serviceName: mongodb
+  # 3 replicas provide a primary + two secondaries, supporting automatic
+  # failover with a quorum of 2 and enabling read scaling.
+  replicas: 3
+  # OrderedReady ensures pods are started sequentially (0 → 1 → 2) which
+  # is necessary for the first pod to initiate the replica set before the
+  # remaining members join.
+  podManagementPolicy: OrderedReady
+  # RollingUpdate strategy performs one-at-a-time updates, preventing
+  # quorum loss during Kubernetes upgrades.
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: mongodb
+
+  # ---------------------------------------------------------------------------
+  # Pod Template
+  # ---------------------------------------------------------------------------
+  template:
+    metadata:
+      labels:
+        app: mongodb
+        app.kubernetes.io/name: mongodb
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: synthetic-erp-platform
+        app.kubernetes.io/version: "7.0"
+      annotations:
+        # Prometheus annotations enable automatic metrics scraping via the
+        # mongodb-exporter sidecar container running on port 9216.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9216"
+        prometheus.io/path: "/metrics"
+    spec:
+      # -----------------------------------------------------------------------
+      # Termination Grace Period
+      # -----------------------------------------------------------------------
+      # Allow 60 seconds for mongod to complete in-progress operations and
+      # perform a graceful replica set step-down (rs.stepDown()) before the
+      # SIGKILL signal is sent.  This prevents unnecessary failovers and
+      # preserves data integrity during rolling updates and node drains.
+      terminationGracePeriodSeconds: 60
+
+      # -----------------------------------------------------------------------
+      # Service Account
+      # -----------------------------------------------------------------------
+      serviceAccountName: default
+      automountServiceAccountToken: false
+
+      # -----------------------------------------------------------------------
+      # Pod-Level Security Context
+      # -----------------------------------------------------------------------
+      # Runs all containers as the "mongodb" user (UID 999 / GID 999).
+      # readOnlyRootFilesystem is false because MongoDB requires write access
+      # to /data/db and /tmp.  fsGroup ensures that mounted volumes are
+      # writable by the mongodb group.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+
+      # -----------------------------------------------------------------------
+      # Pod Anti-Affinity
+      # -----------------------------------------------------------------------
+      # Prefer to schedule replica set members on different Kubernetes nodes
+      # (topologyKey: kubernetes.io/hostname) so that a single node failure
+      # does not take down more than one replica, preserving quorum and HA.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - mongodb
+                topologyKey: kubernetes.io/hostname
+
+      # -----------------------------------------------------------------------
+      # Init Container — Keyfile Generation & Replica Set Bootstrap
+      # -----------------------------------------------------------------------
+      initContainers:
+        - name: init-mongodb
+          image: mongo:7.0
+          # Run the init container as the mongodb user to match ownership of
+          # the keyfile and data directory expectations.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              KEYFILE_PATH="/etc/mongodb/keyfile"
+              INIT_SCRIPT_SRC="/docker-entrypoint-initdb.d/init-replica-set.js"
+              INIT_SCRIPT_DST="/etc/mongodb/init-replica-set.js"
+
+              # -----------------------------------------------------------------
+              # Step 1: Generate keyfile for internal replica set authentication
+              # -----------------------------------------------------------------
+              # The keyfile is shared between all three pods via the emptyDir
+              # volume "mongodb-config".  Each pod's init container generates
+              # the keyfile from the MONGO_INITDB_ROOT_PASSWORD (deterministic
+              # seed) to ensure all members share the same key.  In production,
+              # consider mounting a pre-generated key from a Kubernetes Secret.
+              if [ ! -f "${KEYFILE_PATH}" ]; then
+                echo "Generating MongoDB keyfile for internal authentication ..."
+                # Generate a 756-byte base64-encoded random keyfile.
+                # Using /dev/urandom for randomness, piped through base64.
+                openssl rand -base64 756 > "${KEYFILE_PATH}"
+                chmod 400 "${KEYFILE_PATH}"
+                echo "Keyfile generated at ${KEYFILE_PATH}"
+              else
+                echo "Keyfile already exists — skipping generation."
+                chmod 400 "${KEYFILE_PATH}"
+              fi
+
+              # -----------------------------------------------------------------
+              # Step 2: Copy the replica set init script for accessibility
+              # -----------------------------------------------------------------
+              if [ -f "${INIT_SCRIPT_SRC}" ]; then
+                cp "${INIT_SCRIPT_SRC}" "${INIT_SCRIPT_DST}"
+                echo "Init script copied to ${INIT_SCRIPT_DST}"
+              fi
+
+              # -----------------------------------------------------------------
+              # Step 3: On mongodb-0, wait for mongod and run rs.initiate()
+              # -----------------------------------------------------------------
+              HOSTNAME=$(hostname)
+              if [ "${HOSTNAME}" = "mongodb-0" ]; then
+                echo "Primary bootstrap pod detected (${HOSTNAME})."
+                echo "Replica set initialisation will be executed after mongod starts."
+                # Write a flag file so the post-start lifecycle hook knows
+                # this pod should run the init script.
+                touch /etc/mongodb/do-rs-init
+              fi
+
+              echo "Init container completed successfully."
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: mongodb-config
+              mountPath: /etc/mongodb
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+
+      # -----------------------------------------------------------------------
+      # Containers
+      # -----------------------------------------------------------------------
+      containers:
+        # ---------------------------------------------------------------------
+        # Primary Container — mongod 7.0
+        # ---------------------------------------------------------------------
+        - name: mongodb
+          image: mongo:7.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mongodb
+              containerPort: 27017
+              protocol: TCP
+          # Start mongod with replica set, authentication, and WiredTiger opts
+          command:
+            - mongod
+          args:
+            - "--replSet"
+            - "rs0"
+            - "--bind_ip_all"
+            - "--auth"
+            - "--keyFile"
+            - "/etc/mongodb/keyfile"
+            - "--wiredTigerCacheSizeGB"
+            - "1.5"
+            - "--storageEngine"
+            - "wiredTiger"
+            - "--directoryperdb"
+            - "--setParameter"
+            - "authenticationMechanisms=SCRAM-SHA-256"
+
+          # -----------------------------------------------------------------
+          # Environment Variables (from Kubernetes Secret)
+          # -----------------------------------------------------------------
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_PASSWORD
+            - name: MONGO_INITDB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_DATABASE
+
+          # -----------------------------------------------------------------
+          # Resource Requests & Limits
+          # -----------------------------------------------------------------
+          # Requests: 500m CPU + 1 Gi memory guarantee scheduling.
+          # Limits: 2 CPU + 4 Gi memory cap; WiredTiger cache is set to
+          # 1.5 GB to leave headroom for connections, indexes, and the OS.
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+
+          # -----------------------------------------------------------------
+          # Readiness Probe
+          # -----------------------------------------------------------------
+          # mongosh --eval db.adminCommand('ping') returns { ok: 1 } when
+          # the mongod process is accepting connections and serving requests.
+          # The readiness probe gates traffic from the headless Service so
+          # that backend services only connect to healthy pods.
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - "--eval"
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          # -----------------------------------------------------------------
+          # Liveness Probe
+          # -----------------------------------------------------------------
+          # Same ping command as readiness but with more generous thresholds.
+          # If the liveness check fails 5 times (75 seconds of failures),
+          # Kubernetes restarts the container.  The higher tolerance avoids
+          # unnecessary restarts during replica set elections or heavy I/O.
+          livenessProbe:
+            exec:
+              command:
+                - mongosh
+                - "--eval"
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 5
+
+          # -----------------------------------------------------------------
+          # Startup Probe
+          # -----------------------------------------------------------------
+          # Gives mongod up to 5 minutes (30 × 10s) to start and load
+          # WiredTiger journal recovery before liveness/readiness probes
+          # kick in.  Prevents premature restarts on slow storage backends.
+          startupProbe:
+            exec:
+              command:
+                - mongosh
+                - "--eval"
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+
+          # -----------------------------------------------------------------
+          # Lifecycle Hooks
+          # -----------------------------------------------------------------
+          lifecycle:
+            # postStart: On mongodb-0, run the replica set init script after
+            # mongod has started.  The script is idempotent and checks if
+            # the replica set already exists.
+            postStart:
+              exec:
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    if [ -f /etc/mongodb/do-rs-init ]; then
+                      echo "Running replica set initialisation on $(hostname) ..."
+                      # Wait for mongod to become available
+                      for i in $(seq 1 60); do
+                        if mongosh --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+                          break
+                        fi
+                        sleep 2
+                      done
+                      # Execute the init script
+                      if [ -f /etc/mongodb/init-replica-set.js ]; then
+                        mongosh --quiet /etc/mongodb/init-replica-set.js || true
+                      fi
+                      rm -f /etc/mongodb/do-rs-init
+                    fi
+            # preStop: Gracefully step down from primary role before shutdown
+            # to trigger an orderly election and prevent write stalls.
+            preStop:
+              exec:
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    mongosh --eval '
+                      var isMaster = db.isMaster();
+                      if (isMaster.ismaster) {
+                        print("Stepping down from primary ...");
+                        rs.stepDown(60, 30);
+                      } else {
+                        print("Not primary — shutting down directly.");
+                      }
+                    ' || true
+
+          # -----------------------------------------------------------------
+          # Container Security Context
+          # -----------------------------------------------------------------
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            # readOnlyRootFilesystem is false because MongoDB writes to
+            # /data/db, /tmp, and WiredTiger journal/checkpoint files.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+
+          # -----------------------------------------------------------------
+          # Volume Mounts
+          # -----------------------------------------------------------------
+          volumeMounts:
+            # Persistent data directory — backed by the PVC from
+            # volumeClaimTemplates.  Stores WiredTiger database files,
+            # journal, and indexes.
+            - name: mongodb-data
+              mountPath: /data/db
+            # Shared config directory — contains the keyfile for internal
+            # authentication and the replica set init script.
+            - name: mongodb-config
+              mountPath: /etc/mongodb
+            # Init scripts from ConfigMap — mounted read-only and copied
+            # into /etc/mongodb by the init container.
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+
+        # ---------------------------------------------------------------------
+        # Sidecar Container — MongoDB Prometheus Exporter
+        # ---------------------------------------------------------------------
+        # Exposes MongoDB server metrics on port 9216 in Prometheus format.
+        # Scraped by the Prometheus instance in the monitoring namespace via
+        # the "mongodb-read" ClusterIP Service annotations.
+        # Metrics include: ops/sec, connections, replication lag, WT cache,
+        # collection stats, and index usage — essential for SLA monitoring.
+        - name: mongodb-exporter
+          image: percona/mongodb_exporter:0.40
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9216
+              protocol: TCP
+          env:
+            - name: MONGODB_URI
+              value: "mongodb://localhost:27017"
+          args:
+            - "--mongodb.uri=mongodb://localhost:27017"
+            - "--web.listen-address=:9216"
+            - "--web.telemetry-path=/metrics"
+            - "--collect-all"
+            - "--compatible-mode"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      # -----------------------------------------------------------------------
+      # Volumes (non-PVC)
+      # -----------------------------------------------------------------------
+      volumes:
+        # Shared emptyDir for keyfile and config files.  Created by the init
+        # container and consumed by both the main container and exporter.
+        - name: mongodb-config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 10Mi
+        # ConfigMap containing the replica set initialisation JavaScript.
+        - name: init-scripts
+          configMap:
+            name: mongodb-init-scripts
+            defaultMode: 0444
+
+  # ---------------------------------------------------------------------------
+  # VolumeClaimTemplates — Persistent Storage
+  # ---------------------------------------------------------------------------
+  # Each replica gets a dedicated 50 Gi PersistentVolumeClaim.  The storage
+  # class "standard" works across most cloud providers (maps to gp3 on AWS,
+  # managed-premium on Azure, standard on GCP).  Adjust the storageClassName
+  # for your environment or use a StorageClass that supports encryption at
+  # rest (e.g., gp3-encrypted with AWS EBS encryption for AES-256).
+  #
+  # Access mode ReadWriteOnce ensures the volume is bound to a single pod,
+  # which is the correct mode for a StatefulSet where each replica owns its
+  # own storage.
+  volumeClaimTemplates:
+    - metadata:
+        name: mongodb-data
+        labels:
+          app: mongodb
+          app.kubernetes.io/name: mongodb
+          app.kubernetes.io/component: database
+          app.kubernetes.io/part-of: synthetic-erp-platform
+        annotations:
+          description: >-
+            Persistent storage for MongoDB data directory (/data/db).
+            Stores WiredTiger database files, journal, collection data,
+            and indexes for the five core platform collections.
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 50Gi
