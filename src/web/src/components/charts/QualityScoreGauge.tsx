@@ -145,7 +145,7 @@ interface CustomTooltipProps {
  * Custom tooltip rendered on hover over the radial bar chart.
  * Shows the metric name, score percentage, and styled color indicator.
  */
-const CustomGaugeTooltip: React.FC<CustomTooltipProps> = ({ active, payload }): JSX.Element | null => {
+const CustomGaugeTooltip: React.FC<CustomTooltipProps> = ({ active, payload }): React.JSX.Element | null => {
   if (!active || !payload || payload.length === 0) {
     return null;
   }
@@ -188,7 +188,7 @@ const LoadingSkeleton: React.FC<LoadingSkeletonProps> = ({
   chartSize,
   className,
   title,
-}): JSX.Element => {
+}): React.JSX.Element => {
   return (
     <div
       className={`bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 ${className}`}
@@ -257,7 +257,7 @@ const QualityScoreGauge: React.FC<QualityScoreGaugeProps> = ({
   threshold = 0.95,
   isLoading = false,
   className = '',
-}): JSX.Element => {
+}): React.JSX.Element => {
   // Resolve pixel dimensions from the size prop
   const chartSize: number = SIZE_MAP[size] ?? SIZE_MAP.md;
 
@@ -367,7 +367,6 @@ const QualityScoreGauge: React.FC<QualityScoreGaugeProps> = ({
             />
             <RadialBar
               background={{ fill: '#E5E7EB' }}
-              clockWise
               dataKey="value"
               cornerRadius={6}
             >
