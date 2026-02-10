@@ -1,0 +1,84 @@
+# =============================================================================
+# Profiling Service - Python Dependencies
+# =============================================================================
+# ERP schema discovery and statistical profiling service.
+# Extracts schema metadata (tables, columns, relationships, data types) from
+# source ERP systems via JDBC without accessing raw production data (C-001).
+# Uses SciPy/NumPy/Pandas for statistical distribution analysis.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Framework
+# -----------------------------------------------------------------------------
+flask>=3.1.0,<3.2.0
+flask-restful>=0.3.10,<0.4.0
+flask-cors>=4.0.0,<5.0.0
+gunicorn>=21.0.0,<22.0.0
+pydantic>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# Data Science / Statistical Profiling
+# -----------------------------------------------------------------------------
+# SciPy: Statistical distribution fitting (normal, log-normal, Poisson, etc.)
+scipy>=1.12.0,<2.0.0
+# NumPy: Numerical computing for statistical synthesis and profiling
+numpy>=1.26.0,<2.0.0
+# Pandas: Data manipulation, tabular metadata handling, profiling aggregation
+pandas>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# Database Connectivity
+# -----------------------------------------------------------------------------
+# PyMongo: MongoDB 7.0 driver for storing schema_definitions and
+# statistical_profiles collections
+pymongo>=4.0.0,<5.0.0
+# Redis: Session caching, API response caching, progress tracking
+redis>=5.0.0,<6.0.0
+# JayDeBeAPI: JDBC bridge for connecting to SAP, Oracle EBS, Dynamics,
+# and legacy ERP databases for schema extraction
+jaydebeapi>=1.2.3,<2.0.0
+
+# -----------------------------------------------------------------------------
+# Logging and Observability
+# -----------------------------------------------------------------------------
+# Structured JSON logging with correlation ID propagation
+structlog>=24.0.0
+# OpenTelemetry distributed tracing API and SDK
+opentelemetry-api>=1.0.0,<2.0.0
+opentelemetry-sdk>=1.0.0,<2.0.0
+# Flask auto-instrumentation for OpenTelemetry
+opentelemetry-instrumentation-flask>=0.40b0
+# Prometheus metrics exporter for monitoring
+prometheus-client>=0.20.0,<1.0.0
+
+# -----------------------------------------------------------------------------
+# Security / Authentication
+# -----------------------------------------------------------------------------
+# JWT signing and verification for Auth0 integration
+python-jose>=3.3.0,<4.0.0
+# AES-256 encryption primitives for data-at-rest security
+cryptography>=42.0.0,<43.0.0
+
+# -----------------------------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------------------------
+# Circuit breaker pattern for resilient external dependency calls
+circuitbreaker>=2.0.0,<3.0.0
+# Async HTTP client for inter-service communication
+httpx>=0.27.0,<1.0.0
+
+# -----------------------------------------------------------------------------
+# Development and Testing
+# -----------------------------------------------------------------------------
+# Unit testing framework
+pytest>=8.0.0,<9.0.0
+# Test coverage reporting
+pytest-cov>=5.0.0,<6.0.0
+# Async test support
+pytest-asyncio>=0.23.0,<1.0.0
+# MongoDB mock for unit tests
+mongomock>=4.0.0,<5.0.0
+# Python linter and formatter (PEP 8 compliance)
+ruff>=0.4.0
+# Static type checking
+mypy>=1.10.0
