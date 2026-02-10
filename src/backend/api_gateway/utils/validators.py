@@ -23,10 +23,11 @@ from __future__ import annotations
 import html
 import re
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from bson import ObjectId
 from bson.errors import InvalidId
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants — frozensets for O(1) membership checks
@@ -111,9 +112,9 @@ VALID_DATABASE_TARGETS: frozenset[str] = frozenset(
 """Supported JDBC provisioning target databases.
 
 Members:
-    postgresql: PostgreSQL 12.x–16.x.
-    oracle: Oracle Database 19c–23ai.
-    sqlserver: SQL Server 2019–2022.
+    postgresql: PostgreSQL 12.x-16.x.
+    oracle: Oracle Database 19c-23ai.
+    sqlserver: SQL Server 2019-2022.
     sap_hana: SAP HANA 2.0 SPS 07+.
 """
 
@@ -145,7 +146,7 @@ than exhaustive to cover real-world enterprise email addresses."""
 _TENANT_ID_PATTERN: re.Pattern[str] = re.compile(
     r"^[a-zA-Z0-9][a-zA-Z0-9\-]{1,62}[a-zA-Z0-9]$"
 )
-"""Tenant ID format: 3–64 alphanumeric characters and hyphens, must start
+"""Tenant ID format: 3-64 alphanumeric characters and hyphens, must start
 and end with an alphanumeric character."""
 
 _CONTROL_CHAR_PATTERN: re.Pattern[str] = re.compile(
@@ -354,9 +355,9 @@ def validate_database_target(target: str) -> bool:
 
     Supported targets:
 
-    * ``postgresql`` — PostgreSQL 12.x–16.x
-    * ``oracle`` — Oracle Database 19c–23ai
-    * ``sqlserver`` — SQL Server 2019–2022
+    * ``postgresql`` — PostgreSQL 12.x-16.x
+    * ``oracle`` — Oracle Database 19c-23ai
+    * ``sqlserver`` — SQL Server 2019-2022
     * ``sap_hana`` — SAP HANA 2.0 SPS 07+
 
     Args:
@@ -562,7 +563,7 @@ def validate_tenant_id(tenant_id: str) -> bool:
     Per rule **R-007** (multi-tenant isolation), every API request must carry
     a valid tenant identifier.  Accepted format:
 
-    * 3–64 characters long.
+    * 3-64 characters long.
     * Alphanumeric characters and hyphens only.
     * Must start and end with an alphanumeric character.
 
