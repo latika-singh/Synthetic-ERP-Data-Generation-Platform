@@ -1,0 +1,158 @@
+# ------------------------------------------------------------------
+# ConfigMap: generation-engine-config
+# ------------------------------------------------------------------
+# Non-sensitive configuration for the Generation Engine service.
+# Injected into pods via envFrom.configMapRef by the Deployment.
+#
+# The Generation Engine orchestrates multi-method synthetic data
+# generation (AI/ML GAN/VAE, rules-based, statistical, masking)
+# via LangChain with PyTorch and TensorFlow backends.
+#
+# All values are strings per Kubernetes ConfigMap specification.
+# Secrets (DB credentials, API keys, encryption keys) are stored
+# separately in Sealed Secrets — never in this ConfigMap.
+#
+# Override per environment using kustomize overlays or Helm values.
+# ------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: generation-engine-config
+  namespace: synthetic-erp-platform
+  labels:
+    app: generation-engine
+    app.kubernetes.io/name: generation-engine
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: generation
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Configuration for the Generation Engine service — multi-method
+      synthetic data generation (AI/ML GAN/VAE, rules-based, statistical,
+      masking) orchestrated via LangChain
+data:
+  # -----------------------------------------------------------
+  # Flask / Application Settings
+  # -----------------------------------------------------------
+  # Flask environment mode (production | development | testing)
+  FLASK_ENV: "production"
+
+  # -----------------------------------------------------------
+  # Batch Processing Configuration
+  # -----------------------------------------------------------
+  # Default number of records per generation batch.
+  # Tunable range: 1000 – 100000. Default 10000 aligns with the
+  # tech-spec target of 10K records/batch for optimal throughput.
+  BATCH_SIZE: "10000"
+
+  # In-memory buffer size (records) for batch accumulation before
+  # flushing to output formatters.
+  BUFFER_SIZE: "50000"
+
+  # -----------------------------------------------------------
+  # ML Model Configuration
+  # -----------------------------------------------------------
+  # Volume-mounted directory for GAN / VAE model artifacts.
+  # Corresponds to the model-storage PVC mount in the Deployment.
+  MODEL_PATH: "/app/models"
+
+  # Cached model directory for fast reloading of recently used
+  # models. Backed by the cache-volume emptyDir in the Deployment.
+  MODEL_CACHE_PATH: "/app/cache/models"
+
+  # Default training epochs for GAN model training runs.
+  GAN_TRAINING_EPOCHS: "100"
+
+  # Default latent space dimensionality for VAE encoder/decoder.
+  VAE_LATENT_DIM: "128"
+
+  # -----------------------------------------------------------
+  # GPU Acceleration
+  # -----------------------------------------------------------
+  # Set to "true" to enable nvidia.com/gpu resource requests in the
+  # Deployment and GPU-accelerated GAN/VAE training & inference via
+  # PyTorch CUDA / TensorFlow GPU backends.
+  GPU_ENABLED: "false"
+
+  # -----------------------------------------------------------
+  # Generation Method Configuration
+  # -----------------------------------------------------------
+  # Comma-separated list of enabled generation strategies.
+  # Available methods: ai_ml, rules, statistical, masking.
+  SUPPORTED_GENERATION_METHODS: "ai_ml,rules,statistical,masking"
+
+  # Default generation method when not explicitly specified by user.
+  DEFAULT_GENERATION_METHOD: "statistical"
+
+  # -----------------------------------------------------------
+  # Checkpoint / Resume Support
+  # -----------------------------------------------------------
+  # Number of records between checkpoint saves. Enables resume of
+  # long-running generation jobs after pod restart or failure.
+  CHECKPOINT_INTERVAL: "5000"
+
+  # Volume-mounted directory for checkpoint state files.
+  # Backed by the checkpoint-volume emptyDir in the Deployment.
+  CHECKPOINT_PATH: "/app/checkpoints"
+
+  # -----------------------------------------------------------
+  # Concurrency & Resource Management
+  # -----------------------------------------------------------
+  # Maximum number of generation jobs processed simultaneously
+  # per pod instance. Prevents resource exhaustion on a single pod.
+  MAX_CONCURRENT_JOBS: "5"
+
+  # -----------------------------------------------------------
+  # Progress Tracking
+  # -----------------------------------------------------------
+  # Number of records between Redis-backed progress updates sent
+  # to the Web Console via the API Gateway for real-time monitoring.
+  PROGRESS_UPDATE_INTERVAL: "1000"
+
+  # -----------------------------------------------------------
+  # Inter-Service Communication
+  # -----------------------------------------------------------
+  # Internal Kubernetes DNS-based service URLs for downstream
+  # services in the generation pipeline.
+
+  # Quality Service — post-generation validation endpoint
+  QUALITY_SERVICE_URL: "http://quality-service:5003"
+
+  # Compliance Service — PII detection and regulatory verification
+  COMPLIANCE_SERVICE_URL: "http://compliance-service:5004"
+
+  # Provisioning Service — database provisioning and cloud export
+  PROVISIONING_SERVICE_URL: "http://provisioning-service:5005"
+
+  # -----------------------------------------------------------
+  # Output Format Configuration
+  # -----------------------------------------------------------
+  # Comma-separated list of supported export formats.
+  SUPPORTED_OUTPUT_FORMATS: "sql,csv,json,parquet"
+
+  # -----------------------------------------------------------
+  # ERP Module Scope (Constraint C-005)
+  # -----------------------------------------------------------
+  # Initial release is limited to four ERP modules:
+  #   - Financial Accounting (GL entries, invoices, payments)
+  #   - Human Resources (employee records, payroll, benefits)
+  #   - Sales & Distribution (orders, customers, pricing)
+  #   - Material Management (inventory, purchase orders, vendors)
+  SUPPORTED_ERP_MODULES: "financial_accounting,human_resources,sales_distribution,material_management"
+
+  # -----------------------------------------------------------
+  # Referential Integrity
+  # -----------------------------------------------------------
+  # When "true", the engine enforces foreign key relationships
+  # across generated tables using a dependency graph ordering.
+  REFERENTIAL_INTEGRITY_ENABLED: "true"
+
+  # -----------------------------------------------------------
+  # Retry / Resilience Configuration
+  # -----------------------------------------------------------
+  # Maximum retry attempts for transient failures during batch
+  # generation (e.g., temporary service unavailability).
+  MAX_RETRY_ATTEMPTS: "3"
+
+  # Exponential backoff multiplier: delay = factor ^ attempt seconds.
+  RETRY_BACKOFF_FACTOR: "2"
