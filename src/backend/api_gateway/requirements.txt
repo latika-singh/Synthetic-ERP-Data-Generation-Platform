@@ -1,0 +1,85 @@
+# =============================================================================
+# API Gateway Service - Python Dependencies
+# =============================================================================
+# Service-specific dependency manifest for the Synthetic ERP Data Generation
+# Platform API Gateway. All packages use version pinning with >= lower bound
+# and < upper bound to ensure reproducible builds while allowing patch updates.
+#
+# Install: pip install -r requirements.txt
+# Air-gapped: pip install --no-index --find-links=/path/to/packages -r requirements.txt
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Flask Framework
+# -----------------------------------------------------------------------------
+# Flask 3.1.x lightweight REST API framework with Application Factory pattern
+flask>=3.1.0,<3.2.0
+# Resource-based REST API structure for Blueprint route organization
+flask-restful>=0.3.10,<0.4.0
+# JWT token authentication integrated with Auth0 (RS256 verification)
+flask-jwt-extended>=4.6.0,<4.7.0
+# Cross-origin request handling for React Web Console frontend
+flask-cors>=4.0.0,<5.0.0
+# Production WSGI HTTP server with configurable workers and timeout
+gunicorn>=21.2.0,<22.0.0
+
+# -----------------------------------------------------------------------------
+# Data Layer Clients
+# -----------------------------------------------------------------------------
+# MongoDB 7.0 Python driver with connection pooling (maxPoolSize=100)
+pymongo>=4.6.0,<5.0.0
+# Redis 7.x Python client for session handling, API caching, and rate limiting
+redis>=5.0.0,<6.0.0
+
+# -----------------------------------------------------------------------------
+# Data Validation
+# -----------------------------------------------------------------------------
+# Pydantic 2.x for request/response schema validation across all endpoints
+pydantic>=2.6.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# Authentication and Security
+# -----------------------------------------------------------------------------
+# JWT signing and verification with Auth0 RS256 public key support
+python-jose[cryptography]>=3.3.0,<4.0.0
+# AES-256 encryption primitives for data-at-rest encryption (SOC 2 Type II)
+cryptography>=42.0.0,<43.0.0
+
+# -----------------------------------------------------------------------------
+# Observability and Monitoring
+# -----------------------------------------------------------------------------
+# Structured JSON logging with correlation ID propagation across services
+structlog>=24.1.0,<25.0.0
+# OpenTelemetry distributed tracing API for cross-service request tracing
+opentelemetry-api>=1.23.0,<2.0.0
+# OpenTelemetry SDK with TracerProvider and OTLP span exporters
+opentelemetry-sdk>=1.23.0,<2.0.0
+# Flask auto-instrumentation creating spans for every HTTP request
+opentelemetry-instrumentation-flask>=0.44b0
+# Prometheus metrics exporter for /metrics scrape endpoint
+prometheus-client>=0.20.0,<1.0.0
+
+# -----------------------------------------------------------------------------
+# Resilience Patterns
+# -----------------------------------------------------------------------------
+# Circuit breaker pattern for external service calls (Auth0, downstream services)
+circuitbreaker>=2.0.0,<3.0.0
+
+# -----------------------------------------------------------------------------
+# HTTP Client for Inter-Service Communication
+# -----------------------------------------------------------------------------
+# Async-capable HTTP client for REST calls to Generation Engine, Profiling,
+# Quality, Compliance, and Provisioning services
+httpx>=0.27.0,<1.0.0
+
+# -----------------------------------------------------------------------------
+# Testing Dependencies
+# -----------------------------------------------------------------------------
+# Python unit testing framework (pytest 8.x)
+pytest>=8.0.0,<9.0.0
+# Test coverage reporting for CI pipelines
+pytest-cov>=5.0.0,<6.0.0
+# Async test support for httpx-based service calls
+pytest-asyncio>=0.23.0,<1.0.0
+# MongoDB mock for unit testing without a running MongoDB instance
+mongomock>=4.1.0,<5.0.0
