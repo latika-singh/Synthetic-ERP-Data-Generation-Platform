@@ -1,0 +1,46 @@
+# =============================================================================
+# Kubernetes Service — Compliance Service
+# =============================================================================
+# Internal ClusterIP Service for PII detection, regulatory compliance
+# verification (GDPR, HIPAA, CCPA), and dataset compliance certification.
+#
+# This service is consumed exclusively within the cluster by:
+#   - Generation Engine (POST /verify — post-generation compliance checks)
+#   - API Gateway (compliance status queries, certification history)
+#
+# Port 5004 aligns with the Compliance Service Flask application port.
+# ClusterIP type ensures the service is never externally exposed.
+#
+# DNS Name: compliance-service.synthetic-erp-platform.svc.cluster.local
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: compliance-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: compliance-service
+    app.kubernetes.io/name: compliance-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: compliance
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    description: >-
+      Internal ClusterIP service for PII detection, regulatory compliance
+      verification (GDPR, HIPAA, CCPA), and dataset compliance certification.
+      Called by the Generation Engine for post-generation PII scanning and by
+      the API Gateway for compliance status queries.
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5004"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: compliance-service
+  ports:
+    - name: http
+      protocol: TCP
+      port: 5004
+      targetPort: 5004
+  sessionAffinity: None
