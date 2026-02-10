@@ -48,6 +48,7 @@ from typing import Any
 import structlog
 from structlog.stdlib import BoundLogger  # noqa: F401 — re-exported for type usage
 
+
 # ---------------------------------------------------------------------------
 # Optional dependency imports with graceful fallbacks.
 # OpenTelemetry and Flask may not be available in every execution context
@@ -167,8 +168,10 @@ def add_correlation_id(
                     trace_id_hex = format(span_context.trace_id, "032x")
                     span_id_hex = format(span_context.span_id, "016x")
                     correlation_id = trace_id_hex
-        except Exception:
+        except Exception:  # noqa: S110
             # Graceful degradation — OTel context extraction is best-effort.
+            # Logging the exception here would risk infinite recursion since
+            # this code runs inside the logging processor chain itself.
             pass
 
     # Strategy 2: HTTP header via Flask request context
@@ -179,8 +182,9 @@ def add_correlation_id(
                     request.headers.get("X-Correlation-ID")
                     or request.headers.get("X-Request-ID")
                 )
-        except Exception:
+        except Exception:  # noqa: S110
             # Graceful degradation when Flask context is unavailable.
+            # Cannot log here — we are inside the log processor chain.
             pass
 
     # Strategy 3: UUID-4 fallback
@@ -225,8 +229,9 @@ def add_tenant_context(
                 tenant_id = getattr(g, "tenant_id", None)
                 if tenant_id is not None:
                     event_dict["tenant_id"] = tenant_id
-        except Exception:
+        except Exception:  # noqa: S110
             # Graceful degradation outside Flask request context.
+            # Cannot log here — we are inside the log processor chain.
             pass
 
     return event_dict
@@ -268,8 +273,9 @@ def add_request_context(
                 user_id = getattr(g, "user_id", None)
                 if user_id is not None:
                     event_dict["user_id"] = user_id
-        except Exception:
+        except Exception:  # noqa: S110
             # Graceful degradation outside Flask request context.
+            # Cannot log here — we are inside the log processor chain.
             pass
 
     return event_dict
@@ -433,8 +439,10 @@ def configure_logging(
     # the event dict on the logging side.
     # ------------------------------------------------------------------
     structlog.configure(
-        processors=shared_processors
-        + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
+        processors=[
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
@@ -471,8 +479,8 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
         logger.error("job_failed", job_id="abc-123", exc_info=True)
     """
     if name is not None:
-        return structlog.get_logger(name)
-    return structlog.get_logger()
+        return structlog.get_logger(name)  # type: ignore[no-any-return]
+    return structlog.get_logger()  # type: ignore[no-any-return]
 
 
 def bind_context(**kwargs: Any) -> None:
