@@ -1,0 +1,375 @@
+# =============================================================================
+# Kubernetes Deployment Manifest — Generation Engine
+# =============================================================================
+# Service: Generation Engine (LangChain + PyTorch/TensorFlow)
+# Purpose: Multi-method synthetic data generation service orchestrating AI/ML
+#          (GAN via PyTorch, VAE via TensorFlow), rules-based, statistical
+#          (SciPy/NumPy), and intelligent masking generation methods.
+# Port:    5001 (Flask application)
+# Scaling: HPA-managed from 2 to 20 replicas at 60% CPU utilization
+# Throughput Target: 1M+ records/minute via batch processing (10K records/batch)
+#
+# References:
+#   - ConfigMap: generation-engine-config (configmap.yaml)
+#   - Secrets: mongodb-credentials, redis-credentials, jwt-keys, encryption-keys
+#   - Service: generation-engine (service.yaml) — ClusterIP on port 5001
+#   - HPA: generation-engine (hpa.yaml) — autoscaling/v2, 2-20 replicas
+#   - PVC: generation-engine-models-pvc — persistent ML model artifact storage
+#
+# GPU Support:
+#   By default GPU resources are NOT requested. To enable GPU acceleration for
+#   GAN/VAE workloads, uncomment the nvidia.com/gpu resource lines and set
+#   GPU_ENABLED=true in the generation-engine-config ConfigMap. GPU nodes must
+#   have the NVIDIA device plugin installed and the nvidia.com/gpu taint.
+#
+# Air-Gapped Deployment:
+#   ML model artifacts (GAN/VAE) are loaded from the model-storage PVC volume
+#   mounted at /app/models. In air-gapped environments, pre-load model
+#   artifacts to the PVC before deployment. No external model registry access
+#   is required at runtime.
+#
+# SOC 2 Type II:
+#   - Non-root container execution (UID 1000)
+#   - Read-only root filesystem
+#   - All capabilities dropped
+#   - Structured JSON audit logging via OpenTelemetry
+#   - Tamper-evident audit trails to MongoDB audit_logs collection
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: generation-engine
+  namespace: synthetic-erp-platform
+  labels:
+    app: generation-engine
+    app.kubernetes.io/name: generation-engine
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: generation
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Multi-method synthetic data generation engine orchestrated via LangChain.
+      Supports AI/ML (GAN via PyTorch, VAE via TensorFlow), rules-based,
+      statistical (SciPy/NumPy), and intelligent masking generation methods.
+      Batch processing at 10K records/batch targeting 1M+ records/minute throughput.
+      Enforces referential integrity across generated tables via dependency graph ordering.
+spec:
+  # -------------------------------------------------------------------------
+  # Replica and Update Strategy
+  # HPA scales from 2 (min) to 20 (max) replicas based on CPU utilization
+  # and custom queue depth metrics for burst generation workloads.
+  # -------------------------------------------------------------------------
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: generation-engine
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero-downtime deployments: new pod must be ready before old is removed
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app: generation-engine
+        app.kubernetes.io/name: generation-engine
+        app.kubernetes.io/part-of: synthetic-erp-platform
+      annotations:
+        # Prometheus metrics scraping configuration
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5001"
+        prometheus.io/path: "/metrics"
+    spec:
+      # -----------------------------------------------------------------------
+      # Service Account and Termination Grace Period
+      # -----------------------------------------------------------------------
+      serviceAccountName: generation-engine
+      # Allow 120s for long-running ML generation batches to complete gracefully
+      # before SIGKILL. This accommodates in-progress batch writes, checkpoint
+      # saving, and Redis progress finalization.
+      terminationGracePeriodSeconds: 120
+
+      # -----------------------------------------------------------------------
+      # Pod-Level Security Context (SOC 2 Type II compliance)
+      # -----------------------------------------------------------------------
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      # -----------------------------------------------------------------------
+      # Pod Anti-Affinity (High Availability)
+      # Prefer spreading generation-engine pods across different nodes to:
+      #   1. Ensure high availability if a node fails
+      #   2. Distribute ML compute load across the cluster
+      #   3. Avoid resource contention for CPU/GPU-intensive workloads
+      # -----------------------------------------------------------------------
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - generation-engine
+                topologyKey: kubernetes.io/hostname
+
+      # -----------------------------------------------------------------------
+      # Topology Spread Constraints (Zone Availability)
+      # Distribute pods across availability zones for resilience against
+      # zone-level failures. Uses soft constraint (ScheduleAnyway) to allow
+      # scheduling even if zones are imbalanced.
+      # -----------------------------------------------------------------------
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: generation-engine
+
+      # -----------------------------------------------------------------------
+      # GPU Node Tolerations
+      # Allows scheduling on GPU-tainted nodes when GPU workloads are enabled.
+      # GPU nodes are typically tainted with nvidia.com/gpu=NoSchedule to
+      # prevent non-GPU workloads from being scheduled on expensive GPU instances.
+      # -----------------------------------------------------------------------
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      # -----------------------------------------------------------------------
+      # Containers
+      # -----------------------------------------------------------------------
+      containers:
+        - name: generation-engine
+          image: synthetic-erp-platform/generation-engine:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5001
+              name: http
+              protocol: TCP
+
+          # -------------------------------------------------------------------
+          # Resource Requests and Limits (Higher for ML workloads)
+          # CPU: 1 core request / 4 cores limit — GAN training and statistical
+          #      synthesis are CPU-intensive operations
+          # Memory: 2Gi request / 8Gi limit — PyTorch/TensorFlow model loading
+          #         and batch data buffering require significant memory
+          #
+          # GPU: Optional — uncomment nvidia.com/gpu lines to request GPU
+          #      resources for accelerated GAN/VAE training and inference.
+          #      Requires NVIDIA device plugin on cluster nodes.
+          # -------------------------------------------------------------------
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+              # Uncomment the following line to request GPU for AI/ML workloads:
+              # nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+              # Uncomment the following line to set GPU limit for AI/ML workloads:
+              # nvidia.com/gpu: "1"
+
+          # -------------------------------------------------------------------
+          # Container-Level Security Context (SOC 2 Type II compliance)
+          # -------------------------------------------------------------------
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - "ALL"
+
+          # -------------------------------------------------------------------
+          # Environment Variables from ConfigMap
+          # Injects all keys from generation-engine-config as env vars:
+          #   BATCH_SIZE, MODEL_PATH, GPU_ENABLED, CHECKPOINT_INTERVAL,
+          #   SUPPORTED_GENERATION_METHODS, MAX_CONCURRENT_JOBS,
+          #   QUALITY_SERVICE_URL, COMPLIANCE_SERVICE_URL,
+          #   PROVISIONING_SERVICE_URL, SUPPORTED_OUTPUT_FORMATS,
+          #   SUPPORTED_ERP_MODULES, REFERENTIAL_INTEGRITY_ENABLED, etc.
+          # -------------------------------------------------------------------
+          envFrom:
+            - configMapRef:
+                name: generation-engine-config
+
+          # -------------------------------------------------------------------
+          # Individual Environment Variables
+          # Static service configuration and secret references following
+          # 12-factor app methodology.
+          # -------------------------------------------------------------------
+          env:
+            # Flask application entry point
+            - name: FLASK_APP
+              value: "app:create_app"
+            # Service identification
+            - name: SERVICE_NAME
+              value: "generation-engine"
+            - name: SERVICE_PORT
+              value: "5001"
+            # Structured JSON logging configuration
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: LOG_FORMAT
+              value: "json"
+            # OpenTelemetry distributed tracing configuration
+            - name: OTEL_SERVICE_NAME
+              value: "generation-engine"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring:4317"
+
+            # -----------------------------------------------------------------
+            # Secrets: MongoDB credentials
+            # Connection to MongoDB 7.0 metadata repository for generation
+            # profiles, job state, and audit logging
+            # -----------------------------------------------------------------
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_URI
+            - name: MONGODB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_DATABASE
+
+            # -----------------------------------------------------------------
+            # Secrets: Redis credentials
+            # Connection to Redis 7.x for session caching, job progress
+            # tracking, and inter-service pub/sub communication
+            # -----------------------------------------------------------------
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_URL
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+
+            # -----------------------------------------------------------------
+            # Secrets: JWT signing keys
+            # Used for validating API Gateway-forwarded JWT tokens and
+            # inter-service authentication
+            # -----------------------------------------------------------------
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-keys
+                  key: JWT_SECRET_KEY
+
+            # -----------------------------------------------------------------
+            # Secrets: Encryption keys
+            # AES-256 key for data-at-rest encryption of generated datasets
+            # and Flask session secret key
+            # -----------------------------------------------------------------
+            - name: AES_256_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: AES_256_KEY
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: FLASK_SECRET_KEY
+
+          # -------------------------------------------------------------------
+          # Health Probes
+          # -------------------------------------------------------------------
+
+          # Liveness Probe: Detects if the service process is deadlocked or
+          # unresponsive. Restarts the container after 3 consecutive failures.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5001
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Readiness Probe: Controls traffic routing — only sends requests
+          # to pods that are ready to serve. Checks dependency connectivity
+          # (MongoDB, Redis) and model loading status.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5001
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Startup Probe: Allows extended startup time for ML model loading.
+          # PyTorch GAN and TensorFlow VAE model initialization can take up to
+          # ~195 seconds (15s initial + 18 failures * 10s period).
+          # Liveness and readiness probes are disabled until startup succeeds.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5001
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 18
+
+          # -------------------------------------------------------------------
+          # Volume Mounts
+          # -------------------------------------------------------------------
+          volumeMounts:
+            # Persistent ML model storage (GAN/VAE model artifacts)
+            # In air-gapped environments, pre-load models to PVC before deploy
+            - name: model-storage
+              mountPath: /app/models
+              readOnly: false
+            # Writable /tmp for temporary file operations (read-only rootfs)
+            - name: tmp-volume
+              mountPath: /tmp
+            # Ephemeral cache for model inference caches and intermediate data
+            - name: cache-volume
+              mountPath: /app/cache
+            # Job checkpoint storage for long-running generation job resume
+            - name: checkpoint-volume
+              mountPath: /app/checkpoints
+
+      # -----------------------------------------------------------------------
+      # Volumes
+      # -----------------------------------------------------------------------
+      volumes:
+        # Persistent Volume Claim for ML model artifacts (GAN/VAE weights).
+        # Provides durable storage that survives pod restarts and rescheduling.
+        # For air-gapped deployments, pre-populate this PVC with model files.
+        # Alternative: Replace with emptyDir: {} for ephemeral model caching
+        # when models are fetched from an internal model registry at startup.
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: generation-engine-models-pvc
+        # Temporary filesystem for scratch space (required by readOnlyRootFilesystem)
+        - name: tmp-volume
+          emptyDir: {}
+        # Bounded ephemeral cache for model inference and intermediate data
+        - name: cache-volume
+          emptyDir:
+            sizeLimit: 2Gi
+        # Bounded ephemeral storage for job checkpoint/resume support.
+        # Checkpoints are saved every CHECKPOINT_INTERVAL records (default 5000)
+        # to enable resuming interrupted long-running generation jobs.
+        - name: checkpoint-volume
+          emptyDir:
+            sizeLimit: 5Gi
