@@ -1,0 +1,362 @@
+---
+# =============================================================================
+# Redis 7.x StatefulSet — Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+#
+# Purpose:
+#   Provides the caching and session layer for the entire platform, including:
+#   - API Gateway: Tiered rate limiting (60/300/1000 req/min), session caching,
+#     and API response caching (50ms cached vs 100ms standard response times)
+#   - Generation Engine: Redis-backed real-time job progress tracking via
+#     key-value state, checkpoint/resume support for long-running jobs
+#   - General: Inter-service coordination, Pub/Sub event distribution
+#
+# Configuration:
+#   - Image: redis:7-alpine (lightweight Alpine-based Redis 7.x)
+#   - Persistence: AOF (Append Only File) + RDB snapshots for durability
+#   - Eviction: allkeys-lru (Least Recently Used) when maxmemory is reached
+#   - Authentication: Password-based via redis-credentials Kubernetes Secret
+#   - Security: Non-root execution (UID 999), read-only root filesystem,
+#     dropped Linux capabilities, no privilege escalation
+#
+# Scaling:
+#   - Default: 1 replica for development environments
+#   - Production: Set replicas to 3 for HA via Redis Sentinel or Cluster mode
+#     (requires additional sentinel/cluster configuration)
+#
+# Dependencies:
+#   - Headless Service: redis (infrastructure/kubernetes/redis/service.yaml)
+#   - Secret: redis-credentials (infrastructure/kubernetes/secrets.yaml)
+#   - Namespace: synthetic-erp-platform (infrastructure/kubernetes/namespace.yaml)
+#   - StorageClass: standard (or cluster-specific StorageClass)
+#
+# =============================================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: synthetic-erp-platform
+  labels:
+    app: redis
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/version: "7"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Redis 7.x StatefulSet providing caching, session management,
+      rate limiting, and real-time job progress tracking for the
+      Synthetic-ERP-Data-Generation-Platform.
+spec:
+  # ---------------------------------------------------------------------------
+  # StatefulSet Configuration
+  # ---------------------------------------------------------------------------
+  # serviceName references the headless Service for stable DNS identity.
+  # Each pod gets a stable hostname: redis-{ordinal}.redis.synthetic-erp-platform.svc.cluster.local
+  serviceName: redis
+  # Default: 1 replica for development. In production, set to 3 replicas for HA
+  # with Redis Sentinel or Cluster mode. Requires additional sentinel sidecar
+  # container and configuration when replicas > 1.
+  replicas: 1
+  # OrderedReady ensures pods are created/terminated sequentially (redis-0 first),
+  # which is important for data consistency during scaling operations.
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  # Retain PVCs on StatefulSet deletion to prevent accidental data loss.
+  # Manually delete PVCs when data cleanup is intended.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app: redis
+  # ---------------------------------------------------------------------------
+  # Pod Template
+  # ---------------------------------------------------------------------------
+  template:
+    metadata:
+      labels:
+        app: redis
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: synthetic-erp-platform
+      annotations:
+        # Prometheus metrics scraping configuration.
+        # Port 9121 is the standard redis-exporter metrics port.
+        # Requires a redis-exporter sidecar if Prometheus scraping is enabled.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      # -----------------------------------------------------------------------
+      # Termination Grace Period
+      # -----------------------------------------------------------------------
+      # Allow Redis 30 seconds to flush the AOF buffer and perform a final
+      # RDB snapshot before the pod is forcefully terminated. This prevents
+      # data loss during rolling updates and scale-down operations.
+      terminationGracePeriodSeconds: 30
+      # -----------------------------------------------------------------------
+      # Pod-Level Security Context
+      # -----------------------------------------------------------------------
+      # Enforce non-root execution with the redis user (UID 999 / GID 999)
+      # as defined in the official redis:7-alpine image.
+      # fsGroup ensures the PVC mount is writable by the redis group.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        # Prevent privilege escalation via setuid/setgid binaries.
+        seccompProfile:
+          type: RuntimeDefault
+      # -----------------------------------------------------------------------
+      # Pod Anti-Affinity (Production HA)
+      # -----------------------------------------------------------------------
+      # When running multiple replicas (production), prefer spreading Redis
+      # pods across different nodes to survive single-node failures.
+      # Uses preferredDuringScheduling (soft constraint) to avoid scheduling
+      # failures in clusters with limited nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - redis
+                topologyKey: kubernetes.io/hostname
+      # -----------------------------------------------------------------------
+      # Service Account
+      # -----------------------------------------------------------------------
+      # Use the default service account. No Kubernetes API access is required
+      # by the Redis container.
+      automountServiceAccountToken: false
+      # -----------------------------------------------------------------------
+      # Containers
+      # -----------------------------------------------------------------------
+      containers:
+        # ---------------------------------------------------------------------
+        # Main Redis Container
+        # ---------------------------------------------------------------------
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          # -------------------------------------------------------------------
+          # Redis Server Command and Configuration Arguments
+          # -------------------------------------------------------------------
+          # Start redis-server with inline configuration via command-line args.
+          # This avoids requiring a ConfigMap-mounted redis.conf while keeping
+          # configuration explicit and version-controlled.
+          command:
+            - "redis-server"
+          args:
+            # -----------------------------------------------------------------
+            # Persistence: AOF (Append Only File)
+            # -----------------------------------------------------------------
+            # Enable AOF for durable persistence. Every write operation is
+            # logged to the AOF file, ensuring minimal data loss on crash.
+            - "--appendonly"
+            - "yes"
+            # -----------------------------------------------------------------
+            # Memory Management
+            # -----------------------------------------------------------------
+            # Eviction policy: Remove least recently used keys across all
+            # databases when maxmemory is reached. Suitable for caching
+            # workloads where stale data can be safely evicted.
+            - "--maxmemory-policy"
+            - "allkeys-lru"
+            # Maximum memory allocation for Redis data. Set below the
+            # container memory limit (512Mi) to leave headroom for Redis
+            # overhead, child process memory during BGSAVE, and OS buffers.
+            - "--maxmemory"
+            - "384mb"
+            # -----------------------------------------------------------------
+            # Authentication
+            # -----------------------------------------------------------------
+            # Require password authentication. The password is injected from
+            # the redis-credentials Kubernetes Secret via environment variable.
+            # $(REDIS_PASSWORD) is expanded by Kubernetes in the args field.
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
+            # -----------------------------------------------------------------
+            # Network Security
+            # -----------------------------------------------------------------
+            # Enable protected mode to reject connections from external IPs
+            # when authentication is configured. Defense-in-depth alongside
+            # Kubernetes NetworkPolicies.
+            - "--protected-mode"
+            - "yes"
+            # TCP backlog queue size. Set to match the Linux kernel's
+            # net.core.somaxconn default for optimal connection handling.
+            - "--tcp-backlog"
+            - "511"
+            # Client idle timeout in seconds. 0 = disabled (clients remain
+            # connected indefinitely). Suitable for persistent connections
+            # from backend services using connection pooling.
+            - "--timeout"
+            - "0"
+            # TCP keepalive interval in seconds. Detects dead peers and
+            # prevents stale connections from consuming resources.
+            - "--tcp-keepalive"
+            - "300"
+            # -----------------------------------------------------------------
+            # RDB Snapshot Persistence
+            # -----------------------------------------------------------------
+            # Complementary to AOF: take RDB snapshots at configured intervals.
+            # Format: --save <seconds> <min-changes>
+            #
+            # Save after 900 seconds (15 min) if at least 1 key changed
+            - "--save"
+            - "900 1"
+            # Save after 300 seconds (5 min) if at least 10 keys changed
+            - "--save"
+            - "300 10"
+            # Save after 60 seconds (1 min) if at least 10000 keys changed
+            - "--save"
+            - "60 10000"
+            # -----------------------------------------------------------------
+            # Data Directory
+            # -----------------------------------------------------------------
+            # Persistent data directory mounted via PVC. AOF file and RDB
+            # snapshots are stored here, surviving pod restarts and reschedules.
+            - "--dir"
+            - "/data"
+          # -------------------------------------------------------------------
+          # Environment Variables
+          # -------------------------------------------------------------------
+          env:
+            # Redis password injected from Kubernetes Secret.
+            # Referenced by $(REDIS_PASSWORD) in args and probe commands.
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: REDIS_PASSWORD
+          # -------------------------------------------------------------------
+          # Resource Requests and Limits
+          # -------------------------------------------------------------------
+          # Requests: Guaranteed minimum resources for scheduling.
+          # Limits: Maximum resources the container can consume.
+          # Memory limit (512Mi) exceeds maxmemory (384mb) to allow for
+          # Redis overhead, AOF rewrite buffers, and child processes.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # -------------------------------------------------------------------
+          # Readiness Probe
+          # -------------------------------------------------------------------
+          # Determines if the Redis instance is ready to accept client
+          # connections. The pod is added to the Service endpoints only when
+          # this probe succeeds. Uses shell wrapper for environment variable
+          # expansion in probe commands.
+          readinessProbe:
+            exec:
+              command:
+                - "sh"
+                - "-c"
+                - "redis-cli -a \"$REDIS_PASSWORD\" ping 2>/dev/null | grep -q PONG"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          # -------------------------------------------------------------------
+          # Liveness Probe
+          # -------------------------------------------------------------------
+          # Determines if the Redis process is alive and responsive. If this
+          # probe fails, Kubernetes restarts the container. Uses longer
+          # intervals and higher failure threshold than readiness probe to
+          # avoid unnecessary restarts during transient load spikes.
+          livenessProbe:
+            exec:
+              command:
+                - "sh"
+                - "-c"
+                - "redis-cli -a \"$REDIS_PASSWORD\" ping 2>/dev/null | grep -q PONG"
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 5
+          # -------------------------------------------------------------------
+          # Container-Level Security Context
+          # -------------------------------------------------------------------
+          securityContext:
+            # Prevent privilege escalation via setuid/setgid binaries.
+            allowPrivilegeEscalation: false
+            # Read-only root filesystem. Redis writes only to the /data
+            # persistent volume mount and the /tmp emptyDir volume.
+            # This prevents filesystem-based attacks and ensures immutability.
+            readOnlyRootFilesystem: true
+            # Drop all Linux capabilities. Redis does not require any
+            # privileged kernel capabilities to operate.
+            capabilities:
+              drop:
+                - "ALL"
+          # -------------------------------------------------------------------
+          # Volume Mounts
+          # -------------------------------------------------------------------
+          volumeMounts:
+            # Persistent data directory for AOF and RDB files.
+            # Backed by a PersistentVolumeClaim (10Gi) via volumeClaimTemplates.
+            - name: redis-data
+              mountPath: /data
+            # Temporary directory for Redis background operations.
+            # Required when readOnlyRootFilesystem is true and Redis needs
+            # temporary workspace for AOF rewrites or module operations.
+            - name: redis-tmp
+              mountPath: /tmp
+      # -----------------------------------------------------------------------
+      # Ephemeral Volumes
+      # -----------------------------------------------------------------------
+      # emptyDir volume for /tmp — required for readOnlyRootFilesystem
+      # containers that may need temporary file access. Automatically cleaned
+      # up when the pod is terminated.
+      volumes:
+        - name: redis-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+  # ---------------------------------------------------------------------------
+  # Volume Claim Templates
+  # ---------------------------------------------------------------------------
+  # PersistentVolumeClaim template for each StatefulSet replica.
+  # Each pod gets its own PVC: redis-data-redis-{ordinal}
+  # (e.g., redis-data-redis-0, redis-data-redis-1, redis-data-redis-2)
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          app: redis
+          app.kubernetes.io/name: redis
+          app.kubernetes.io/component: cache
+          app.kubernetes.io/part-of: synthetic-erp-platform
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        # StorageClass: "standard" for development. Override with
+        # cluster-specific StorageClass for production:
+        #   AWS: gp3 (or io2 for high IOPS)
+        #   Azure: managed-premium
+        #   GCP: pd-ssd
+        storageClassName: standard
+        resources:
+          requests:
+            # 10Gi per replica. Sufficient for caching metadata, session
+            # state, rate limiting counters, and job progress data.
+            # AOF and RDB files are stored here for persistence.
+            storage: 10Gi
