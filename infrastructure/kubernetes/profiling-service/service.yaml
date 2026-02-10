@@ -1,0 +1,68 @@
+# =============================================================================
+# Kubernetes ClusterIP Service — Profiling Service
+# =============================================================================
+# Internal-only service for ERP schema discovery and statistical profiling.
+# Exposes port 5002 (Flask) within the cluster for REST API calls from the
+# API Gateway (schema discovery: POST /api/v1/schemas/discover, profile
+# retrieval: GET /api/v1/profiles/{id}).
+#
+# The Profiling Service connects to external ERP systems (SAP RFC/BAPI,
+# Oracle E-Business Suite, Microsoft Dynamics 365, legacy JDBC) to extract
+# schema metadata (tables, columns, relationships, data types) using
+# SciPy/NumPy/Pandas — WITHOUT accessing raw production data (Constraint C-001).
+#
+# ClusterIP type ensures this service is only reachable within the Kubernetes
+# cluster. External traffic flows through the API Gateway LoadBalancer service.
+#
+# DNS-based service discovery: http://profiling-service.synthetic-erp-platform:5002
+# =============================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: profiling-service
+  namespace: synthetic-erp-platform
+  labels:
+    # Primary application selector label
+    app: profiling-service
+    # Kubernetes recommended labels (https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/)
+    app.kubernetes.io/name: profiling-service
+    app.kubernetes.io/instance: profiling-service
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: profiling
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Human-readable description of the service purpose
+    description: >-
+      Internal ClusterIP service for ERP schema discovery and statistical
+      profiling using SciPy/NumPy/Pandas with JDBC connectivity to SAP,
+      Oracle EBS, Microsoft Dynamics, and legacy systems. Extracts schema
+      metadata only — no raw production data access (Constraint C-001).
+      Supports Financial Accounting, HR, Sales & Distribution, and Material
+      Management ERP modules (Constraint C-005).
+    # Prometheus metrics scraping annotations
+    # Enables automatic discovery by Prometheus ServiceMonitor or annotations-based scraping
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5002"
+    prometheus.io/path: "/metrics"
+spec:
+  # ClusterIP type — internal-only, not externally exposed
+  # Only reachable from within the Kubernetes cluster via DNS:
+  #   profiling-service.synthetic-erp-platform.svc.cluster.local:5002
+  type: ClusterIP
+  # Selector matches the pod template labels in the Profiling Service Deployment
+  # (infrastructure/kubernetes/profiling-service/deployment.yaml)
+  selector:
+    app: profiling-service
+  ports:
+    # Primary HTTP port for REST API and health check endpoints
+    # Matches the Flask application port configured via Gunicorn (SERVICE_PORT=5002)
+    - name: http
+      protocol: TCP
+      port: 5002
+      targetPort: 5002
+  # No session affinity needed — REST API calls are stateless
+  # State is managed in MongoDB (statistical_profiles, schema_definitions collections)
+  # and Redis (caching layer)
+  sessionAffinity: None
