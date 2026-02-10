@@ -48,8 +48,8 @@ Typical usage::
 """
 
 from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -59,7 +59,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # ---------------------------------------------------------------------------
 
 
-class DistributionType(str, Enum):
+class DistributionType(StrEnum):
     """Enumeration of statistical distribution types detected during profiling.
 
     Each value represents a probability distribution that the profiling engine
@@ -127,7 +127,7 @@ class ConnectionConfig(BaseModel):
         connection_type: Protocol used to connect — ``jdbc``, ``odata``, or
             ``rfc`` (SAP-specific).
         host: Fully-qualified hostname or IP address of the ERP system.
-        port: TCP port number (1–65535).
+        port: TCP port number (1-65535).
         database: Optional database or schema name on the target system.
         username: Authenticated username for the connection.
         password: Connection password (encrypted in transit via TLS 1.3).
@@ -150,7 +150,7 @@ class ConnectionConfig(BaseModel):
         le=65535,
         description="Connection port",
     )
-    database: Optional[str] = Field(
+    database: str | None = Field(
         default=None,
         description="Database/schema name",
     )
@@ -164,7 +164,7 @@ class ConnectionConfig(BaseModel):
         min_length=1,
         description="Connection password (encrypted in transit)",
     )
-    additional_params: Optional[Dict[str, str]] = Field(
+    additional_params: dict[str, str] | None = Field(
         default=None,
         description="Driver-specific connection parameters",
     )
@@ -237,11 +237,11 @@ class ProfileRequest(BaseModel):
         ...,
         description="ERP type: sap, oracle_ebs, dynamics, legacy",
     )
-    discovery_scope: List[str] = Field(
+    discovery_scope: list[str] = Field(
         default_factory=list,
         description="Table/schema names to profile, empty for all",
     )
-    erp_module: Optional[str] = Field(
+    erp_module: str | None = Field(
         default=None,
         description=(
             "ERP module: financial_accounting, hr, "
@@ -256,13 +256,13 @@ class ProfileRequest(BaseModel):
         default=True,
         description="Include FK relationship discovery",
     )
-    sample_size: Optional[int] = Field(
+    sample_size: int | None = Field(
         default=None,
         ge=100,
         le=1_000_000,
         description="Sample size for statistical profiling",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Tenant namespace",
     )
@@ -297,7 +297,7 @@ class ProfileRequest(BaseModel):
 
     @field_validator("erp_module")
     @classmethod
-    def validate_erp_module(cls, value: Optional[str]) -> Optional[str]:
+    def validate_erp_module(cls, value: str | None) -> str | None:
         """Validate that ``erp_module`` is within the C-005 initial scope.
 
         The initial release is limited to four ERP functional modules:
@@ -351,7 +351,7 @@ class StatisticalSummary(BaseModel):
         std_dev: Standard deviation (non-negative, numeric columns only).
         min_value: Minimum observed value (numeric columns only).
         max_value: Maximum observed value (numeric columns only).
-        null_percentage: Percentage of null values in the column (0.0–100.0).
+        null_percentage: Percentage of null values in the column (0.0-100.0).
         unique_count: Count of distinct non-null values.
         sample_values: Representative sample values from the column for
             display purposes (never raw PII — metadata only per C-001).
@@ -371,24 +371,24 @@ class StatisticalSummary(BaseModel):
         default=DistributionType.UNKNOWN,
         description="Best-fit distribution",
     )
-    mean: Optional[float] = Field(
+    mean: float | None = Field(
         default=None,
         description="Mean value for numeric columns",
     )
-    median: Optional[float] = Field(
+    median: float | None = Field(
         default=None,
         description="Median value",
     )
-    std_dev: Optional[float] = Field(
+    std_dev: float | None = Field(
         default=None,
         ge=0,
         description="Standard deviation",
     )
-    min_value: Optional[float] = Field(
+    min_value: float | None = Field(
         default=None,
         description="Minimum value",
     )
-    max_value: Optional[float] = Field(
+    max_value: float | None = Field(
         default=None,
         description="Maximum value",
     )
@@ -398,16 +398,16 @@ class StatisticalSummary(BaseModel):
         le=100.0,
         description="Percentage of null values",
     )
-    unique_count: Optional[int] = Field(
+    unique_count: int | None = Field(
         default=None,
         ge=0,
         description="Count of unique values",
     )
-    sample_values: Optional[List[Any]] = Field(
+    sample_values: list[Any] | None = Field(
         default=None,
         description="Representative sample values",
     )
-    pattern: Optional[str] = Field(
+    pattern: str | None = Field(
         default=None,
         description="Detected data pattern (e.g., regex)",
     )
@@ -473,7 +473,7 @@ class ColumnProfile(BaseModel):
         ...,
         description="Whether the column allows NULL values",
     )
-    statistics: Optional[StatisticalSummary] = Field(
+    statistics: StatisticalSummary | None = Field(
         default=None,
         description="Statistical summary for the column",
     )
@@ -507,11 +507,11 @@ class TableProfile(BaseModel):
         ge=0,
         description="Total row count",
     )
-    columns: List[ColumnProfile] = Field(
+    columns: list[ColumnProfile] = Field(
         ...,
         description="Column profiles for the table",
     )
-    relationships: Optional[List[Dict[str, str]]] = Field(
+    relationships: list[dict[str, str]] | None = Field(
         default=None,
         description="Foreign-key relationship descriptors",
     )
@@ -550,11 +550,11 @@ class ProfileResponse(BaseModel):
         ...,
         description="Source ERP type",
     )
-    erp_module: Optional[str] = Field(
+    erp_module: str | None = Field(
         default=None,
         description="ERP module",
     )
-    tables: List[TableProfile] = Field(
+    tables: list[TableProfile] = Field(
         default_factory=list,
         description="Table profiles",
     )
@@ -580,7 +580,7 @@ class ProfileResponse(BaseModel):
         default="completed",
         description="Profiling status",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Tenant namespace",
     )
