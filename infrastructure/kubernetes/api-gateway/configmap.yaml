@@ -1,0 +1,234 @@
+# =============================================================================
+# ConfigMap: api-gateway-config
+# Namespace: synthetic-erp-platform
+# =============================================================================
+# Non-sensitive configuration parameters for the API Gateway service.
+#
+# The API Gateway is the primary REST API entry point for the Synthetic ERP
+# Data Generation Platform, built with Flask 3.1.x, Gunicorn 21.x WSGI server,
+# Auth0 JWT authentication, tiered rate limiting via Redis, and Pydantic
+# request/response validation.
+#
+# This ConfigMap is injected into the API Gateway Deployment as environment
+# variables via envFrom.configMapRef, following the 12-factor app methodology.
+# All values are strings (Kubernetes ConfigMap data format requirement).
+#
+# IMPORTANT:
+#   - This manifest contains NON-SENSITIVE configuration ONLY.
+#   - Secrets (database passwords, Auth0 client secrets, JWT signing keys,
+#     encryption keys) are managed via Sealed Secrets and mounted separately.
+#   - Environment-specific overrides can be applied via Kustomize overlays
+#     or Helm values for dev/staging/prod environments.
+#
+# Rate Limiting Tiers:
+#   Basic   (Developer / QA Engineer)    — 60  requests/minute
+#   Standard (Data Engineer / Data Analyst) — 300 requests/minute
+#   Premium  (Platform Admin)            — 1000 requests/minute
+#
+# Internal Service URLs use Kubernetes DNS-based service discovery:
+#   <service-name>.<namespace>.svc.cluster.local:<port>
+#   Shortened to <service-name>:<port> within the same namespace.
+#
+# Prerequisites:
+#   - Namespace 'synthetic-erp-platform' must exist
+#   - Apply with: kubectl apply -f infrastructure/kubernetes/api-gateway/configmap.yaml
+#
+# Referenced by:
+#   - infrastructure/kubernetes/api-gateway/deployment.yaml
+#     (envFrom → configMapRef → api-gateway-config)
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  namespace: synthetic-erp-platform
+  labels:
+    # --- Application identity labels ---
+    app: api-gateway
+    # --- Kubernetes recommended labels (https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/) ---
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: api-gateway
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    description: >-
+      Configuration for the API Gateway service — Flask 3.1.x REST API
+      with JWT auth, rate limiting, multi-tenant support
+
+data:
+  # ---------------------------------------------------------------------------
+  # Flask Application Settings
+  # ---------------------------------------------------------------------------
+  # Flask environment mode. Controls debug behaviour and error verbosity.
+  # Valid values: production, development, testing
+  FLASK_ENV: "production"
+
+  # ---------------------------------------------------------------------------
+  # Structured Logging Configuration
+  # ---------------------------------------------------------------------------
+  # Log level for the structlog-based structured JSON logger.
+  # Valid values: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  LOG_LEVEL: "INFO"
+
+  # Log output format. "json" emits machine-parsable structured log lines
+  # suitable for aggregation by Fluentd / Loki / CloudWatch.
+  LOG_FORMAT: "json"
+
+  # ---------------------------------------------------------------------------
+  # MongoDB — Metadata Repository Connection
+  # ---------------------------------------------------------------------------
+  # Database name within the MongoDB 7.0 cluster.
+  # Collections: generation_profiles, statistical_profiles, schema_definitions,
+  #              audit_logs, tenant_configurations
+  # NOTE: The connection URI itself (including credentials) is injected from
+  #       the mongodb-credentials Sealed Secret, not from this ConfigMap.
+  MONGODB_DATABASE: "synthetic_erp_platform"
+
+  # ---------------------------------------------------------------------------
+  # Redis — Session / API Caching
+  # ---------------------------------------------------------------------------
+  # URL template for the Redis 7.x cache instance.
+  # The {password} placeholder is resolved at application startup by
+  # substituting the REDIS_PASSWORD value from the redis-credentials Secret.
+  REDIS_URL_TEMPLATE: "redis://:{password}@redis:6379/0"
+
+  # ---------------------------------------------------------------------------
+  # Auth0 — Identity Provider / JWT Authentication
+  # ---------------------------------------------------------------------------
+  # Auth0 tenant domain for token validation and JWKS endpoint discovery.
+  AUTH0_DOMAIN: "synthetic-erp.auth0.com"
+
+  # Auth0 API audience identifier used during token verification.
+  AUTH0_API_AUDIENCE: "https://api.synthetic-erp-platform.com"
+
+  # ---------------------------------------------------------------------------
+  # CORS — Cross-Origin Resource Sharing
+  # ---------------------------------------------------------------------------
+  # Comma-separated list of allowed origins for cross-origin requests.
+  # Includes localhost:3000 for local development with the React dev server.
+  CORS_ALLOWED_ORIGINS: "https://synthetic-erp.example.com,http://localhost:3000"
+
+  # Comma-separated list of allowed HTTP methods for CORS preflight.
+  CORS_ALLOWED_METHODS: "GET,POST,PUT,DELETE,OPTIONS"
+
+  # Comma-separated list of allowed HTTP headers for CORS requests.
+  # X-Tenant-ID: multi-tenant context header
+  # X-Request-ID: correlation ID for distributed tracing
+  CORS_ALLOWED_HEADERS: "Authorization,Content-Type,X-Tenant-ID,X-Request-ID"
+
+  # Duration in seconds that CORS preflight responses can be cached by browsers.
+  CORS_MAX_AGE: "3600"
+
+  # ---------------------------------------------------------------------------
+  # Rate Limiting — Tiered Request Throttling
+  # ---------------------------------------------------------------------------
+  # Maximum requests per window for basic-tier users (Developer, QA Engineer).
+  RATE_LIMIT_BASIC_TIER: "60"
+
+  # Maximum requests per window for standard-tier users (Data Engineer, Data Analyst).
+  RATE_LIMIT_STANDARD_TIER: "300"
+
+  # Maximum requests per window for premium-tier users (Platform Admin).
+  RATE_LIMIT_PREMIUM_TIER: "1000"
+
+  # Sliding window duration in seconds for rate limit counters.
+  RATE_LIMIT_WINDOW_SECONDS: "60"
+
+  # Backend storage for rate limit counters. "redis" enables distributed
+  # rate limiting across multiple API Gateway replicas.
+  RATE_LIMIT_STORAGE: "redis"
+
+  # ---------------------------------------------------------------------------
+  # API Versioning
+  # ---------------------------------------------------------------------------
+  # Current API version identifier (URL-path based versioning).
+  API_VERSION: "v1"
+
+  # URL prefix prepended to all REST endpoints: /api/v1/generation/jobs, etc.
+  API_PREFIX: "/api/v1"
+
+  # ---------------------------------------------------------------------------
+  # Gunicorn 21.x — WSGI Server Configuration
+  # ---------------------------------------------------------------------------
+  # Number of Gunicorn worker processes. Recommended: 2 * CPU cores + 1.
+  # Set to 4 for the default container resource allocation (500m–1 CPU).
+  GUNICORN_WORKERS: "4"
+
+  # Number of threads per Gunicorn worker for handling concurrent I/O.
+  GUNICORN_THREADS: "2"
+
+  # Worker timeout in seconds. Requests exceeding this are terminated.
+  # Set to 120s to accommodate large schema discovery operations.
+  GUNICORN_TIMEOUT: "120"
+
+  # Network bind address and port for Gunicorn to listen on.
+  GUNICORN_BIND: "0.0.0.0:5000"
+
+  # ---------------------------------------------------------------------------
+  # JWT Token Configuration
+  # ---------------------------------------------------------------------------
+  # Access token expiration in seconds (1 hour).
+  JWT_ACCESS_TOKEN_EXPIRES: "3600"
+
+  # Refresh token expiration in seconds (24 hours).
+  JWT_REFRESH_TOKEN_EXPIRES: "86400"
+
+  # JWT signing algorithm. RS256 (RSA + SHA-256) aligns with Auth0's
+  # asymmetric token signing using public/private key pairs.
+  JWT_ALGORITHM: "RS256"
+
+  # ---------------------------------------------------------------------------
+  # Internal Microservice URLs — Kubernetes DNS Service Discovery
+  # ---------------------------------------------------------------------------
+  # All URLs use Kubernetes in-cluster DNS: <service-name>:<port>
+  # within the same namespace (synthetic-erp-platform).
+
+  # Generation Engine — multi-method synthetic data generation
+  GENERATION_ENGINE_URL: "http://generation-engine:5001"
+
+  # Profiling Service — ERP schema discovery and statistical profiling
+  PROFILING_SERVICE_URL: "http://profiling-service:5002"
+
+  # Quality Service — data quality validation with weighted scoring
+  QUALITY_SERVICE_URL: "http://quality-service:5003"
+
+  # Compliance Service — PII detection and regulatory verification
+  COMPLIANCE_SERVICE_URL: "http://compliance-service:5004"
+
+  # Provisioning Service — database connectors and cloud storage export
+  PROVISIONING_SERVICE_URL: "http://provisioning-service:5005"
+
+  # ---------------------------------------------------------------------------
+  # Circuit Breaker — External Service Resilience
+  # ---------------------------------------------------------------------------
+  # Number of consecutive failures before the circuit opens (stops requests).
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+
+  # Duration in seconds before the circuit transitions from open to half-open
+  # to allow a single probe request.
+  CIRCUIT_BREAKER_RECOVERY_TIMEOUT: "30"
+
+  # ---------------------------------------------------------------------------
+  # Pagination — Cursor-Based Result Paging
+  # ---------------------------------------------------------------------------
+  # Default number of items per page when the client omits page_size.
+  PAGINATION_DEFAULT_PAGE_SIZE: "20"
+
+  # Maximum allowed page size to prevent excessive memory usage.
+  PAGINATION_MAX_PAGE_SIZE: "100"
+
+  # ---------------------------------------------------------------------------
+  # Health Checks
+  # ---------------------------------------------------------------------------
+  # Timeout in seconds for downstream dependency health checks
+  # (MongoDB, Redis, internal services) during /health and /ready probes.
+  HEALTH_CHECK_TIMEOUT: "5"
+
+  # ---------------------------------------------------------------------------
+  # Multi-Tenant Configuration
+  # ---------------------------------------------------------------------------
+  # HTTP header name used to extract the tenant identifier from incoming
+  # requests. Required for namespace isolation and tenant-scoped queries.
+  TENANT_HEADER: "X-Tenant-ID"
