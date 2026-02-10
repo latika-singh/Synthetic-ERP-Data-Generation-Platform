@@ -1,0 +1,398 @@
+# =============================================================================
+# Profiling Service — Kubernetes Deployment Manifest
+# =============================================================================
+# Deploys the SciPy/NumPy/Pandas-based ERP schema discovery and statistical
+# profiling service as a Flask application on port 5002.
+#
+# This service connects to external ERP systems (SAP, Oracle EBS, Microsoft
+# Dynamics 365, legacy JDBC) to extract schema metadata — tables, columns,
+# relationships, data types, and statistical distribution patterns — WITHOUT
+# accessing raw production data (Constraint C-001).
+#
+# Supported ERP Modules (Constraint C-005 — Initial Release):
+#   - Financial Accounting (GL entries, invoices, payments)
+#   - Human Resources (employee records, payroll, benefits)
+#   - Sales & Distribution (orders, customers, pricing)
+#   - Material Management (inventory, purchase orders, vendors)
+#
+# JDBC drivers are pre-loaded via an init container to support air-gapped
+# deployments where runtime downloads are not possible (Constraint C-003).
+#
+# Statistical profiles are stored in MongoDB collections:
+#   - statistical_profiles: distribution analysis results
+#   - schema_definitions: table/column metadata
+#
+# Referenced by the Profiling Service HPA for auto-scaling (1-5 replicas
+# at 70% CPU utilization).
+#
+# Called by the API Gateway:
+#   - POST /api/v1/schemas/discover  → schema discovery
+#   - GET  /api/v1/profiles/{id}     → profile retrieval
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profiling-service
+  namespace: synthetic-erp-platform
+  labels:
+    app: profiling-service
+    app.kubernetes.io/name: profiling-service
+    app.kubernetes.io/part-of: synthetic-erp-platform
+    app.kubernetes.io/component: profiling
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: >-
+      Profiling Service deployment for the Synthetic ERP Data Generation Platform.
+      Extracts ERP schema metadata and statistical distribution patterns via JDBC
+      and OData connectors without accessing raw production data. Uses SciPy, NumPy,
+      and Pandas for statistical analysis. Stores profiles in MongoDB.
+spec:
+  # ---------------------------------------------------------------------------
+  # Replica count: starts at 1, HPA scales from 1 to 5 based on 70% CPU
+  # ---------------------------------------------------------------------------
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: profiling-service
+  # ---------------------------------------------------------------------------
+  # Rolling update strategy ensures zero downtime during deployments
+  # maxUnavailable: 0 guarantees no pods are removed before new ones are ready
+  # maxSurge: 1 allows one extra pod during update transitions
+  # ---------------------------------------------------------------------------
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: profiling-service
+        app.kubernetes.io/name: profiling-service
+        app.kubernetes.io/part-of: synthetic-erp-platform
+      annotations:
+        # Prometheus metrics scraping configuration
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5002"
+        prometheus.io/path: "/metrics"
+    spec:
+      # -----------------------------------------------------------------------
+      # Service account for RBAC-based access control within the cluster
+      # -----------------------------------------------------------------------
+      serviceAccountName: profiling-service
+      # -----------------------------------------------------------------------
+      # Allow 45 seconds for graceful shutdown to close JDBC connections,
+      # flush pending metadata writes to MongoDB, and complete in-progress
+      # schema discovery operations before SIGKILL
+      # -----------------------------------------------------------------------
+      terminationGracePeriodSeconds: 45
+      # -----------------------------------------------------------------------
+      # Pod-level security context enforcing non-root execution for SOC 2
+      # Type II compliance and defense-in-depth container security
+      # -----------------------------------------------------------------------
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      # -----------------------------------------------------------------------
+      # Topology spread constraints ensure high availability by distributing
+      # pods across failure domains (availability zones) when scaled by HPA
+      # -----------------------------------------------------------------------
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: profiling-service
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: profiling-service
+      # -----------------------------------------------------------------------
+      # Init container: copies pre-built JDBC driver JARs from the application
+      # image into the shared jdbc-drivers volume. This supports air-gapped
+      # deployments (Constraint C-003) where runtime downloads are prohibited.
+      #
+      # JDBC drivers included:
+      #   - ngdbc.jar         — SAP HANA JDBC for SAP RFC/BAPI connectivity
+      #   - ojdbc11.jar       — Oracle JDBC for Oracle E-Business Suite
+      #   - mssql-jdbc.jar    — Microsoft JDBC for Dynamics 365
+      #   - postgresql.jar    — PostgreSQL JDBC for legacy system fallback
+      # -----------------------------------------------------------------------
+      initContainers:
+        - name: init-jdbc-drivers
+          image: synthetic-erp-platform/profiling-service:latest
+          imagePullPolicy: Always
+          command:
+            - "sh"
+            - "-c"
+            - |
+              echo "Copying JDBC drivers to shared volume..."
+              cp /app/drivers/*.jar /opt/jdbc-drivers/ 2>/dev/null || true
+              echo "JDBC driver files in /opt/jdbc-drivers/:"
+              ls -la /opt/jdbc-drivers/
+              echo "JDBC driver initialization complete."
+          volumeMounts:
+            - name: jdbc-drivers
+              mountPath: /opt/jdbc-drivers
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - "ALL"
+      containers:
+        - name: profiling-service
+          image: synthetic-erp-platform/profiling-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5002
+              name: http
+              protocol: TCP
+          # -------------------------------------------------------------------
+          # Resource allocation:
+          #   Requests: 500m CPU / 512Mi memory (scheduling guarantee)
+          #   Limits:   2 CPU / 4Gi memory (hard ceiling)
+          # Higher memory limit (4Gi) accommodates SciPy/NumPy/Pandas
+          # statistical analysis on large ERP schema metadata sets and
+          # concurrent JDBC connection pools for multiple ERP connectors
+          # -------------------------------------------------------------------
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          # -------------------------------------------------------------------
+          # Environment variables: direct values for 12-factor app configuration
+          # The Profiling Service uses environment-driven configuration without
+          # a ConfigMap — all non-sensitive values are set directly here
+          # -------------------------------------------------------------------
+          env:
+            # -- Flask Application Configuration --
+            - name: FLASK_APP
+              value: "app:create_app"
+            - name: SERVICE_NAME
+              value: "profiling-service"
+            - name: SERVICE_PORT
+              value: "5002"
+            # -- Logging Configuration --
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: LOG_FORMAT
+              value: "json"
+            # -- Profiling Configuration --
+            # Batch size for statistical analysis operations (records per batch)
+            - name: PROFILING_BATCH_SIZE
+              value: "10000"
+            # Maximum time in seconds for a schema discovery operation
+            - name: SCHEMA_DISCOVERY_TIMEOUT
+              value: "300"
+            # -- JDBC Connection Pool Configuration --
+            # Number of persistent connections maintained in the pool
+            - name: JDBC_POOL_SIZE
+              value: "10"
+            # Maximum overflow connections above the pool size
+            - name: JDBC_POOL_MAX_OVERFLOW
+              value: "20"
+            # Connection acquisition timeout in seconds
+            - name: JDBC_CONNECTION_TIMEOUT
+              value: "30"
+            # -- ERP Connector Enablement Flags --
+            # Each connector can be independently enabled/disabled for
+            # environment-specific deployments
+            - name: SAP_CONNECTOR_ENABLED
+              value: "true"
+            - name: ORACLE_CONNECTOR_ENABLED
+              value: "true"
+            - name: DYNAMICS_CONNECTOR_ENABLED
+              value: "true"
+            - name: LEGACY_JDBC_CONNECTOR_ENABLED
+              value: "true"
+            # -- Supported ERP Modules (Constraint C-005) --
+            # Comma-separated list of enabled ERP modules for the initial release
+            # Limited to four modules: Financial Accounting, HR, Sales &
+            # Distribution, Material Management
+            - name: SUPPORTED_ERP_MODULES
+              value: "financial_accounting,human_resources,sales_distribution,material_management"
+            # -- JDBC Driver Paths --
+            # Paths to JDBC JAR files mounted from the jdbc-drivers volume
+            - name: SAP_HANA_JDBC_DRIVER
+              value: "/opt/jdbc-drivers/ngdbc.jar"
+            - name: ORACLE_JDBC_DRIVER
+              value: "/opt/jdbc-drivers/ojdbc11.jar"
+            - name: MSSQL_JDBC_DRIVER
+              value: "/opt/jdbc-drivers/mssql-jdbc.jar"
+            - name: POSTGRESQL_JDBC_DRIVER
+              value: "/opt/jdbc-drivers/postgresql.jar"
+            # -- OpenTelemetry Distributed Tracing --
+            - name: OTEL_SERVICE_NAME
+              value: "profiling-service"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring:4317"
+            # -----------------------------------------------------------------
+            # Secrets: MongoDB Credentials
+            # Connection to the Metadata Repository for storing schema
+            # definitions and statistical profiles
+            # -----------------------------------------------------------------
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_URI
+            - name: MONGODB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGODB_DATABASE
+            # -----------------------------------------------------------------
+            # Secrets: JWT Authentication
+            # Used for validating API requests from the API Gateway
+            # -----------------------------------------------------------------
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-keys
+                  key: JWT_SECRET_KEY
+            # -----------------------------------------------------------------
+            # Secrets: Encryption Keys (AES-256 at rest)
+            # Used for encrypting metadata at rest per SOC 2 Type II
+            # -----------------------------------------------------------------
+            - name: AES_256_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: AES_256_KEY
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: encryption-keys
+                  key: FLASK_SECRET_KEY
+            # -----------------------------------------------------------------
+            # Secrets: ERP System Credentials (optional)
+            # These are optional because not all deployments connect to all
+            # ERP systems. The service gracefully handles missing credentials
+            # by disabling the corresponding connector at startup.
+            # -----------------------------------------------------------------
+            - name: SAP_RFC_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: erp-credentials
+                  key: SAP_RFC_CONNECTION_STRING
+                  optional: true
+            - name: ORACLE_JDBC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: erp-credentials
+                  key: ORACLE_JDBC_URL
+                  optional: true
+            - name: DYNAMICS_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: erp-credentials
+                  key: DYNAMICS_API_URL
+                  optional: true
+          # -------------------------------------------------------------------
+          # Liveness probe: detects hung or deadlocked processes
+          # Restarts container after 3 consecutive failures (45s total)
+          # Uses /health endpoint which returns 200 when the service process
+          # is alive, even if JDBC connections are temporarily unavailable
+          # -------------------------------------------------------------------
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # -------------------------------------------------------------------
+          # Readiness probe: gates traffic until service is fully initialized
+          # Removes pod from Service endpoints after 3 failures (30s total)
+          # Uses /ready endpoint which verifies MongoDB connectivity and at
+          # least one ERP connector is available
+          # -------------------------------------------------------------------
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5002
+            initialDelaySeconds: 25
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          # -------------------------------------------------------------------
+          # Startup probe: allows extended initialization time for first boot
+          # JDBC driver loading, connection pool initialization, and ERP
+          # connector validation may take significant time, especially in
+          # environments with slow network connectivity to ERP systems.
+          # Allows up to ~130s (10s delay + 12 failures * 10s period)
+          # -------------------------------------------------------------------
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+          # -------------------------------------------------------------------
+          # Container-level security context: defense-in-depth hardening
+          # - No privilege escalation prevents container breakouts
+          # - Read-only root filesystem prevents runtime tampering
+          # - Drop ALL capabilities enforces least-privilege execution
+          # Required for SOC 2 Type II compliance
+          # -------------------------------------------------------------------
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - "ALL"
+          # -------------------------------------------------------------------
+          # Volume mounts: writable directories required by the application
+          # since the root filesystem is read-only
+          # - /opt/jdbc-drivers: JDBC JAR files (read-only, from init container)
+          # - /tmp: temporary files for SciPy/NumPy/Pandas processing
+          # - /app/cache: cache for schema metadata and profiling results
+          # -------------------------------------------------------------------
+          volumeMounts:
+            - name: jdbc-drivers
+              mountPath: /opt/jdbc-drivers
+              readOnly: true
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: cache-volume
+              mountPath: /app/cache
+      # -----------------------------------------------------------------------
+      # Volumes: ephemeral emptyDir volumes for writable paths and JDBC drivers
+      # -----------------------------------------------------------------------
+      volumes:
+        # JDBC driver JARs populated by the init-jdbc-drivers init container.
+        # Uses emptyDir for standard deployments. For air-gapped environments,
+        # replace with a PersistentVolumeClaim referencing pre-loaded drivers.
+        - name: jdbc-drivers
+          emptyDir: {}
+        # Writable /tmp directory for temporary file operations
+        # Required when readOnlyRootFilesystem is true
+        - name: tmp-volume
+          emptyDir: {}
+        # Cache directory for schema metadata and profiling result caching
+        # Used by the profiling service to avoid redundant ERP round-trips
+        - name: cache-volume
+          emptyDir: {}
