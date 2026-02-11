@@ -24,9 +24,9 @@ State Machine:
     HALF_OPEN ──(test call fails)──────► OPEN
 
 Configuration Bounds:
-    - Failure threshold: 1–10 consecutive failures (default 5)
-    - Recovery timeout: 1–120 seconds (default 30)
-    - Max retries with backoff: 0–N attempts (default 3)
+    - Failure threshold: 1-10 consecutive failures (default 5)
+    - Recovery timeout: 1-120 seconds (default 30)
+    - Max retries with backoff: 0-N attempts (default 3)
     - Backoff base: exponential delay = base ** attempt (default 2.0)
 
 Usage:
@@ -59,19 +59,21 @@ Usage:
 import functools
 import threading
 import time
-from typing import Any, Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import Any, Optional, TypeVar
 
 # Third-party imports
 from circuitbreaker import (
-    CircuitBreaker,
-    CircuitBreakerError,
     STATE_CLOSED,
     STATE_HALF_OPEN,
     STATE_OPEN,
+    CircuitBreaker,
+    CircuitBreakerError,
 )
 
 # Internal imports
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Type variable for preserving decorated function signatures
@@ -112,20 +114,20 @@ DEFAULT_BACKOFF_BASE: float = 2.0
 # Module exports
 # ---------------------------------------------------------------------------
 __all__ = [
-    "create_circuit_breaker",
-    "circuit_breaker_decorator",
-    "ServiceCircuitBreaker",
-    "CircuitBreakerRegistry",
-    "CircuitBreakerError",
-    "with_circuit_breaker",
-    "handle_circuit_breaker_error",
-    "DEFAULT_FAILURE_THRESHOLD",
-    "DEFAULT_RECOVERY_TIMEOUT",
+    "DEFAULT_BACKOFF_BASE",
     "DEFAULT_EXPECTED_EXCEPTION",
+    "DEFAULT_FAILURE_THRESHOLD",
+    "DEFAULT_MAX_RETRIES",
+    "DEFAULT_RECOVERY_TIMEOUT",
     "MAX_FAILURE_THRESHOLD",
     "MAX_RECOVERY_TIMEOUT",
-    "DEFAULT_MAX_RETRIES",
-    "DEFAULT_BACKOFF_BASE",
+    "CircuitBreakerError",
+    "CircuitBreakerRegistry",
+    "ServiceCircuitBreaker",
+    "circuit_breaker_decorator",
+    "create_circuit_breaker",
+    "handle_circuit_breaker_error",
+    "with_circuit_breaker",
 ]
 
 
@@ -199,7 +201,7 @@ class CircuitBreakerRegistry:
             self._breakers[name] = breaker
         logger.debug("circuit_breaker_registered", name=name)
 
-    def get(self, name: str) -> Optional[CircuitBreaker]:
+    def get(self, name: str) -> CircuitBreaker | None:
         """Return the circuit breaker registered under *name*, or ``None``.
 
         Args:
@@ -317,8 +319,8 @@ class ServiceCircuitBreaker(CircuitBreaker):
 
     Args:
         name: Unique identifier for this circuit breaker.
-        failure_threshold: Consecutive failures before opening (1–10).
-        recovery_timeout: Seconds before attempting recovery (1–120).
+        failure_threshold: Consecutive failures before opening (1-10).
+        recovery_timeout: Seconds before attempting recovery (1-120).
         expected_exception: Exception type(s) that count as failures.
 
     Example::
@@ -381,8 +383,8 @@ class ServiceCircuitBreaker(CircuitBreaker):
 
     def __exit__(
         self,
-        exc_type: Optional[type],
-        exc_value: Optional[BaseException],
+        exc_type: type | None,
+        exc_value: BaseException | None,
         _traceback: Any,
     ) -> bool:
         """Intercept context-manager exit to log state transitions.
@@ -586,8 +588,8 @@ def circuit_breaker_decorator(
 
     Args:
         name: Unique name for the circuit breaker.
-        failure_threshold: Failures before opening (1–10).
-        recovery_timeout: Seconds before half-open attempt (1–120).
+        failure_threshold: Failures before opening (1-10).
+        recovery_timeout: Seconds before half-open attempt (1-120).
         expected_exception: Exception type(s) that count as failures.
         max_retries: Maximum additional retry attempts (0 = no retries,
             i.e. a single attempt).
@@ -629,7 +631,7 @@ def circuit_breaker_decorator(
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception: Optional[Exception] = None
+            last_exception: Exception | None = None
 
             for attempt in range(effective_max_retries + 1):
                 try:
@@ -773,10 +775,18 @@ def handle_circuit_breaker_error(
             getattr(circuit_breaker_ref, "_recovery_timeout", DEFAULT_RECOVERY_TIMEOUT)
         )
 
+    # Safely convert the error to string — the circuitbreaker library's
+    # __str__ accesses _circuit_breaker.name which may be None if the
+    # error was constructed manually (e.g., during testing).
+    try:
+        error_message = str(error)
+    except (AttributeError, TypeError):
+        error_message = repr(error)
+
     logger.error(
         "circuit_breaker_service_unavailable",
         service_name=service_name,
-        error=str(error),
+        error=error_message,
         recovery_timeout=recovery_timeout,
     )
 
