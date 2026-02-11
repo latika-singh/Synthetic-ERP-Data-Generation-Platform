@@ -37,38 +37,44 @@ Usage::
     # In any service's create_app():
     from shared.auth.jwt_handler import jwt_required, validate_token
 
+
     @app.before_request
     def before_request():
         return jwt_required()()
+
 
     # Validate a raw token:
     claims = validate_token(raw_jwt_string)
 
     # Get current user inside a request:
     from shared.auth.jwt_handler import get_current_user
+
     user = get_current_user()
 """
 
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import os
 import threading
 import time
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 import requests
 import requests.exceptions
 from flask import g, jsonify, request
-from jose import JWTClaimsError, JWTError, jwt, jwk
-from jose.exceptions import ExpiredSignatureError
-from jose.utils import base64url_decode
+from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError, JWTClaimsError
 
 from shared.config.base import BaseConfig
 from shared.database.redis_client import cache_get, cache_set
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -94,9 +100,7 @@ TOKEN_ISSUER_PREFIX: str = "https://"
 
 # Auth0 client credentials (used only for refresh-token exchange)
 _AUTH0_CLIENT_ID: str = _config.AUTH0_CLIENT_ID or os.environ.get("AUTH0_CLIENT_ID", "")
-_AUTH0_CLIENT_SECRET: str = (
-    _config.AUTH0_CLIENT_SECRET or os.environ.get("AUTH0_CLIENT_SECRET", "")
-)
+_AUTH0_CLIENT_SECRET: str = _config.AUTH0_CLIENT_SECRET or os.environ.get("AUTH0_CLIENT_SECRET", "")
 _JWT_ACCESS_TOKEN_EXPIRES: int = (
     _config.JWT_ACCESS_TOKEN_EXPIRES
     if _config.JWT_ACCESS_TOKEN_EXPIRES
@@ -197,8 +201,7 @@ def _build_jwks_url() -> str:
     domain = AUTH0_DOMAIN or os.environ.get("AUTH0_DOMAIN", "")
     if not domain:
         raise AuthenticationError(
-            "AUTH0_DOMAIN environment variable is not configured. "
-            "Cannot construct JWKS endpoint URL."
+            "AUTH0_DOMAIN environment variable is not configured. Cannot construct JWKS endpoint URL."
         )
     return f"{TOKEN_ISSUER_PREFIX}{domain}/.well-known/jwks.json"
 
@@ -229,17 +232,118 @@ def _build_redis_cache_key() -> str:
     return f"auth:jwks:{domain}"
 
 
+def _try_redis_cache(redis_key: str, now: float) -> dict[str, Any] | None:
+    """Attempt to load JWKS from the Redis cache layer.
+
+    Args:
+        redis_key: The Redis key where JWKS data is stored.
+        now: Current epoch timestamp for setting in-memory cache expiry.
+
+    Returns:
+        The JWKS data dict if found in Redis, or ``None`` on cache miss
+        or Redis failure.
+    """
+    global _jwks_cache, _jwks_cache_expiry  # noqa: PLW0603
+
+    try:
+        cached_json = cache_get(redis_key)
+        if cached_json is None:
+            return None
+        jwks_data: dict[str, Any] = json.loads(cached_json) if isinstance(cached_json, str) else cached_json
+        _jwks_cache = jwks_data
+        _jwks_cache_expiry = now + JWKS_CACHE_TTL
+        logger.debug("jwks_cache_hit", cache_layer="redis")
+        return jwks_data
+    except Exception as exc:
+        # Redis failure is non-fatal; proceed to Auth0 endpoint.
+        logger.debug("jwks_redis_cache_error", error=str(exc))
+        return None
+
+
+def _fetch_jwks_from_auth0(jwks_url: str, redis_key: str, now: float) -> dict[str, Any]:
+    """Fetch JWKS from Auth0's HTTPS endpoint with retry logic.
+
+    Retries up to :data:`_JWKS_FETCH_MAX_RETRIES` times with exponential
+    backoff on network errors.
+
+    Args:
+        jwks_url: Full URL to Auth0's ``/.well-known/jwks.json``.
+        redis_key: Redis key for storing the fetched JWKS.
+        now: Current epoch timestamp for setting in-memory cache expiry.
+
+    Returns:
+        The JWKS data dict.
+
+    Raises:
+        AuthenticationError: If all retry attempts are exhausted.
+    """
+    global _jwks_cache, _jwks_cache_expiry  # noqa: PLW0603
+
+    last_error: Exception | None = None
+
+    for attempt in range(_JWKS_FETCH_MAX_RETRIES):
+        try:
+            logger.debug("jwks_fetch_attempt", url=jwks_url, attempt=attempt + 1)
+            response = requests.get(jwks_url, timeout=_HTTP_TIMEOUT)
+            response.raise_for_status()
+            jwks_data: dict[str, Any] = response.json()
+
+            if "keys" not in jwks_data:
+                raise AuthenticationError("JWKS response from Auth0 does not contain 'keys' array.")
+
+            _jwks_cache = jwks_data
+            _jwks_cache_expiry = now + JWKS_CACHE_TTL
+            _store_jwks_in_redis(redis_key, jwks_data)
+
+            logger.debug(
+                "jwks_fetched_successfully",
+                key_count=len(jwks_data.get("keys", [])),
+            )
+            return jwks_data
+
+        except requests.exceptions.RequestException as exc:
+            last_error = exc
+            logger.debug(
+                "jwks_fetch_error",
+                attempt=attempt + 1,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+
+        # Backoff before retrying.
+        if attempt < _JWKS_FETCH_MAX_RETRIES - 1:
+            time.sleep(_JWKS_FETCH_RETRY_BACKOFF * (2**attempt))
+
+    error_message = f"Failed to fetch JWKS from {jwks_url} after {_JWKS_FETCH_MAX_RETRIES} attempts: {last_error}"
+    logger.warning("jwks_fetch_failed", error=error_message)
+    raise AuthenticationError(error_message)
+
+
+def _store_jwks_in_redis(redis_key: str, jwks_data: dict[str, Any]) -> None:
+    """Best-effort storage of JWKS data in Redis.
+
+    Args:
+        redis_key: The Redis cache key.
+        jwks_data: The JWKS payload to store.
+    """
+    try:
+        cache_set(redis_key, jwks_data, ttl=JWKS_CACHE_TTL)
+        logger.debug("jwks_stored_in_redis", redis_key=redis_key)
+    except Exception as redis_err:
+        logger.debug("jwks_redis_store_error", error=str(redis_err))
+
+
 def fetch_jwks() -> dict[str, Any]:
     """Fetch the JSON Web Key Set from Auth0's JWKS endpoint.
 
     Implements a **double-layer caching** strategy to minimise latency and
     network calls:
 
-    1. **In-memory cache** — checked first (no I/O); refreshed when the
+    1. **In-memory cache** - checked first (no I/O); refreshed when the
        cached expiry timestamp is exceeded.
-    2. **Redis cache** — checked on in-memory miss; shared across all
+    2. **Redis cache** - checked on in-memory miss; shared across all
        Gunicorn workers / service replicas.
-    3. **Auth0 HTTPS fetch** — performed only when both caches miss.  The
+    3. **Auth0 HTTPS fetch** - performed only when both caches miss.  The
        response is stored in both Redis (with :data:`JWKS_CACHE_TTL`) and
        in-memory for subsequent requests.
 
@@ -253,8 +357,6 @@ def fetch_jwks() -> dict[str, Any]:
     Raises:
         AuthenticationError: If the JWKS cannot be retrieved after retries.
     """
-    global _jwks_cache, _jwks_cache_expiry  # noqa: PLW0603
-
     now = time.time()
 
     # -- Layer 1: in-memory cache -----------------------------------------
@@ -271,97 +373,12 @@ def fetch_jwks() -> dict[str, Any]:
 
         # -- Layer 2: Redis cache -----------------------------------------
         redis_key = _build_redis_cache_key()
-        try:
-            cached_json = cache_get(redis_key)
-            if cached_json is not None:
-                if isinstance(cached_json, str):
-                    jwks_data: dict[str, Any] = json.loads(cached_json)
-                else:
-                    jwks_data = cached_json
-                _jwks_cache = jwks_data
-                _jwks_cache_expiry = now + JWKS_CACHE_TTL
-                logger.debug("jwks_cache_hit", cache_layer="redis")
-                return jwks_data
-        except Exception as exc:  # noqa: BLE001
-            # Redis failure is non-fatal; proceed to Auth0 endpoint.
-            logger.debug(
-                "jwks_redis_cache_error",
-                error=str(exc),
-            )
+        redis_result = _try_redis_cache(redis_key, now)
+        if redis_result is not None:
+            return redis_result
 
         # -- Layer 3: Auth0 HTTPS fetch -----------------------------------
-        jwks_url = _build_jwks_url()
-        last_error: Exception | None = None
-
-        for attempt in range(_JWKS_FETCH_MAX_RETRIES):
-            try:
-                logger.debug(
-                    "jwks_fetch_attempt",
-                    url=jwks_url,
-                    attempt=attempt + 1,
-                )
-                response = requests.get(jwks_url, timeout=_HTTP_TIMEOUT)
-                response.raise_for_status()
-                jwks_data = response.json()
-
-                # Validate that the response contains the expected structure.
-                if "keys" not in jwks_data:
-                    raise AuthenticationError(
-                        "JWKS response from Auth0 does not contain 'keys' array."
-                    )
-
-                # Populate both cache layers.
-                _jwks_cache = jwks_data
-                _jwks_cache_expiry = now + JWKS_CACHE_TTL
-
-                try:
-                    cache_set(redis_key, jwks_data, ttl=JWKS_CACHE_TTL)
-                    logger.debug("jwks_stored_in_redis", redis_key=redis_key)
-                except Exception as redis_err:  # noqa: BLE001
-                    logger.debug(
-                        "jwks_redis_store_error",
-                        error=str(redis_err),
-                    )
-
-                logger.debug(
-                    "jwks_fetched_successfully",
-                    key_count=len(jwks_data.get("keys", [])),
-                )
-                return jwks_data
-
-            except requests.exceptions.Timeout as exc:
-                last_error = exc
-                logger.debug(
-                    "jwks_fetch_timeout",
-                    attempt=attempt + 1,
-                    timeout=_HTTP_TIMEOUT,
-                )
-            except requests.exceptions.ConnectionError as exc:
-                last_error = exc
-                logger.debug(
-                    "jwks_fetch_connection_error",
-                    attempt=attempt + 1,
-                    error=str(exc),
-                )
-            except requests.exceptions.RequestException as exc:
-                last_error = exc
-                logger.debug(
-                    "jwks_fetch_request_error",
-                    attempt=attempt + 1,
-                    error=str(exc),
-                )
-
-            # Backoff before retrying.
-            if attempt < _JWKS_FETCH_MAX_RETRIES - 1:
-                time.sleep(_JWKS_FETCH_RETRY_BACKOFF * (2 ** attempt))
-
-        # All retries exhausted.
-        error_message = (
-            f"Failed to fetch JWKS from {jwks_url} after "
-            f"{_JWKS_FETCH_MAX_RETRIES} attempts: {last_error}"
-        )
-        logger.warning("jwks_fetch_failed", error=error_message)
-        raise AuthenticationError(error_message)
+        return _fetch_jwks_from_auth0(_build_jwks_url(), redis_key, now)
 
 
 def get_signing_key(token: str) -> dict[str, Any]:
@@ -387,15 +404,11 @@ def get_signing_key(token: str) -> dict[str, Any]:
     try:
         unverified_header: dict[str, Any] = jwt.get_unverified_header(token)
     except JWTError as exc:
-        raise InvalidTokenError(
-            f"Unable to extract JWT header: {exc}"
-        ) from exc
+        raise InvalidTokenError(f"Unable to extract JWT header: {exc}") from exc
 
     kid: str | None = unverified_header.get("kid")
     if not kid:
-        raise InvalidTokenError(
-            "JWT header does not contain a 'kid' (Key ID) claim."
-        )
+        raise InvalidTokenError("JWT header does not contain a 'kid' (Key ID) claim.")
 
     jwks_data = fetch_jwks()
     keys: list[dict[str, Any]] = jwks_data.get("keys", [])
@@ -417,9 +430,7 @@ def get_signing_key(token: str) -> dict[str, Any]:
             logger.debug("signing_key_found_after_refresh", kid=kid)
             return key
 
-    raise InvalidTokenError(
-        f"No matching signing key found for kid '{kid}' in Auth0 JWKS."
-    )
+    raise InvalidTokenError(f"No matching signing key found for kid '{kid}' in Auth0 JWKS.")
 
 
 # ============================================================================
@@ -461,7 +472,7 @@ def validate_token(token: str) -> dict[str, Any]:
     # Step 1: Resolve signing key.
     signing_key = get_signing_key(token)
 
-    # Step 2–3: Decode and verify signature + standard claims.
+    # Step 2-3: Decode and verify signature + standard claims.
     try:
         payload: dict[str, Any] = jwt.decode(
             token,
@@ -549,9 +560,7 @@ def decode_token_unverified(token: str) -> dict[str, Any]:
         claims: dict[str, Any] = jwt.get_unverified_claims(token)
         return claims
     except JWTError as exc:
-        raise InvalidTokenError(
-            f"Unable to decode token (unverified): {exc}"
-        ) from exc
+        raise InvalidTokenError(f"Unable to decode token (unverified): {exc}") from exc
 
 
 # ============================================================================
@@ -559,7 +568,7 @@ def decode_token_unverified(token: str) -> dict[str, Any]:
 # ============================================================================
 
 
-def extract_token_from_request() -> Optional[str]:
+def extract_token_from_request() -> str | None:
     """Extract the JWT from the current Flask request.
 
     Extraction order:
@@ -587,7 +596,7 @@ def extract_token_from_request() -> Optional[str]:
     return None
 
 
-def get_current_user() -> Optional[dict[str, Any]]:
+def get_current_user() -> dict[str, Any] | None:
     """Retrieve the authenticated user context for the current request.
 
     Resolution order:
@@ -667,13 +676,9 @@ def refresh_access_token(refresh_token: str) -> dict[str, Any]:
     client_secret = _AUTH0_CLIENT_SECRET or os.environ.get("AUTH0_CLIENT_SECRET", "")
 
     if not domain:
-        raise AuthenticationError(
-            "AUTH0_DOMAIN is not configured. Cannot refresh token."
-        )
+        raise AuthenticationError("AUTH0_DOMAIN is not configured. Cannot refresh token.")
     if not client_id:
-        raise AuthenticationError(
-            "AUTH0_CLIENT_ID is not configured. Cannot refresh token."
-        )
+        raise AuthenticationError("AUTH0_CLIENT_ID is not configured. Cannot refresh token.")
 
     token_url = f"{TOKEN_ISSUER_PREFIX}{domain}/oauth/token"
 
@@ -698,19 +703,13 @@ def refresh_access_token(refresh_token: str) -> dict[str, Any]:
         )
     except requests.exceptions.Timeout as exc:
         logger.warning("token_refresh_timeout", error=str(exc))
-        raise AuthenticationError(
-            f"Timeout while refreshing access token: {exc}"
-        ) from exc
+        raise AuthenticationError(f"Timeout while refreshing access token: {exc}") from exc
     except requests.exceptions.ConnectionError as exc:
         logger.warning("token_refresh_connection_error", error=str(exc))
-        raise AuthenticationError(
-            f"Connection error during token refresh: {exc}"
-        ) from exc
+        raise AuthenticationError(f"Connection error during token refresh: {exc}") from exc
     except requests.exceptions.RequestException as exc:
         logger.warning("token_refresh_request_error", error=str(exc))
-        raise AuthenticationError(
-            f"Request error during token refresh: {exc}"
-        ) from exc
+        raise AuthenticationError(f"Request error during token refresh: {exc}") from exc
 
     if response.status_code != 200:
         error_body = response.text
@@ -719,9 +718,7 @@ def refresh_access_token(refresh_token: str) -> dict[str, Any]:
             status_code=response.status_code,
             error=error_body[:200],  # Truncate to avoid logging huge bodies.
         )
-        raise AuthenticationError(
-            f"Token refresh failed with status {response.status_code}: {error_body[:200]}"
-        )
+        raise AuthenticationError(f"Token refresh failed with status {response.status_code}: {error_body[:200]}")
 
     result: dict[str, Any] = response.json()
 
@@ -759,6 +756,7 @@ def jwt_required() -> Callable[..., Any]:
 
         app = Flask(__name__)
 
+
         @app.before_request
         def enforce_auth():
             handler = jwt_required()
@@ -787,10 +785,12 @@ def jwt_required() -> Callable[..., Any]:
                 path=current_path,
             )
             return (
-                jsonify({
-                    "error": "unauthorized",
-                    "message": "Missing or malformed Authorization header.",
-                }),
+                jsonify(
+                    {
+                        "error": "unauthorized",
+                        "message": "Missing or malformed Authorization header.",
+                    }
+                ),
                 401,
             )
 
@@ -798,10 +798,12 @@ def jwt_required() -> Callable[..., Any]:
             payload = validate_token(token)
         except TokenExpiredError:
             return (
-                jsonify({
-                    "error": "unauthorized",
-                    "message": "Token has expired. Please re-authenticate.",
-                }),
+                jsonify(
+                    {
+                        "error": "unauthorized",
+                        "message": "Token has expired. Please re-authenticate.",
+                    }
+                ),
                 401,
             )
         except InvalidTokenError as exc:
@@ -811,10 +813,12 @@ def jwt_required() -> Callable[..., Any]:
                 error=str(exc),
             )
             return (
-                jsonify({
-                    "error": "unauthorized",
-                    "message": f"Invalid token: {exc.message}",
-                }),
+                jsonify(
+                    {
+                        "error": "unauthorized",
+                        "message": f"Invalid token: {exc.message}",
+                    }
+                ),
                 401,
             )
         except AuthenticationError as exc:
@@ -824,10 +828,12 @@ def jwt_required() -> Callable[..., Any]:
                 error=str(exc),
             )
             return (
-                jsonify({
-                    "error": "unauthorized",
-                    "message": str(exc),
-                }),
+                jsonify(
+                    {
+                        "error": "unauthorized",
+                        "message": str(exc),
+                    }
+                ),
                 401,
             )
 
@@ -868,5 +874,5 @@ def _safe_extract_sub(token: str) -> str:
     try:
         claims = jwt.get_unverified_claims(token)
         return str(claims.get("sub", "unknown"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return "unknown"
