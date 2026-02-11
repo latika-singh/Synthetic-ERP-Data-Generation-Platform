@@ -1,0 +1,820 @@
+# =============================================================================
+# Staging Deployment Workflow
+# Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+# Automated staging environment deployment triggered after the
+# "Build and Push Docker Images" workflow completes successfully on main.
+# Configures kubectl with staging cluster credentials, applies all Kubernetes
+# manifests from infrastructure/kubernetes/ with staging-specific overrides,
+# runs post-deployment smoke tests against all service health endpoints, and
+# notifies on deployment status via Slack and GitHub Step Summaries.
+#
+# Prerequisites:
+#   - GitHub environment "staging" configured with environment-specific secrets
+#   - secrets.STAGING_KUBECONFIG set with staging cluster credentials (base64)
+#   - secrets.STAGING_API_URL set to the staging API base URL
+#   - secrets.SLACK_WEBHOOK_URL for deployment notifications (optional)
+#   - Build workflow "Build and Push Docker Images" must exist (build.yml)
+# =============================================================================
+
+name: Deploy to Staging
+
+on:
+  workflow_run:
+    workflows:
+      - "Build and Push Docker Images"
+    branches:
+      - main
+    types:
+      - completed
+
+# Prevent concurrent staging deployments to avoid conflicting rollouts
+concurrency:
+  group: staging-deployment
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Global environment variables — shared across all jobs
+# ---------------------------------------------------------------------------
+env:
+  # Container registry coordinates — must match build.yml outputs
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/synthetic-erp
+  # Kubernetes namespace for staging workloads
+  STAGING_NAMESPACE: synthetic-erp-staging
+  # All backend microservices (space-separated for shell iteration)
+  BACKEND_SERVICES: >-
+    api-gateway
+    generation-engine
+    profiling-service
+    quality-service
+    compliance-service
+    provisioning-service
+  # Frontend service name
+  FRONTEND_SERVICE: web-console
+  # Rollout timeout per service (5 minutes for staging)
+  ROLLOUT_TIMEOUT: 300s
+  # Post-deployment stabilization period (seconds)
+  STABILIZATION_WAIT: 30
+
+jobs:
+  # ===========================================================================
+  # Job 1: Deploy to Staging Environment
+  # ===========================================================================
+  # Executes a full deployment of all platform components to the staging
+  # Kubernetes cluster. Applies manifests in dependency order:
+  # 1. Namespace and foundational resources (ConfigMaps, Secrets, policies)
+  # 2. StatefulSets for data stores (MongoDB, Redis) with readiness wait
+  # 3. Deployments for all backend services and the web console
+  # 4. HPA and Ingress configuration
+  #
+  # Only runs when the triggering build workflow completed successfully,
+  # ensuring we never deploy broken images to staging.
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Gate: only deploy if the build workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    # Use the staging GitHub environment for environment-specific secrets
+    # and optional environment protection rules
+    environment:
+      name: staging
+      url: https://staging.synthetic-erp.com
+
+    outputs:
+      image_tag: ${{ steps.resolve-tag.outputs.tag }}
+      deployment_status: ${{ steps.deploy-summary.outputs.status }}
+
+    steps:
+      # -------------------------------------------------------------------
+      # Step 1: Checkout repository to access Kubernetes manifests
+      # -------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Use the SHA from the build workflow's head commit for consistency
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      # -------------------------------------------------------------------
+      # Step 2: Resolve the image tag from the triggering build workflow.
+      # Uses the head SHA of the commit that triggered the build, which
+      # matches the tag applied by docker/metadata-action in build.yml
+      # (type=sha,prefix= produces a tag like the full commit SHA).
+      # -------------------------------------------------------------------
+      - name: Resolve image tag from build workflow
+        id: resolve-tag
+        run: |
+          # The build workflow tags images with the git SHA (no prefix)
+          TAG="${{ github.event.workflow_run.head_sha }}"
+          echo "Resolved image tag from triggering workflow: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          echo "### Staging Deployment — Image Tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Tag:** \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Source Branch:** ${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Build Run ID:** ${{ github.event.workflow_run.id }}" >> "$GITHUB_STEP_SUMMARY"
+
+      # -------------------------------------------------------------------
+      # Step 3: Install kubectl CLI for Kubernetes cluster interaction
+      # -------------------------------------------------------------------
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.0'
+
+      # -------------------------------------------------------------------
+      # Step 4: Configure kubectl with staging cluster credentials.
+      # The kubeconfig is stored as a base64-encoded GitHub secret and
+      # decoded into the standard kubeconfig location.
+      # -------------------------------------------------------------------
+      - name: Configure staging cluster credentials
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      # -------------------------------------------------------------------
+      # Step 5: Verify connectivity to the staging Kubernetes cluster
+      # before attempting any manifest operations.
+      # -------------------------------------------------------------------
+      - name: Verify cluster connectivity
+        run: |
+          echo "Verifying connectivity to staging cluster..."
+          kubectl cluster-info || {
+            echo "::error::Cannot connect to the staging Kubernetes cluster."
+            echo "Ensure secrets.STAGING_KUBECONFIG is correctly configured."
+            exit 1
+          }
+          kubectl get nodes -o wide
+          echo "Staging cluster connectivity verified."
+
+      # -------------------------------------------------------------------
+      # Step 6: Set the kubectl context to the staging namespace for all
+      # subsequent operations.
+      # -------------------------------------------------------------------
+      - name: Set kubectl context to staging namespace
+        run: |
+          kubectl config set-context --current --namespace=${{ env.STAGING_NAMESPACE }}
+          echo "Active namespace: ${{ env.STAGING_NAMESPACE }}"
+
+      # -------------------------------------------------------------------
+      # Step 7: Update image tags in Kubernetes deployment manifests to
+      # reference the images built by the triggering workflow. Uses sed
+      # to replace image references in-place before applying.
+      # -------------------------------------------------------------------
+      - name: Update image tags in manifests
+        run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
+          echo "Updating Kubernetes manifests with image tag: $TAG"
+
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+
+          for SERVICE in $ALL_SERVICES; do
+            DEPLOYMENT_FILE="infrastructure/kubernetes/${SERVICE}/deployment.yaml"
+
+            if [ -f "$DEPLOYMENT_FILE" ]; then
+              echo "Updating image tag in $DEPLOYMENT_FILE..."
+              # Replace the image tag placeholder or existing tag with the build SHA
+              sed -i "s|image: .*${SERVICE}:.*|image: ${{ env.IMAGE_PREFIX }}/${SERVICE}:${TAG}|g" \
+                "$DEPLOYMENT_FILE"
+              echo "  Updated: ${{ env.IMAGE_PREFIX }}/${SERVICE}:${TAG}"
+            else
+              echo "  Warning: $DEPLOYMENT_FILE not found, skipping."
+            fi
+          done
+
+          echo "All manifest image tags updated."
+
+      # -------------------------------------------------------------------
+      # Phase 1: Apply Namespace and Foundational Resources
+      # Namespace must exist before any namespaced resources can be created.
+      # -------------------------------------------------------------------
+      - name: "Phase 1: Apply namespace and foundational resources"
+        run: |
+          echo "=========================================="
+          echo "Phase 1: Foundational Resources"
+          echo "=========================================="
+
+          echo "Applying namespace..."
+          kubectl apply -f infrastructure/kubernetes/namespace.yaml
+
+          echo "Applying ConfigMaps..."
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+          for SERVICE in $ALL_SERVICES; do
+            CONFIG="infrastructure/kubernetes/${SERVICE}/configmap.yaml"
+            if [ -f "$CONFIG" ]; then
+              echo "  Applying ConfigMap for $SERVICE..."
+              kubectl apply -f "$CONFIG" -n ${{ env.STAGING_NAMESPACE }}
+            fi
+          done
+
+          echo "Applying Secrets..."
+          if [ -f "infrastructure/kubernetes/secrets.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/secrets.yaml -n ${{ env.STAGING_NAMESPACE }}
+          fi
+
+          echo "Applying NetworkPolicies..."
+          if [ -f "infrastructure/kubernetes/network-policies.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/network-policies.yaml -n ${{ env.STAGING_NAMESPACE }}
+          fi
+
+          echo "Applying ResourceQuotas..."
+          if [ -f "infrastructure/kubernetes/resource-quotas.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/resource-quotas.yaml -n ${{ env.STAGING_NAMESPACE }}
+          fi
+
+          echo "Phase 1 complete."
+
+      # -------------------------------------------------------------------
+      # Phase 2: Apply StatefulSets for data stores (MongoDB, Redis).
+      # StatefulSets are applied first because backend services depend on
+      # the databases being available. Waits for each StatefulSet to reach
+      # the ready state before proceeding.
+      # -------------------------------------------------------------------
+      - name: "Phase 2: Apply StatefulSets (MongoDB, Redis)"
+        run: |
+          echo "=========================================="
+          echo "Phase 2: Data Store StatefulSets"
+          echo "=========================================="
+
+          for STORE in mongodb redis; do
+            STORE_DIR="infrastructure/kubernetes/${STORE}"
+            if [ -d "$STORE_DIR" ]; then
+              echo "Applying StatefulSet for $STORE..."
+              kubectl apply -f "$STORE_DIR/" -n ${{ env.STAGING_NAMESPACE }}
+
+              echo "Waiting for $STORE StatefulSet to be ready..."
+              kubectl rollout status statefulset/${STORE} \
+                -n ${{ env.STAGING_NAMESPACE }} \
+                --timeout=300s || {
+                  echo "::warning::StatefulSet $STORE rollout did not complete within timeout."
+                  echo "Checking current status..."
+                  kubectl get statefulset/${STORE} -n ${{ env.STAGING_NAMESPACE }}
+                  kubectl get pods -l app=${STORE} -n ${{ env.STAGING_NAMESPACE }}
+                }
+            else
+              echo "No manifests found for $STORE, skipping."
+            fi
+          done
+
+          echo "Phase 2 complete."
+
+      # -------------------------------------------------------------------
+      # Phase 3: Apply Deployments for all 6 backend services.
+      # Each service directory contains deployment.yaml, service.yaml,
+      # and optionally configmap.yaml. Image tags were already updated
+      # in the manifest update step.
+      # -------------------------------------------------------------------
+      - name: "Phase 3: Deploy backend services"
+        run: |
+          echo "=========================================="
+          echo "Phase 3: Backend Service Deployments"
+          echo "=========================================="
+
+          FAILED_SERVICES=""
+
+          for SERVICE in ${{ env.BACKEND_SERVICES }}; do
+            SERVICE_DIR="infrastructure/kubernetes/${SERVICE}"
+
+            echo "------------------------------------------"
+            echo "Deploying $SERVICE..."
+            echo "------------------------------------------"
+
+            if [ -d "$SERVICE_DIR" ]; then
+              kubectl apply -f "$SERVICE_DIR/" -n ${{ env.STAGING_NAMESPACE }}
+            else
+              echo "::warning::No manifests found for $SERVICE at $SERVICE_DIR"
+              continue
+            fi
+
+            echo "Waiting for rollout of $SERVICE to complete..."
+            kubectl rollout status deployment/${SERVICE} \
+              -n ${{ env.STAGING_NAMESPACE }} \
+              --timeout=${{ env.ROLLOUT_TIMEOUT }} || {
+                echo "::error::Rollout of $SERVICE failed or timed out."
+                FAILED_SERVICES="$FAILED_SERVICES $SERVICE"
+              }
+          done
+
+          if [ -n "$FAILED_SERVICES" ]; then
+            echo "::error::The following backend services failed to deploy:$FAILED_SERVICES"
+            exit 1
+          fi
+
+          echo "All backend services deployed successfully."
+
+      # -------------------------------------------------------------------
+      # Phase 4: Deploy the frontend web-console.
+      # Separated from backend services for clarity and independent
+      # rollout tracking.
+      # -------------------------------------------------------------------
+      - name: "Phase 4: Deploy web-console"
+        run: |
+          echo "=========================================="
+          echo "Phase 4: Web Console Deployment"
+          echo "=========================================="
+
+          SERVICE="${{ env.FRONTEND_SERVICE }}"
+          SERVICE_DIR="infrastructure/kubernetes/${SERVICE}"
+
+          echo "Deploying $SERVICE..."
+
+          if [ -d "$SERVICE_DIR" ]; then
+            kubectl apply -f "$SERVICE_DIR/" -n ${{ env.STAGING_NAMESPACE }}
+          else
+            echo "::warning::No manifests found for $SERVICE at $SERVICE_DIR"
+          fi
+
+          echo "Waiting for rollout of $SERVICE to complete..."
+          kubectl rollout status deployment/${SERVICE} \
+            -n ${{ env.STAGING_NAMESPACE }} \
+            --timeout=${{ env.ROLLOUT_TIMEOUT }} || {
+              echo "::error::Rollout of $SERVICE failed or timed out."
+              exit 1
+            }
+
+          echo "Web console deployed successfully."
+
+      # -------------------------------------------------------------------
+      # Phase 5: Apply HPA and Ingress configuration.
+      # These are applied last to avoid autoscaler interference during
+      # the initial rollout of deployments.
+      # -------------------------------------------------------------------
+      - name: "Phase 5: Apply HPA and Ingress"
+        run: |
+          echo "=========================================="
+          echo "Phase 5: HPA and Ingress Updates"
+          echo "=========================================="
+
+          echo "Applying Horizontal Pod Autoscaler configurations..."
+          if [ -f "infrastructure/kubernetes/hpa.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/hpa.yaml -n ${{ env.STAGING_NAMESPACE }}
+          fi
+
+          echo "Applying Ingress configuration..."
+          if [ -f "infrastructure/kubernetes/ingress.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/ingress.yaml -n ${{ env.STAGING_NAMESPACE }}
+          fi
+
+          echo "Phase 5 complete."
+
+      # -------------------------------------------------------------------
+      # Verify all deployments and StatefulSets are healthy after rollout
+      # -------------------------------------------------------------------
+      - name: Verify deployment health
+        run: |
+          echo "Verifying all resource health in staging namespace..."
+
+          echo "### Deployment Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Resource | Type | Ready | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|------|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+
+          ISSUES=0
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+
+          # Check Deployments
+          for SERVICE in $ALL_SERVICES; do
+            READY=$(kubectl get deployment "${SERVICE}" \
+              -n ${{ env.STAGING_NAMESPACE }} \
+              -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || READY=0
+            DESIRED=$(kubectl get deployment "${SERVICE}" \
+              -n ${{ env.STAGING_NAMESPACE }} \
+              -o jsonpath='{.spec.replicas}' 2>/dev/null) || DESIRED=0
+
+            READY=${READY:-0}
+            DESIRED=${DESIRED:-0}
+
+            if [ "$READY" -ge "$DESIRED" ] && [ "$DESIRED" -gt 0 ]; then
+              echo "  ✅ $SERVICE: $READY/$DESIRED ready"
+              echo "| $SERVICE | Deployment | $READY/$DESIRED | ✅ Healthy |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  ❌ $SERVICE: $READY/$DESIRED ready"
+              echo "| $SERVICE | Deployment | $READY/$DESIRED | ❌ Unhealthy |" >> "$GITHUB_STEP_SUMMARY"
+              ISSUES=$((ISSUES + 1))
+            fi
+          done
+
+          # Check StatefulSets
+          for STORE in mongodb redis; do
+            READY=$(kubectl get statefulset "${STORE}" \
+              -n ${{ env.STAGING_NAMESPACE }} \
+              -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || READY=0
+            DESIRED=$(kubectl get statefulset "${STORE}" \
+              -n ${{ env.STAGING_NAMESPACE }} \
+              -o jsonpath='{.spec.replicas}' 2>/dev/null) || DESIRED=0
+
+            READY=${READY:-0}
+            DESIRED=${DESIRED:-0}
+
+            if [ "$READY" -ge "$DESIRED" ] && [ "$DESIRED" -gt 0 ]; then
+              echo "  ✅ $STORE: $READY/$DESIRED ready"
+              echo "| $STORE | StatefulSet | $READY/$DESIRED | ✅ Healthy |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  ⚠️ $STORE: $READY/$DESIRED ready"
+              echo "| $STORE | StatefulSet | $READY/$DESIRED | ⚠️ Check |" >> "$GITHUB_STEP_SUMMARY"
+              ISSUES=$((ISSUES + 1))
+            fi
+          done
+
+          if [ "$ISSUES" -gt 0 ]; then
+            echo "::warning::$ISSUES resource(s) reported less-than-desired ready replicas."
+          fi
+
+          echo "Deployment health verification complete."
+
+      # -------------------------------------------------------------------
+      # Produce a deployment summary for the GitHub Actions UI
+      # -------------------------------------------------------------------
+      - name: Deployment summary
+        id: deploy-summary
+        if: always()
+        run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
+
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Staging Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image Tag | \`$TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Namespace | \`${{ env.STAGING_NAMESPACE }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build Run | [${{ github.event.workflow_run.id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy Run | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered By | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | $(date -u '+%Y-%m-%dT%H:%M:%SZ') |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -------------------------------------------------------------------
+      # Clean up kubeconfig credentials to prevent leakage in runner cache
+      # -------------------------------------------------------------------
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f $HOME/.kube/config
+          echo "Credentials cleaned up."
+
+  # ===========================================================================
+  # Job 2: Post-Deployment Smoke Tests
+  # ===========================================================================
+  # Validates that all deployed services are reachable and healthy via the
+  # staging ingress endpoint. Runs lightweight, non-destructive checks against
+  # the health, readiness, and API endpoints. Uses retry logic to handle
+  # transient failures during service stabilization.
+  # ===========================================================================
+  smoke-tests:
+    name: Smoke Tests
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      test_status: ${{ steps.smoke-summary.outputs.status }}
+
+    steps:
+      # -------------------------------------------------------------------
+      # Step 1: Allow time for DNS propagation, load balancer updates,
+      # and service initialization before running health checks.
+      # -------------------------------------------------------------------
+      - name: Wait for services to stabilize
+        run: |
+          echo "Waiting ${{ env.STABILIZATION_WAIT }} seconds for services to stabilize..."
+          sleep ${{ env.STABILIZATION_WAIT }}
+          echo "Stabilization period complete. Starting smoke tests."
+
+      # -------------------------------------------------------------------
+      # Step 2: Verify all critical health endpoints return 2xx responses.
+      # Uses a retry loop to accommodate transient startup delays.
+      # -------------------------------------------------------------------
+      - name: Verify service health endpoints
+        id: health-checks
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+        run: |
+          # Default staging URL if secret is not configured
+          API_URL="${STAGING_API_URL:-https://staging.synthetic-erp.com}"
+          HEALTH_FAILURES=0
+          MAX_RETRIES=5
+          RETRY_DELAY=10
+
+          echo "### Staging Health Check Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Endpoint | Status | Attempts |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|--------|----------|" >> "$GITHUB_STEP_SUMMARY"
+
+          # Reusable function to check a health endpoint with retries
+          check_endpoint() {
+            local URL="$1"
+            local NAME="$2"
+            local ATTEMPT=0
+
+            while [ $ATTEMPT -lt $MAX_RETRIES ]; do
+              ATTEMPT=$((ATTEMPT + 1))
+              echo "Checking $NAME ($URL) — attempt $ATTEMPT/$MAX_RETRIES"
+
+              HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+                --connect-timeout 10 \
+                --max-time 30 \
+                "$URL" 2>/dev/null) || HTTP_CODE="000"
+
+              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+                echo "  ✅ $NAME returned HTTP $HTTP_CODE"
+                echo "| $NAME | ✅ HTTP $HTTP_CODE | $ATTEMPT |" >> "$GITHUB_STEP_SUMMARY"
+                return 0
+              fi
+
+              echo "  ⏳ $NAME returned HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            done
+
+            echo "  ❌ $NAME failed after $MAX_RETRIES attempts (last HTTP $HTTP_CODE)"
+            echo "| $NAME | ❌ HTTP $HTTP_CODE | $MAX_RETRIES |" >> "$GITHUB_STEP_SUMMARY"
+            return 1
+          }
+
+          # Check all required health endpoints
+          check_endpoint "${API_URL}/health" "Health Check (/health)" || HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
+          check_endpoint "${API_URL}/api/v1/health" "API Health (/api/v1/health)" || HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
+          check_endpoint "${API_URL}/ready" "Readiness (/ready)" || HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
+
+          if [ "$HEALTH_FAILURES" -gt 0 ]; then
+            echo "::error::$HEALTH_FAILURES health endpoint(s) failed verification in staging."
+            exit 1
+          fi
+
+          echo "All staging health endpoints verified successfully."
+
+      # -------------------------------------------------------------------
+      # Step 3: Run additional smoke tests to verify basic API functionality.
+      # Non-destructive, read-only operations only.
+      # -------------------------------------------------------------------
+      - name: Run API smoke tests
+        id: api-smoke-tests
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+        run: |
+          API_URL="${STAGING_API_URL:-https://staging.synthetic-erp.com}"
+          SMOKE_FAILURES=0
+
+          echo "### Staging Smoke Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Test | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|--------|" >> "$GITHUB_STEP_SUMMARY"
+
+          # Smoke test 1: Verify the API version endpoint is accessible
+          echo "Smoke test: API version endpoint..."
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 30 \
+            "${API_URL}/api/v1/health" 2>/dev/null) || HTTP_CODE="000"
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "  ✅ API version endpoint accessible"
+            echo "| API Version Endpoint | ✅ Pass |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ❌ API version endpoint returned HTTP $HTTP_CODE"
+            echo "| API Version Endpoint | ❌ Fail (HTTP $HTTP_CODE) |" >> "$GITHUB_STEP_SUMMARY"
+            SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
+          fi
+
+          # Smoke test 2: Verify CORS headers are present
+          echo "Smoke test: CORS headers..."
+          CORS_HEADER=$(curl -sf -I --connect-timeout 10 --max-time 30 \
+            -H "Origin: https://staging.synthetic-erp.com" \
+            "${API_URL}/health" 2>/dev/null | grep -i "access-control" || true)
+          if [ -n "$CORS_HEADER" ]; then
+            echo "  ✅ CORS headers present"
+            echo "| CORS Headers | ✅ Present |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ⚠️ CORS headers not detected (may be expected depending on config)"
+            echo "| CORS Headers | ⚠️ Not detected |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Smoke test 3: Verify TLS connectivity
+          echo "Smoke test: TLS connectivity..."
+          if curl -sf --tlsv1.3 --connect-timeout 10 --max-time 30 \
+            "${API_URL}/health" > /dev/null 2>&1; then
+            echo "  ✅ TLS 1.3 connection successful"
+            echo "| TLS 1.3 Connectivity | ✅ Pass |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ⚠️ TLS 1.3 not confirmed (may fall back to TLS 1.2)"
+            echo "| TLS 1.3 Connectivity | ⚠️ Unconfirmed |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Smoke test 4: Response time is acceptable (< 3 seconds for staging)
+          echo "Smoke test: Response latency..."
+          RESPONSE_TIME=$(curl -sf -o /dev/null -w "%{time_total}" \
+            --connect-timeout 10 --max-time 30 \
+            "${API_URL}/health" 2>/dev/null) || RESPONSE_TIME="0"
+          RESPONSE_MS=$(echo "$RESPONSE_TIME * 1000" | bc 2>/dev/null || echo "N/A")
+          if [ "$(echo "$RESPONSE_TIME < 3.0" | bc 2>/dev/null)" = "1" ]; then
+            echo "  ✅ Response time: ${RESPONSE_MS}ms"
+            echo "| Response Latency | ✅ ${RESPONSE_MS}ms |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ⚠️ Response time: ${RESPONSE_MS}ms (above 3s threshold)"
+            echo "| Response Latency | ⚠️ ${RESPONSE_MS}ms |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Smoke test 5: Verify the frontend static assets are served
+          echo "Smoke test: Frontend accessibility..."
+          FRONTEND_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+            --connect-timeout 10 --max-time 30 \
+            "${API_URL}/" 2>/dev/null) || FRONTEND_CODE="000"
+          if [ "$FRONTEND_CODE" -ge 200 ] && [ "$FRONTEND_CODE" -lt 400 ]; then
+            echo "  ✅ Frontend accessible (HTTP $FRONTEND_CODE)"
+            echo "| Frontend Accessibility | ✅ HTTP $FRONTEND_CODE |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ⚠️ Frontend returned HTTP $FRONTEND_CODE"
+            echo "| Frontend Accessibility | ⚠️ HTTP $FRONTEND_CODE |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$SMOKE_FAILURES" -gt 0 ]; then
+            echo "::error::$SMOKE_FAILURES critical smoke test(s) failed in staging."
+            exit 1
+          fi
+
+          echo "All staging smoke tests completed."
+
+      # -------------------------------------------------------------------
+      # Step 4: Produce a summary of all smoke test results
+      # -------------------------------------------------------------------
+      - name: Smoke test summary
+        id: smoke-summary
+        if: always()
+        run: |
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Smoke Test Summary" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ All staging smoke tests passed." >> "$GITHUB_STEP_SUMMARY"
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ One or more staging smoke tests failed." >> "$GITHUB_STEP_SUMMARY"
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ===========================================================================
+  # Job 3: Deployment Notification
+  # ===========================================================================
+  # Sends a notification about the staging deployment outcome regardless of
+  # whether the deployment and smoke tests succeeded or failed. Uses GitHub
+  # Step Summary for in-platform visibility and an optional Slack webhook for
+  # team-wide notification.
+  # ===========================================================================
+  notify:
+    name: Deployment Notification
+    needs: [deploy-staging, smoke-tests]
+    runs-on: ubuntu-latest
+    # Always run the notification job, even if upstream jobs failed
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      # -------------------------------------------------------------------
+      # Step 1: Determine overall deployment status from upstream jobs
+      # -------------------------------------------------------------------
+      - name: Determine deployment status
+        id: status
+        run: |
+          DEPLOY_STATUS="${{ needs.deploy-staging.result }}"
+          SMOKE_STATUS="${{ needs.smoke-tests.result }}"
+
+          echo "Deploy job status: $DEPLOY_STATUS"
+          echo "Smoke tests status: $SMOKE_STATUS"
+
+          if [ "$DEPLOY_STATUS" == "success" ] && [ "$SMOKE_STATUS" == "success" ]; then
+            echo "overall=success" >> "$GITHUB_OUTPUT"
+            echo "emoji=✅" >> "$GITHUB_OUTPUT"
+            echo "message=Staging deployment completed successfully. All smoke tests passed." >> "$GITHUB_OUTPUT"
+          elif [ "$DEPLOY_STATUS" == "skipped" ]; then
+            echo "overall=skipped" >> "$GITHUB_OUTPUT"
+            echo "emoji=⏭️" >> "$GITHUB_OUTPUT"
+            echo "message=Staging deployment skipped — build workflow did not succeed." >> "$GITHUB_OUTPUT"
+          elif [ "$DEPLOY_STATUS" == "failure" ]; then
+            echo "overall=failure" >> "$GITHUB_OUTPUT"
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"
+            echo "message=Staging deployment failed during rollout. Check the deploy-staging job logs." >> "$GITHUB_OUTPUT"
+          elif [ "$SMOKE_STATUS" == "failure" ]; then
+            echo "overall=failure" >> "$GITHUB_OUTPUT"
+            echo "emoji=⚠️" >> "$GITHUB_OUTPUT"
+            echo "message=Staging deployed but smoke tests failed. Services may be unhealthy." >> "$GITHUB_OUTPUT"
+          else
+            echo "overall=unknown" >> "$GITHUB_OUTPUT"
+            echo "emoji=❓" >> "$GITHUB_OUTPUT"
+            echo "message=Staging deployment ended in an unexpected state (deploy: $DEPLOY_STATUS, smoke: $SMOKE_STATUS)." >> "$GITHUB_OUTPUT"
+          fi
+
+      # -------------------------------------------------------------------
+      # Step 2: Generate a comprehensive deployment status summary in the
+      # GitHub Actions workflow run UI.
+      # -------------------------------------------------------------------
+      - name: Generate deployment report
+        run: |
+          TAG="${{ needs.deploy-staging.outputs.image_tag || github.event.workflow_run.head_sha || 'unknown' }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BUILD_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          echo "### ${{ steps.status.outputs.emoji }} Staging Deployment Report" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.status.outputs.message }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Overall Status | ${{ steps.status.outputs.overall }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image Tag | \`$TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Namespace | \`${{ env.STAGING_NAMESPACE }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy Status | ${{ needs.deploy-staging.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Smoke Tests | ${{ needs.smoke-tests.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build Workflow | [Run ${{ github.event.workflow_run.id }}]($BUILD_URL) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy Workflow | [Run ${{ github.run_id }}]($RUN_URL) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered By | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | $TIMESTAMP |" >> "$GITHUB_STEP_SUMMARY"
+
+      # -------------------------------------------------------------------
+      # Step 3: Send Slack notification with deployment status.
+      # Adapts the message format and color based on the deployment outcome.
+      # Skips gracefully if SLACK_WEBHOOK_URL is not configured.
+      # -------------------------------------------------------------------
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # Skip notification if webhook is not configured
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "Slack webhook not configured — skipping notification."
+            exit 0
+          fi
+
+          TAG="${{ needs.deploy-staging.outputs.image_tag || github.event.workflow_run.head_sha || 'unknown' }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          STATUS="${{ steps.status.outputs.overall }}"
+          EMOJI="${{ steps.status.outputs.emoji }}"
+          MESSAGE="${{ steps.status.outputs.message }}"
+
+          # Select Slack attachment color based on status
+          case "$STATUS" in
+            success) COLOR="#36a64f" ;;
+            failure) COLOR="#d32f2f" ;;
+            skipped) COLOR="#ff9800" ;;
+            *)       COLOR="#9e9e9e" ;;
+          esac
+
+          echo "Sending Slack notification (status: $STATUS)..."
+
+          curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \"${EMOJI} *Staging Deployment — ${STATUS}*\",
+              \"blocks\": [
+                {
+                  \"type\": \"header\",
+                  \"text\": {
+                    \"type\": \"plain_text\",
+                    \"text\": \"${EMOJI} Staging Deployment — ${STATUS}\"
+                  }
+                },
+                {
+                  \"type\": \"section\",
+                  \"text\": {
+                    \"type\": \"mrkdwn\",
+                    \"text\": \"${MESSAGE}\"
+                  }
+                },
+                {
+                  \"type\": \"section\",
+                  \"fields\": [
+                    {\"type\": \"mrkdwn\", \"text\": \"*Image Tag:*\n\`${TAG}\`\"},
+                    {\"type\": \"mrkdwn\", \"text\": \"*Namespace:*\n\`${{ env.STAGING_NAMESPACE }}\`\"},
+                    {\"type\": \"mrkdwn\", \"text\": \"*Triggered By:*\n${{ github.actor }}\"},
+                    {\"type\": \"mrkdwn\", \"text\": \"*Timestamp:*\n${TIMESTAMP}\"}
+                  ]
+                },
+                {
+                  \"type\": \"actions\",
+                  \"elements\": [
+                    {
+                      \"type\": \"button\",
+                      \"text\": {\"type\": \"plain_text\", \"text\": \"View Deploy Workflow\"},
+                      \"url\": \"${RUN_URL}\"
+                    }
+                  ]
+                }
+              ],
+              \"attachments\": [
+                {
+                  \"color\": \"${COLOR}\",
+                  \"fields\": [
+                    {\"title\": \"Deploy Job\", \"value\": \"${{ needs.deploy-staging.result }}\", \"short\": true},
+                    {\"title\": \"Smoke Tests\", \"value\": \"${{ needs.smoke-tests.result }}\", \"short\": true}
+                  ]
+                }
+              ]
+            }" || echo "::warning::Failed to send Slack notification."
+
+          echo "Slack notification sent."
