@@ -56,6 +56,7 @@ from typing import Any
 
 from flask import Blueprint, Flask, Response, current_app, g, request
 
+
 # ---------------------------------------------------------------------------
 # Graceful import of prometheus_client — if the library is missing the module
 # still loads but all metric operations become no-ops.
@@ -65,7 +66,6 @@ try:
     from prometheus_client import (
         CONTENT_TYPE_LATEST,
         REGISTRY,
-        CollectorRegistry,
         Counter,
         Gauge,
         Histogram,
@@ -78,6 +78,7 @@ except ImportError:  # pragma: no cover
     _PROMETHEUS_AVAILABLE = False
 
 from shared.config.base import BaseConfig
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -334,15 +335,15 @@ def setup_metrics(app: Flask, service_name: str) -> None:
     @app.before_request
     def _before_request() -> None:
         """Capture request start time and bump the in-progress gauge."""
-        g._metrics_start_time = time.perf_counter()  # noqa: SLF001
+        g._metrics_start_time = time.perf_counter()
         request_path: str = request.path
         request_endpoint: str | None = request.endpoint
 
         if request_path in _EXCLUDED_PATHS or request_endpoint in _EXCLUDED_ENDPOINTS:
-            g._metrics_excluded = True  # noqa: SLF001
+            g._metrics_excluded = True
             return
 
-        g._metrics_excluded = False  # noqa: SLF001
+        g._metrics_excluded = False
         try:
             HTTP_REQUEST_IN_PROGRESS.labels(
                 service=resolved_service_name,
@@ -530,7 +531,7 @@ def register_custom_metric(
 
     resolved_labels: list[str] = labelnames if labelnames is not None else []
 
-    _METRIC_CONSTRUCTORS: dict[str, type] = {
+    metric_constructors: dict[str, type] = {
         "counter": Counter,
         "histogram": Histogram,
         "gauge": Gauge,
@@ -539,9 +540,9 @@ def register_custom_metric(
 
     normalised_type: str = metric_type.strip().lower()
 
-    constructor = _METRIC_CONSTRUCTORS.get(normalised_type)
+    constructor = metric_constructors.get(normalised_type)
     if constructor is None:
-        supported = ", ".join(sorted(_METRIC_CONSTRUCTORS.keys()))
+        supported = ", ".join(sorted(metric_constructors.keys()))
         raise ValueError(
             f"Unknown metric_type '{metric_type}'. "
             f"Supported types: {supported}."

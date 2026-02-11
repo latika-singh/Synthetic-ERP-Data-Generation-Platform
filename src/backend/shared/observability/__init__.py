@@ -74,22 +74,22 @@ try:
 
     __all__.extend(
         [
-            "setup_metrics",
-            "metrics_blueprint",
-            "register_custom_metric",
+            "ACTIVE_CONNECTIONS",
+            "COMPLIANCE_CHECK_DURATION",
+            "ERROR_COUNTER",
+            "GENERATION_JOB_DURATION",
+            "GENERATION_JOB_THROUGHPUT",
+            "HTTP_REQUEST_DURATION",
+            "HTTP_REQUEST_IN_PROGRESS",
+            "HTTP_REQUEST_TOTAL",
+            "QUALITY_SCORE",
             "get_metrics_registry",
-            "track_request_metrics",
+            "metrics_blueprint",
             "record_error",
             "record_generation_throughput",
-            "HTTP_REQUEST_DURATION",
-            "HTTP_REQUEST_TOTAL",
-            "HTTP_REQUEST_IN_PROGRESS",
-            "ACTIVE_CONNECTIONS",
-            "GENERATION_JOB_THROUGHPUT",
-            "GENERATION_JOB_DURATION",
-            "ERROR_COUNTER",
-            "QUALITY_SCORE",
-            "COMPLIANCE_CHECK_DURATION",
+            "register_custom_metric",
+            "setup_metrics",
+            "track_request_metrics",
         ]
     )
 except ImportError:
