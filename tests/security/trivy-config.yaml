@@ -1,0 +1,446 @@
+# ==============================================================================
+# Trivy Container Vulnerability Scanning Configuration
+# Synthetic ERP Data Generation Platform
+# ==============================================================================
+#
+# Purpose:
+#   Configures Trivy for automated container image security scanning across all
+#   7 containerized services in the platform. Integrated into the CI/CD pipeline
+#   via .github/workflows/security-scan.yml as an automated security gate that
+#   blocks deployments containing CRITICAL or HIGH severity vulnerabilities.
+#
+# Usage:
+#   trivy image --config tests/security/trivy-config.yaml <image_name>
+#
+# Compliance:
+#   - SOC 2 Type II (C-004): Comprehensive vulnerability scanning, secret
+#     detection, and audit trail via JSON output archival
+#   - Air-gapped readiness (C-003): Supports offline scanning with pre-populated
+#     vulnerability database cache (see Air-Gapped section below)
+#
+# ==============================================================================
+
+# ==============================================================================
+# TARGET DOCKER IMAGES
+# ==============================================================================
+# The following 7 container images must be scanned in the CI/CD pipeline.
+# Each image is scanned individually via the security-scan.yml workflow using:
+#   trivy image --config tests/security/trivy-config.yaml <image>
+#
+#   Backend Services (python:3.12-slim based):
+#     1. synthetic-erp-api-gateway:latest
+#        Dockerfile: infrastructure/docker/api-gateway.Dockerfile
+#        Port: 5000
+#        Description: Flask REST API Gateway with JWT auth and rate limiting
+#
+#     2. synthetic-erp-generation-engine:latest
+#        Dockerfile: infrastructure/docker/generation-engine.Dockerfile
+#        Port: 5001
+#        Description: Multi-method synthetic data generation (PyTorch, TensorFlow)
+#        Note: Largest image due to ML libraries; 10m timeout accommodates this
+#
+#     3. synthetic-erp-profiling-service:latest
+#        Dockerfile: infrastructure/docker/profiling-service.Dockerfile
+#        Port: 5002
+#        Description: ERP schema discovery and statistical profiling
+#
+#     4. synthetic-erp-quality-service:latest
+#        Dockerfile: infrastructure/docker/quality-service.Dockerfile
+#        Port: 5003
+#        Description: Data quality validation with Great Expectations
+#
+#     5. synthetic-erp-compliance-service:latest
+#        Dockerfile: infrastructure/docker/compliance-service.Dockerfile
+#        Port: 5004
+#        Description: PII detection and regulatory compliance (spaCy NLP)
+#
+#     6. synthetic-erp-provisioning-service:latest
+#        Dockerfile: infrastructure/docker/provisioning-service.Dockerfile
+#        Port: 5005
+#        Description: Database connectors and cloud storage export
+#
+#   Frontend Service (node:20-alpine -> nginx:1.25-alpine multi-stage):
+#     7. synthetic-erp-web-console:latest
+#        Dockerfile: infrastructure/docker/web-console.Dockerfile
+#        Port: 80
+#        Description: React 19.x Web Console served via NGINX
+#
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Global Settings
+# ------------------------------------------------------------------------------
+
+# Scan timeout per image (10 minutes)
+# Set higher than default 5m to accommodate large ML images such as
+# synthetic-erp-generation-engine which includes PyTorch, TensorFlow,
+# SciPy, NumPy, Pandas, and related ML/scientific computing libraries
+timeout: 10m0s
+
+# Vulnerability database cache directory for storing the Trivy DB locally
+# In CI, this path is used for caching between workflow runs
+# In air-gapped mode (C-003), pre-populate this directory with the DB
+cache:
+  dir: "/tmp/trivy-cache"
+
+# Suppress progress bar output for cleaner CI logs
+quiet: false
+
+# Debug mode disabled by default; enable for troubleshooting scan issues
+debug: false
+
+# Enforce secure TLS connections to vulnerability database sources
+insecure: false
+
+# ------------------------------------------------------------------------------
+# Report Output Configuration
+# ------------------------------------------------------------------------------
+
+# Primary output format: human-readable table for CI log inspection
+# The CI workflow generates multiple output formats via separate invocations:
+#   - table:  Human-readable output for CI log review (this config default)
+#   - json:   Programmatic processing and archival (SOC 2 C-004 audit trail)
+#   - sarif:  GitHub Security tab integration for vulnerability tracking
+format: "table"
+
+# Output file path for scan results
+# Left empty for table format (outputs to stdout for CI logs)
+# The CI workflow overrides this for json/sarif outputs:
+#   --output trivy-results-<service>.json   (JSON archival per SOC 2 C-004)
+#   --output trivy-results-<service>.sarif  (GitHub Security integration)
+output: ""
+
+# Report scope: report all matched results, not just summary
+report: "all"
+
+# Exit code when vulnerabilities matching severity filter are found
+# Set to 1 to fail the CI pipeline when CRITICAL or HIGH vulnerabilities
+# are detected. The CI workflow runs two scan passes per image:
+#   Pass 1: --severity CRITICAL,HIGH --exit-code 1  (blocking security gate)
+#   Pass 2: --severity MEDIUM --exit-code 0          (advisory report only)
+# This ensures CRITICAL/HIGH block deployment while MEDIUM is reported
+exit-code: 1
+
+# Path to the .trivyignore file for suppressing specific CVE findings
+# See "Ignored CVEs Policy" section below for suppression governance
+ignorefile: "tests/security/.trivyignore"
+
+# Only list vulnerable packages, not all installed packages
+list-all-pkgs: false
+
+# ------------------------------------------------------------------------------
+# Scan Configuration
+# ------------------------------------------------------------------------------
+scan:
+  # Security scanners to enable for container image analysis
+  # - vuln:     Detect known CVEs in OS packages and language-specific libraries
+  #             Scans both OS-level (apt/apk packages) and application-level
+  #             (pip/npm packages) for comprehensive coverage
+  # - secret:   Detect hardcoded secrets embedded in container image layers
+  #             Critical for SOC 2 Type II compliance (C-004)
+  # - misconfig: Detect Dockerfile and container configuration issues
+  #             Ensures all images follow security best practices
+  scanners:
+    - vuln
+    - secret
+    - misconfig
+
+  # Vulnerability severity levels to include in scan results
+  # CRITICAL: Remote code execution, privilege escalation, data breach risk
+  # HIGH:     Significant security impact requiring prompt remediation
+  # MEDIUM:   Moderate security impact, reported but does not block deployment
+  # Note: LOW and UNKNOWN are excluded to reduce noise in scan results
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM
+
+  # Detection priority mode for accurate vulnerability matching
+  # "precise" reduces false positives by using more accurate version matching
+  detection-priority: "precise"
+
+  # Offline scan mode (internet connectivity control)
+  # false: Download/update vulnerability database from internet (default for CI)
+  # true:  Use only locally cached database (required for air-gapped C-003)
+  # Override via CLI: --offline-scan or env var TRIVY_OFFLINE_SCAN=true
+  offline: false
+
+  # Directories to skip during container filesystem scanning
+  # Empty by default; add paths to exclude large non-relevant directories
+  skip-dirs: []
+
+  # Files to skip during scanning
+  skip-files: []
+
+  # Ensure Trivy version is current
+  skip-version-check: false
+
+# ------------------------------------------------------------------------------
+# Vulnerability Scanning Settings
+# ------------------------------------------------------------------------------
+vulnerability:
+  # Ignore unfixed vulnerabilities (no available patch/update)
+  # When true, only report CVEs that have a known fix available
+  # This reduces noise from vulnerabilities without actionable remediation
+  # while ensuring all fixable security issues are surfaced and addressed
+  ignore-unfixed: true
+
+  # Vulnerability severity source priority order
+  # "auto" selects the most appropriate source for each OS/distribution
+  # This ensures accurate severity ratings across different base images:
+  #   - python:3.12-slim (Debian-based) -> uses Debian security tracker
+  #   - node:20-alpine (Alpine-based) -> uses Alpine security DB
+  #   - nginx:1.25-alpine (Alpine-based) -> uses Alpine security DB
+  severity-source:
+    - auto
+
+  # Do not ignore any vulnerability status category by default
+  # All statuses (affected, under_investigation, etc.) are reported
+  ignore-status: []
+
+  # VEX (Vulnerability Exploitability eXchange) sources for enhanced assessment
+  # Enable to integrate vendor-provided exploitability data
+  vex: []
+
+# ------------------------------------------------------------------------------
+# Misconfiguration Scanning
+# ------------------------------------------------------------------------------
+# Detects Dockerfile misconfigurations that violate security best practices.
+# Key checks enforced for all platform container images:
+#
+#   DS001 / DS002 - USER instruction:
+#     All images must run as non-root user (USER appuser or equivalent)
+#     Prevents container escape and privilege escalation attacks
+#
+#   DS005 - ADD vs COPY:
+#     Use COPY instead of ADD for local file operations
+#     ADD has implicit URL fetch and tar extraction that can introduce risk
+#
+#   DS006 - Base image tag pinning:
+#     All FROM statements must use pinned versions, not :latest
+#     Expected: python:3.12-slim, node:20-alpine, nginx:1.25-alpine
+#     Prevents supply chain attacks via uncontrolled base image updates
+#
+#   DS011 - HEALTHCHECK instruction:
+#     All service images must include HEALTHCHECK for container orchestration
+#     Required for Kubernetes liveness/readiness probe integration
+#
+#   DS026 - Exposed ports:
+#     Only service-specific ports should be exposed:
+#       Backend services: 5000-5005 (one per service)
+#       Frontend (NGINX): 80
+#     No unnecessary port exposure allowed
+#
+misconfiguration:
+  # Report only failures (misconfigurations) for focused security review
+  # Set to true to also see passing checks for audit completeness
+  include-non-failures: false
+
+  # Enable Dockerfile-specific misconfiguration scanning
+  # Covers all DS-series checks from the Trivy misconfiguration database
+  scanners:
+    - dockerfile
+
+# ------------------------------------------------------------------------------
+# Secret Scanning Configuration
+# ------------------------------------------------------------------------------
+# Detects embedded secrets in container image layers and build configuration.
+# Critical for SOC 2 Type II compliance (C-004) to ensure no credentials
+# are baked into container images.
+#
+# Detection targets include:
+#   - Hardcoded passwords and passphrases
+#   - API keys and tokens (Auth0 client secrets, JWT signing keys)
+#   - AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+#   - Azure credentials (AZURE_CLIENT_SECRET, AZURE_TENANT_ID)
+#   - GCP service account keys (JSON key files)
+#   - Database connection strings (MongoDB URI, Redis URL, JDBC URLs)
+#   - Private keys (RSA, SSH, PGP/GPG)
+#   - Generic high-entropy strings that may be secrets
+#
+# All secrets must be injected at runtime via:
+#   - Kubernetes Secrets (encrypted at rest with AES-256)
+#   - HashiCorp Vault (preferred for production)
+#   - Environment variables (development only)
+#
+# Secrets must NEVER be embedded in Docker images or committed to source code.
+#
+secret:
+  # Path to custom secret scanning rules configuration
+  # Uses Trivy's comprehensive built-in rules by default
+  # Custom rules can be added for platform-specific secret patterns
+  config: "trivy-secret.yaml"
+
+# ------------------------------------------------------------------------------
+# Image Scanning Settings
+# ------------------------------------------------------------------------------
+image:
+  # Include packages from removed layers in vulnerability scan
+  # Disabled to focus on packages present in the final image layer
+  # Multi-stage builds (used by all platform Dockerfiles) automatically
+  # exclude build-stage dependencies from the final image
+  removed-pkgs: false
+
+  # Image sources to check when resolving image references
+  source:
+    - docker
+    - containerd
+    - podman
+    - remote
+
+# ==============================================================================
+# IGNORED CVEs POLICY
+# ==============================================================================
+#
+# Governance: CVE Suppression Rules
+# ----------------------------------
+# The .trivyignore file (tests/security/.trivyignore) controls which CVEs
+# are suppressed from scan results. Strict governance applies:
+#
+#   1. APPROVAL REQUIRED
+#      Every suppressed CVE must be approved by the security team lead.
+#      Approval must be documented in the security issue tracker.
+#
+#   2. WRITTEN JUSTIFICATION
+#      Each entry must include a clear justification explaining why the
+#      CVE does not apply or poses acceptable risk in this platform's
+#      deployment context.
+#
+#   3. MANDATORY EXPIRY DATE
+#      Every suppression must include a re-evaluation expiry date.
+#      Maximum suppression period: 90 days from approval date.
+#      Expired suppressions must be re-evaluated and re-approved or removed.
+#
+#   4. RISK ASSESSMENT
+#      A risk assessment must document:
+#        - Attack vector applicability to containerized deployment
+#        - Mitigating controls already in place (network policies, RBAC)
+#        - Potential impact if vulnerability is exploited
+#
+#   5. AUDIT TRAIL
+#      All suppression decisions are logged in the audit system per
+#      SOC 2 Type II (C-004) requirements with 7-year retention.
+#
+# .trivyignore File Format:
+# ----------------------------------
+# Located at: tests/security/.trivyignore
+# Each line contains a CVE ID. Comments document the justification.
+#
+#   # CVE-YYYY-NNNNN
+#   # Reason: <detailed justification>
+#   # Approved by: <security team member>
+#   # Approved on: YYYY-MM-DD
+#   # Expires: YYYY-MM-DD (max 90 days from approval)
+#   # Risk: <LOW|MEDIUM|ACCEPTED>
+#   # Ticket: SEC-NNNN
+#   CVE-YYYY-NNNNN
+#
+# Current Status:
+#   No CVEs are suppressed at project inception (clean baseline).
+#   The .trivyignore file should remain empty until a specific CVE
+#   requires suppression through the approved governance process.
+#
+# ==============================================================================
+
+# ==============================================================================
+# AIR-GAPPED DEPLOYMENT SUPPORT (C-003)
+# ==============================================================================
+#
+# For air-gapped environments without internet access, Trivy requires a
+# pre-populated vulnerability database. Follow these procedures:
+#
+# Step 1: Download the Trivy vulnerability database (internet-connected machine)
+#   trivy image --download-db-only --cache-dir /path/to/export/trivy-cache
+#   trivy image --download-java-db-only --cache-dir /path/to/export/trivy-cache
+#
+# Step 2: Transfer the cache to the air-gapped environment
+#   # Package the cache directory
+#   tar -czf trivy-cache.tar.gz -C /path/to/export trivy-cache
+#   # Transfer via approved secure media to air-gapped host
+#   scp trivy-cache.tar.gz air-gapped-host:/opt/security/
+#   # Extract on air-gapped host
+#   tar -xzf /opt/security/trivy-cache.tar.gz -C /opt/security/
+#
+# Step 3: Run Trivy scans in offline mode
+#   trivy image \
+#     --config tests/security/trivy-config.yaml \
+#     --cache-dir /opt/security/trivy-cache \
+#     --skip-db-update \
+#     --skip-java-db-update \
+#     --offline-scan \
+#     synthetic-erp-api-gateway:latest
+#
+# Step 4: Configure automated air-gapped CI/CD via environment variables
+#   export TRIVY_SKIP_DB_UPDATE=true
+#   export TRIVY_SKIP_JAVA_DB_UPDATE=true
+#   export TRIVY_OFFLINE_SCAN=true
+#   export TRIVY_CACHE_DIR=/opt/security/trivy-cache
+#   trivy image --config tests/security/trivy-config.yaml <image_name>
+#
+# Step 5: Mirror vulnerability database to private OCI registry
+#   # On internet-connected machine:
+#   oras pull ghcr.io/aquasecurity/trivy-db:2
+#   oras push <private-registry>/trivy-db:2 db.tar.gz
+#
+#   # On air-gapped machine, configure Trivy to use private registry:
+#   trivy image \
+#     --db-repository <private-registry>/trivy-db \
+#     --skip-db-update \
+#     <image_name>
+#
+# Step 6: Database refresh schedule
+#   The vulnerability database should be refreshed at minimum weekly
+#   (or per organizational security policy) to maintain current CVE
+#   coverage. Schedule automated database transfers as part of the
+#   air-gapped environment maintenance window.
+#
+# ==============================================================================
+
+# ==============================================================================
+# CI/CD INTEGRATION REFERENCE
+# ==============================================================================
+#
+# This configuration is consumed by: .github/workflows/security-scan.yml
+#
+# The workflow performs the following scan steps for EACH of the 7 images:
+#
+#   Step 1 - Blocking scan (CRITICAL + HIGH): Security gate
+#     trivy image \
+#       --config tests/security/trivy-config.yaml \
+#       --exit-code 1 \
+#       --severity CRITICAL,HIGH \
+#       --format table \
+#       synthetic-erp-<service>:latest
+#
+#   Step 2 - Advisory scan (MEDIUM): Non-blocking report
+#     trivy image \
+#       --config tests/security/trivy-config.yaml \
+#       --exit-code 0 \
+#       --severity MEDIUM \
+#       --format table \
+#       synthetic-erp-<service>:latest
+#
+#   Step 3 - JSON archival output (SOC 2 C-004 audit trail)
+#     trivy image \
+#       --config tests/security/trivy-config.yaml \
+#       --format json \
+#       --output trivy-results-<service>.json \
+#       synthetic-erp-<service>:latest
+#
+#   Step 4 - SARIF output (GitHub Security tab integration)
+#     trivy image \
+#       --config tests/security/trivy-config.yaml \
+#       --format sarif \
+#       --output trivy-results-<service>.sarif \
+#       synthetic-erp-<service>:latest
+#
+# CLI flag precedence (Trivy uses Viper configuration):
+#   1. CLI flags         (highest priority - overrides all)
+#   2. Environment vars  (TRIVY_* prefix)
+#   3. Config file       (this file: tests/security/trivy-config.yaml)
+#   4. Default values    (lowest priority)
+#
+# This means CLI flags in the workflow steps override values in this file,
+# allowing the same config to be used for both blocking and advisory scans.
+#
+# ==============================================================================
