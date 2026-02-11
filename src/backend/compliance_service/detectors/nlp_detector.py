@@ -39,13 +39,16 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import spacy
-from spacy.tokens import Doc, Span
 from pydantic import BaseModel, Field
 
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from spacy.tokens import Doc, Span
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +468,7 @@ class NLPDetector:
 
         for idx, doc in enumerate(docs):
             text_start: float = time.perf_counter()
-            original_text: Optional[str] = texts[idx] if idx < len(texts) else None
+            original_text: str | None = texts[idx] if idx < len(texts) else None
 
             # Handle empty or whitespace-only texts
             if not original_text or not original_text.strip():
@@ -549,61 +552,103 @@ class NLPDetector:
             A confidence score in the range ``[0.0, 1.0]``.
         """
         base_confidence: float = 0.80
-        boost: float = 0.0
         label: str = entity.label_
 
-        # ---- PERSON entities: check for preceding honorifics ----
+        # Delegate to label-specific confidence boosters via static lookup
+        label_boost_lookup: dict[str, float] = {
+            "DATE": 0.05,
+            "NORP": 0.03,
+        }
+        boost: float = label_boost_lookup.get(label, 0.0)
+
         if label == "PERSON":
-            token_start_idx: int = entity.start
-            if token_start_idx > 0:
-                preceding_text: str = entity.doc[token_start_idx - 1].text.lower()
-                if preceding_text in _HONORIFICS:
-                    boost = 0.15  # → 0.95
-
-            # Multi-token person names (e.g., "John Smith") are higher
-            # confidence than single-token matches.
-            if len(entity) >= 2 and boost == 0.0:
-                boost = 0.05  # → 0.85
-
-        # ---- GPE / LOC entities: check for address prepositions ----
+            boost = self._person_confidence_boost(entity)
         elif label in ("GPE", "LOC"):
-            token_start_idx = entity.start
-            if token_start_idx > 0:
-                preceding_text = entity.doc[token_start_idx - 1].text.lower()
-                if preceding_text in _ADDRESS_PREPOSITIONS:
-                    boost = 0.10  # → 0.90
-
-            # Two tokens back (e.g., "lives in New York")
-            if boost == 0.0 and token_start_idx > 1:
-                two_back_text: str = entity.doc[token_start_idx - 2].text.lower()
-                if two_back_text in _ADDRESS_PREPOSITIONS:
-                    boost = 0.08  # → 0.88
-
-        # ---- ORG entities: check for following corporate suffixes ----
+            boost = self._location_confidence_boost(entity)
         elif label == "ORG":
-            token_end_idx: int = entity.start + len(entity)
-            if token_end_idx < len(doc):
-                following_text: str = doc[token_end_idx].text.lower()
-                if following_text in _CORPORATE_SUFFIXES:
-                    boost = 0.12  # → 0.92
+            boost = self._org_confidence_boost(entity, doc)
 
-            # Check whether the entity's own last token is a suffix
-            if len(entity) > 0 and boost == 0.0:
-                last_token_text: str = entity[-1].text.lower()
-                if last_token_text in _CORPORATE_SUFFIXES:
-                    boost = 0.12  # → 0.92
+        # Cap at 1.0 and round to avoid floating-point precision artefacts
+        # (e.g., 0.80 + 0.15 yielding 0.9500000000000001).
+        return round(min(base_confidence + boost, 1.0), 4)
 
-        # ---- DATE entities ----
-        elif label == "DATE":
-            boost = 0.05  # → 0.85
+    def _person_confidence_boost(self, entity: Span) -> float:
+        """Compute confidence boost for PERSON entities.
 
-        # ---- NORP (demographic / nationality) entities ----
-        elif label == "NORP":
-            boost = 0.03  # → 0.83
+        Checks for preceding honorifics (Mr., Mrs., Dr.) which strongly
+        indicate a genuine person name, and for multi-token names which
+        are more reliable than single-token matches.
 
-        # Cap at 1.0 to stay within the valid confidence range
-        final_confidence: float = min(base_confidence + boost, 1.0)
-        return final_confidence
+        Args:
+            entity: The spaCy ``Span`` representing the PERSON entity.
+
+        Returns:
+            A confidence boost value to add to the base confidence.
+        """
+        token_start_idx: int = entity.start
+        if token_start_idx > 0:
+            preceding_text: str = entity.doc[token_start_idx - 1].text.lower()
+            if preceding_text in _HONORIFICS:
+                return 0.15  # → 0.95
+
+        # Multi-token person names (e.g., "John Smith") are higher
+        # confidence than single-token matches.
+        if len(entity) >= 2:
+            return 0.05  # → 0.85
+        return 0.0
+
+    def _location_confidence_boost(self, entity: Span) -> float:
+        """Compute confidence boost for GPE/LOC entities.
+
+        Checks for address-context prepositions (at, in, from, near) in the
+        one or two tokens preceding the entity, which indicate the entity
+        appears in a genuine geographic context.
+
+        Args:
+            entity: The spaCy ``Span`` representing the GPE/LOC entity.
+
+        Returns:
+            A confidence boost value to add to the base confidence.
+        """
+        token_start_idx: int = entity.start
+        if token_start_idx > 0:
+            preceding_text: str = entity.doc[token_start_idx - 1].text.lower()
+            if preceding_text in _ADDRESS_PREPOSITIONS:
+                return 0.10  # → 0.90
+
+        # Two tokens back (e.g., "lives in New York")
+        if token_start_idx > 1:
+            two_back_text: str = entity.doc[token_start_idx - 2].text.lower()
+            if two_back_text in _ADDRESS_PREPOSITIONS:
+                return 0.08  # → 0.88
+        return 0.0
+
+    def _org_confidence_boost(self, entity: Span, doc: Doc) -> float:
+        """Compute confidence boost for ORG entities.
+
+        Checks for corporate suffixes (Inc., Corp., Ltd., LLC) following the
+        entity or as the entity's own trailing token, which strongly indicate
+        a genuine organization name.
+
+        Args:
+            entity: The spaCy ``Span`` representing the ORG entity.
+            doc: The parent ``Doc`` for looking up tokens after the entity.
+
+        Returns:
+            A confidence boost value to add to the base confidence.
+        """
+        token_end_idx: int = entity.start + len(entity)
+        if token_end_idx < len(doc):
+            following_text: str = doc[token_end_idx].text.lower()
+            if following_text in _CORPORATE_SUFFIXES:
+                return 0.12  # → 0.92
+
+        # Check whether the entity's own last token is a suffix
+        if len(entity) > 0:
+            last_token_text: str = entity[-1].text.lower()
+            if last_token_text in _CORPORATE_SUFFIXES:
+                return 0.12  # → 0.92
+        return 0.0
 
     def _is_pii_entity(self, label: str) -> bool:
         """Check whether a spaCy entity label is classified as PII-relevant.
