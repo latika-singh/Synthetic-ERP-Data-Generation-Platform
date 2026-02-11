@@ -638,6 +638,15 @@ class TabularGAN:
         ):
             raise ValueError("real_data must be a non-empty numpy array")
 
+        # Validate shape before accessing shape[1] for logging
+        if not isinstance(real_data, np.ndarray):
+            real_data = np.asarray(real_data)
+        if real_data.ndim != 2 or real_data.shape[0] < 1 or real_data.shape[1] < 1:
+            raise ValueError(
+                f"real_data must be a 2-D array with ≥1 row and ≥1 column, "
+                f"got shape {real_data.shape}"
+            )
+
         self._logger.info(
             "gan_training_started",
             num_samples=real_data.shape[0],
