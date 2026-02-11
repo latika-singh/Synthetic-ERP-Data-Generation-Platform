@@ -38,16 +38,20 @@ Usage::
     # In a service's create_app():
     from shared.middleware.health_check import init_health_checks
 
+
     def create_app() -> Flask:
         app = Flask(__name__)
         init_health_checks(app)
         return app
 
+
     # Registering a custom readiness check:
     from shared.middleware.health_check import register_health_check
 
+
     def check_ml_model() -> dict:
         return {"status": "healthy", "latency_ms": 0.5, "model": "gan-v2"}
+
 
     register_health_check("ml_model", check_ml_model)
 """
@@ -131,16 +135,13 @@ def register_health_check(name: str, check_fn: Callable[[], dict[str, Any]]) -> 
                 "latency_ms": (time.time() - start) * 1000,
             }
 
+
         register_health_check("sap_connector", check_sap_connector)
     """
     if not isinstance(name, str) or not name.strip():
-        raise ValueError(
-            f"Health check name must be a non-empty string, got: {name!r}"
-        )
+        raise ValueError(f"Health check name must be a non-empty string, got: {name!r}")
     if not callable(check_fn):
-        raise TypeError(
-            f"Health check function must be callable, got: {type(check_fn).__name__}"
-        )
+        raise TypeError(f"Health check function must be callable, got: {type(check_fn).__name__}")
 
     _custom_checks.append((name.strip(), check_fn))
     logger.info(
@@ -161,6 +162,7 @@ def clear_health_checks() -> None:
 
         # In a pytest fixture
         from shared.middleware.health_check import clear_health_checks
+
 
         @pytest.fixture(autouse=True)
         def reset_health_checks():
@@ -199,10 +201,7 @@ def liveness() -> tuple:
 
     Response JSON::
 
-        {
-            "status": "healthy",
-            "service": "<SERVICE_NAME from app config>"
-        }
+        {"status": "healthy", "service": "<SERVICE_NAME from app config>"}
     """
     service_name: str = current_app.config.get("SERVICE_NAME", "unknown")
     return jsonify({"status": "healthy", "service": service_name}), 200

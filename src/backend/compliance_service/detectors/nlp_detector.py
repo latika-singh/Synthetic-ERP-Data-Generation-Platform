@@ -25,14 +25,16 @@ Usage::
 
     detector = NLPDetector()
     result = detector.detect("John Smith lives in New York and works at Acme Corp.")
-    print(result.has_pii)       # True
+    print(result.has_pii)  # True
     print(result.entity_count)  # 3
 
     # Batch processing for dataset columns
-    results = detector.detect_batch([
-        "Jane Doe visited Paris.",
-        "No PII in this text.",
-    ])
+    results = detector.detect_batch(
+        [
+            "Jane Doe visited Paris.",
+            "No PII in this text.",
+        ]
+    )
 """
 
 from __future__ import annotations
@@ -193,21 +195,59 @@ class _DetectionContext:
 # and immutability guarantees.
 # ---------------------------------------------------------------------------
 
-_HONORIFICS: frozenset[str] = frozenset({
-    "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "dr", "dr.",
-    "prof", "prof.", "sir", "dame", "lord", "lady", "rev", "rev.",
-})
+_HONORIFICS: frozenset[str] = frozenset(
+    {
+        "mr",
+        "mr.",
+        "mrs",
+        "mrs.",
+        "ms",
+        "ms.",
+        "dr",
+        "dr.",
+        "prof",
+        "prof.",
+        "sir",
+        "dame",
+        "lord",
+        "lady",
+        "rev",
+        "rev.",
+    }
+)
 """Honorific tokens that precede person names and boost PERSON confidence."""
 
-_ADDRESS_PREPOSITIONS: frozenset[str] = frozenset({
-    "at", "in", "from", "near", "to", "of", "on",
-})
+_ADDRESS_PREPOSITIONS: frozenset[str] = frozenset(
+    {
+        "at",
+        "in",
+        "from",
+        "near",
+        "to",
+        "of",
+        "on",
+    }
+)
 """Prepositions that indicate address/location context for GPE/LOC entities."""
 
-_CORPORATE_SUFFIXES: frozenset[str] = frozenset({
-    "inc", "inc.", "corp", "corp.", "ltd", "ltd.", "llc", "llp",
-    "gmbh", "co", "co.", "plc", "ag", "sa",
-})
+_CORPORATE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        "inc",
+        "inc.",
+        "corp",
+        "corp.",
+        "ltd",
+        "ltd.",
+        "llc",
+        "llp",
+        "gmbh",
+        "co",
+        "co.",
+        "plc",
+        "ag",
+        "sa",
+    }
+)
 """Corporate suffix tokens that boost ORG entity confidence."""
 
 
@@ -340,9 +380,7 @@ class NLPDetector:
             ) from exc
 
         # Log successful model load with pipeline component info
-        pipeline_components: list[str] = [
-            name for name, _component in self._nlp.pipeline
-        ]
+        pipeline_components: list[str] = [name for name, _component in self._nlp.pipeline]
         self._logger.info(
             "spacy_model_loaded",
             model_name=model_name,
@@ -373,9 +411,7 @@ class NLPDetector:
         Example::
 
             detector = NLPDetector()
-            result = detector.detect(
-                "Dr. Jane Smith from Microsoft Corp. visited London."
-            )
+            result = detector.detect("Dr. Jane Smith from Microsoft Corp. visited London.")
             assert result.has_pii is True
             assert result.entity_count >= 2
             print(f"Processing took {result.processing_time_ms:.1f}ms")
@@ -441,11 +477,13 @@ class NLPDetector:
         Example::
 
             detector = NLPDetector()
-            results = detector.detect_batch([
-                "John Doe works at IBM.",
-                "The weather is nice today.",
-                "Mary Johnson lives in Chicago.",
-            ])
+            results = detector.detect_batch(
+                [
+                    "John Doe works at IBM.",
+                    "The weather is nice today.",
+                    "Mary Johnson lives in Chicago.",
+                ]
+            )
             assert len(results) == 3
             assert results[0].has_pii is True
             assert results[1].has_pii is False
@@ -472,9 +510,7 @@ class NLPDetector:
 
             # Handle empty or whitespace-only texts
             if not original_text or not original_text.strip():
-                text_elapsed_ms: float = (
-                    (time.perf_counter() - text_start) * 1000.0
-                )
+                text_elapsed_ms: float = (time.perf_counter() - text_start) * 1000.0
                 results.append(
                     NLPDetectionResult(
                         entities=[],
@@ -488,9 +524,7 @@ class NLPDetector:
 
             # Build context and extract entities
             context: _DetectionContext = self._build_detection_context(doc)
-            detected_entities: list[NLPEntity] = self._extract_entities(
-                doc, context
-            )
+            detected_entities: list[NLPEntity] = self._extract_entities(doc, context)
 
             text_elapsed_ms = (time.perf_counter() - text_start) * 1000.0
             results.append(

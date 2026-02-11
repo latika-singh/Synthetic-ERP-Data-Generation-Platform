@@ -53,17 +53,20 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
-from pymongo.collection import Collection
 from pymongo.errors import PyMongoError
 
 from shared.database.mongodb import get_mongo_db
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from pymongo.collection import Collection
 
 
 # ---------------------------------------------------------------------------
@@ -83,22 +86,22 @@ class AuditEventType(Enum):
         assert event.value == "scan_initiated"
     """
 
-    SCAN_INITIATED: str = "scan_initiated"
-    SCAN_COMPLETED: str = "scan_completed"
-    PII_DETECTED: str = "pii_detected"
-    PII_CHECK_PASSED: str = "pii_check_passed"
-    REGULATION_CHECK_STARTED: str = "regulation_check_started"
-    REGULATION_CHECK_COMPLETED: str = "regulation_check_completed"
-    REGULATION_VIOLATION_FOUND: str = "regulation_violation_found"
-    CERTIFICATION_ISSUED: str = "certification_issued"
-    CERTIFICATION_FAILED: str = "certification_failed"
-    CERTIFICATE_RELEASED: str = "certificate_released"
-    CERTIFICATE_REVOKED: str = "certificate_revoked"
-    STATE_TRANSITION: str = "state_transition"
-    ACCESS_DENIED: str = "access_denied"
-    EXPORT_INITIATED: str = "export_initiated"
-    EXPORT_COMPLETED: str = "export_completed"
-    CONFIG_CHANGED: str = "config_changed"
+    SCAN_INITIATED = "scan_initiated"
+    SCAN_COMPLETED = "scan_completed"
+    PII_DETECTED = "pii_detected"
+    PII_CHECK_PASSED = "pii_check_passed"
+    REGULATION_CHECK_STARTED = "regulation_check_started"
+    REGULATION_CHECK_COMPLETED = "regulation_check_completed"
+    REGULATION_VIOLATION_FOUND = "regulation_violation_found"
+    CERTIFICATION_ISSUED = "certification_issued"
+    CERTIFICATION_FAILED = "certification_failed"
+    CERTIFICATE_RELEASED = "certificate_released"
+    CERTIFICATE_REVOKED = "certificate_revoked"
+    STATE_TRANSITION = "state_transition"
+    ACCESS_DENIED = "access_denied"
+    EXPORT_INITIATED = "export_initiated"
+    EXPORT_COMPLETED = "export_completed"
+    CONFIG_CHANGED = "config_changed"
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +152,7 @@ class AuditEntry(BaseModel):
         description="Classification of the compliance event.",
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp of when the event occurred.",
     )
     tenant_id: str = Field(
@@ -160,23 +163,23 @@ class AuditEntry(BaseModel):
         ...,
         description="Identity of the user who performed the action.",
     )
-    dataset_id: Optional[str] = Field(
+    dataset_id: str | None = Field(
         default=None,
         description="Associated dataset identifier.",
     )
-    certificate_id: Optional[str] = Field(
+    certificate_id: str | None = Field(
         default=None,
         description="Associated compliance certificate identifier.",
     )
-    correlation_id: Optional[str] = Field(
+    correlation_id: str | None = Field(
         default=None,
         description="Request-scoped correlation ID for distributed tracing.",
     )
-    details: Dict[str, Any] = Field(
+    details: dict[str, Any] = Field(
         default_factory=dict,
         description="Event-specific metadata.",
     )
-    previous_entry_hash: Optional[str] = Field(
+    previous_entry_hash: str | None = Field(
         default=None,
         description="SHA-256 hash of the preceding entry in this tenant's chain.",
     )
@@ -184,11 +187,11 @@ class AuditEntry(BaseModel):
         default="",
         description="SHA-256 tamper-evident checksum of this entry.",
     )
-    ip_address: Optional[str] = Field(
+    ip_address: str | None = Field(
         default=None,
         description="Client IP address captured at the API gateway.",
     )
-    user_agent: Optional[str] = Field(
+    user_agent: str | None = Field(
         default=None,
         description="Client User-Agent header.",
     )
@@ -231,13 +234,13 @@ class AuditQueryParams(BaseModel):
     """
 
     tenant_id: str = Field(..., description="Required tenant identifier.")
-    dataset_id: Optional[str] = Field(default=None, description="Filter by dataset.")
-    certificate_id: Optional[str] = Field(default=None, description="Filter by certificate.")
-    event_type: Optional[AuditEventType] = Field(default=None, description="Single event-type filter.")
-    event_types: Optional[List[AuditEventType]] = Field(default=None, description="Multiple event-type filter (OR).")
-    user_id: Optional[str] = Field(default=None, description="Filter by user.")
-    start_date: Optional[datetime] = Field(default=None, description="Inclusive lower bound on timestamp.")
-    end_date: Optional[datetime] = Field(default=None, description="Inclusive upper bound on timestamp.")
+    dataset_id: str | None = Field(default=None, description="Filter by dataset.")
+    certificate_id: str | None = Field(default=None, description="Filter by certificate.")
+    event_type: AuditEventType | None = Field(default=None, description="Single event-type filter.")
+    event_types: list[AuditEventType] | None = Field(default=None, description="Multiple event-type filter (OR).")
+    user_id: str | None = Field(default=None, description="Filter by user.")
+    start_date: datetime | None = Field(default=None, description="Inclusive lower bound on timestamp.")
+    end_date: datetime | None = Field(default=None, description="Inclusive upper bound on timestamp.")
     page: int = Field(default=1, ge=1, description="1-based page number.")
     page_size: int = Field(default=50, ge=1, le=500, description="Entries per page (max 500).")
 
@@ -263,7 +266,7 @@ class AuditQueryResult(BaseModel):
             params.page += 1
     """
 
-    entries: List[AuditEntry] = Field(default_factory=list, description="Audit entries for the current page.")
+    entries: list[AuditEntry] = Field(default_factory=list, description="Audit entries for the current page.")
     total_count: int = Field(default=0, description="Total matching entries across all pages.")
     page: int = Field(default=1, description="Current 1-based page number.")
     page_size: int = Field(default=50, description="Entries per page.")
@@ -373,7 +376,7 @@ class AuditLogger:
             if collection is None:
                 return
 
-            indexes: List[IndexModel] = [
+            indexes: list[IndexModel] = [
                 # TTL index — 7-year retention enforcement
                 IndexModel(
                     [("timestamp", ASCENDING)],
@@ -434,7 +437,7 @@ class AuditLogger:
         dataset_id: str | None = None,
         certificate_id: str | None = None,
         correlation_id: str | None = None,
-        details: Dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> AuditEntry:
@@ -482,9 +485,12 @@ class AuditLogger:
         if previous_hash is None:
             previous_hash = self._get_latest_entry_hash(tenant_id)
 
-        # Build the audit entry
+        # Build the audit entry — timestamp is normalised to millisecond
+        # precision so that the SHA-256 hash survives a MongoDB round-trip.
+        normalised_ts = self._normalize_timestamp(datetime.now(UTC))
         entry = AuditEntry(
             event_type=event_type,
+            timestamp=normalised_ts,
             tenant_id=tenant_id,
             user_id=user_id,
             dataset_id=dataset_id,
@@ -564,7 +570,7 @@ class AuditLogger:
                 )
             )
         """
-        query_filter: Dict[str, Any] = {"tenant_id": params.tenant_id}
+        query_filter: dict[str, Any] = {"tenant_id": params.tenant_id}
 
         # Optional filters
         if params.dataset_id is not None:
@@ -578,7 +584,7 @@ class AuditLogger:
             query_filter["event_type"] = event_value
 
         if params.event_types is not None and len(params.event_types) > 0:
-            resolved_types: List[str] = []
+            resolved_types: list[str] = []
             for et in params.event_types:
                 resolved_types.append(et if isinstance(et, str) else et.value)
             query_filter["event_type"] = {"$in": resolved_types}
@@ -588,7 +594,7 @@ class AuditLogger:
 
         # Date range — inclusive bounds
         if params.start_date is not None or params.end_date is not None:
-            ts_filter: Dict[str, Any] = {}
+            ts_filter: dict[str, Any] = {}
             if params.start_date is not None:
                 ts_filter["$gte"] = params.start_date
             if params.end_date is not None:
@@ -601,19 +607,11 @@ class AuditLogger:
             total_count: int = collection.count_documents(query_filter)
 
             skip = (params.page - 1) * params.page_size
-            cursor = (
-                collection.find(query_filter)
-                .sort("timestamp", DESCENDING)
-                .skip(skip)
-                .limit(params.page_size)
-            )
+            cursor = collection.find(query_filter).sort("timestamp", DESCENDING).skip(skip).limit(params.page_size)
 
-            entries: List[AuditEntry] = []
+            entries: list[AuditEntry] = []
             for doc in cursor:
-                doc.pop("_id", None)
-                # Reconstruct AuditEventType from stored string value
-                if "event_type" in doc and isinstance(doc["event_type"], str):
-                    doc["event_type"] = AuditEventType(doc["event_type"])
+                self._normalize_document(doc)
                 entries.append(AuditEntry(**doc))
 
             has_next = (skip + params.page_size) < total_count
@@ -637,7 +635,7 @@ class AuditLogger:
         self,
         dataset_id: str,
         tenant_id: str,
-    ) -> List[AuditEntry]:
+    ) -> list[AuditEntry]:
         """Retrieve the complete audit trail for a specific dataset.
 
         Returns entries in chronological order (oldest first) so that the
@@ -657,18 +655,16 @@ class AuditLogger:
                 print(f"{entry.timestamp}: {entry.event_type}")
         """
         collection = self._get_collection()
-        query_filter: Dict[str, Any] = {
+        query_filter: dict[str, Any] = {
             "tenant_id": tenant_id,
             "dataset_id": dataset_id,
         }
 
         try:
             cursor = collection.find(query_filter).sort("timestamp", ASCENDING)
-            entries: List[AuditEntry] = []
+            entries: list[AuditEntry] = []
             for doc in cursor:
-                doc.pop("_id", None)
-                if "event_type" in doc and isinstance(doc["event_type"], str):
-                    doc["event_type"] = AuditEventType(doc["event_type"])
+                self._normalize_document(doc)
                 entries.append(AuditEntry(**doc))
             return entries
         except PyMongoError as exc:
@@ -684,7 +680,7 @@ class AuditLogger:
         self,
         certificate_id: str,
         tenant_id: str,
-    ) -> List[AuditEntry]:
+    ) -> list[AuditEntry]:
         """Retrieve the complete audit trail for a specific compliance certificate.
 
         Returns entries in chronological order (oldest first) so that the
@@ -705,18 +701,16 @@ class AuditLogger:
                 print(f"{entry.timestamp}: {entry.event_type}")
         """
         collection = self._get_collection()
-        query_filter: Dict[str, Any] = {
+        query_filter: dict[str, Any] = {
             "tenant_id": tenant_id,
             "certificate_id": certificate_id,
         }
 
         try:
             cursor = collection.find(query_filter).sort("timestamp", ASCENDING)
-            entries: List[AuditEntry] = []
+            entries: list[AuditEntry] = []
             for doc in cursor:
-                doc.pop("_id", None)
-                if "event_type" in doc and isinstance(doc["event_type"], str):
-                    doc["event_type"] = AuditEventType(doc["event_type"])
+                self._normalize_document(doc)
                 entries.append(AuditEntry(**doc))
             return entries
         except PyMongoError as exc:
@@ -737,7 +731,7 @@ class AuditLogger:
         tenant_id: str,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Verify the tamper-evidence of the hash chain for a tenant.
 
         Retrieves all entries in chronological order (optionally bounded by
@@ -776,21 +770,21 @@ class AuditLogger:
                 alert_security_team(result)
         """
         collection = self._get_collection()
-        query_filter: Dict[str, Any] = {"tenant_id": tenant_id}
+        query_filter: dict[str, Any] = {"tenant_id": tenant_id}
 
         if start_date is not None or end_date is not None:
-            ts_filter: Dict[str, Any] = {}
+            ts_filter: dict[str, Any] = {}
             if start_date is not None:
                 ts_filter["$gte"] = start_date
             if end_date is not None:
                 ts_filter["$lte"] = end_date
             query_filter["timestamp"] = ts_filter
 
-        verification_result: Dict[str, Any] = {
+        verification_result: dict[str, Any] = {
             "is_valid": True,
             "entries_checked": 0,
             "first_invalid_entry": None,
-            "verification_timestamp": datetime.now(timezone.utc),
+            "verification_timestamp": datetime.now(UTC),
             "error_details": None,
         }
 
@@ -801,23 +795,19 @@ class AuditLogger:
             entries_checked: int = 0
 
             for doc in cursor:
-                doc.pop("_id", None)
-                if "event_type" in doc and isinstance(doc["event_type"], str):
-                    doc["event_type"] = AuditEventType(doc["event_type"])
-
+                self._normalize_document(doc)
                 entry = AuditEntry(**doc)
                 entries_checked += 1
 
                 # Verify 1: previous_entry_hash links to predecessor
-                if previous_hash is not None:
-                    if entry.previous_entry_hash != previous_hash:
-                        verification_result["is_valid"] = False
-                        verification_result["first_invalid_entry"] = entry.entry_id
-                        verification_result["error_details"] = (
-                            f"Entry {entry.entry_id}: previous_entry_hash mismatch. "
-                            f"Expected '{previous_hash}', found '{entry.previous_entry_hash}'."
-                        )
-                        break
+                if previous_hash is not None and entry.previous_entry_hash != previous_hash:
+                    verification_result["is_valid"] = False
+                    verification_result["first_invalid_entry"] = entry.entry_id
+                    verification_result["error_details"] = (
+                        f"Entry {entry.entry_id}: previous_entry_hash mismatch. "
+                        f"Expected '{previous_hash}', found '{entry.previous_entry_hash}'."
+                    )
+                    break
 
                 # Verify 2: recomputed entry_hash matches stored hash
                 expected_hash = self._compute_entry_hash(entry)
@@ -856,6 +846,59 @@ class AuditLogger:
     # Private helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_timestamp(ts: datetime) -> datetime:
+        """Normalise a timestamp to millisecond precision with UTC timezone.
+
+        MongoDB BSON datetimes only support millisecond precision and may
+        drop timezone information on round-trip.  To guarantee that the
+        SHA-256 hash computed *before* storage matches the hash recomputed
+        *after* retrieval, every timestamp used in hash computation must be
+        normalised to:
+
+        1. **Millisecond precision** — microsecond digits beyond the first
+           three are truncated (not rounded) to match BSON behaviour.
+        2. **Explicit UTC timezone** — a timezone-naïve datetime returned by
+           PyMongo is re-tagged as UTC.
+
+        Args:
+            ts: The timestamp to normalise.
+
+        Returns:
+            A timezone-aware, millisecond-precision ``datetime`` in UTC.
+        """
+        # Ensure UTC timezone
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        # Truncate to millisecond precision (BSON datetime resolution)
+        truncated_us = (ts.microsecond // 1000) * 1000
+        return ts.replace(microsecond=truncated_us)
+
+    @staticmethod
+    def _normalize_document(doc: dict[str, Any]) -> dict[str, Any]:
+        """Normalise a raw MongoDB document for ``AuditEntry`` reconstruction.
+
+        Handles two MongoDB round-trip artefacts:
+
+        * ``event_type`` is stored as a plain string — convert back to the
+          ``AuditEventType`` enum so that Pydantic can accept it.
+        * ``timestamp`` may have lost timezone info and/or microsecond
+          precision — restore UTC and truncate to milliseconds.
+        * ``_id`` is an ObjectId added by MongoDB — remove it.
+
+        Args:
+            doc: A raw document from ``collection.find()``.
+
+        Returns:
+            A cleaned dictionary suitable for ``AuditEntry(**doc)``.
+        """
+        doc.pop("_id", None)
+        if "event_type" in doc and isinstance(doc["event_type"], str):
+            doc["event_type"] = AuditEventType(doc["event_type"])
+        if "timestamp" in doc and isinstance(doc["timestamp"], datetime):
+            doc["timestamp"] = AuditLogger._normalize_timestamp(doc["timestamp"])
+        return doc
+
     def _compute_entry_hash(self, entry: AuditEntry) -> str:
         """Compute the SHA-256 tamper-evident checksum for an audit entry.
 
@@ -864,8 +907,13 @@ class AuditLogger:
         ``previous_entry_hash`` field *is* included so that the hash chains
         consecutive entries together.
 
-        Determinism is achieved by sorting dictionary keys and serialising
-        datetimes as ISO-8601 strings.
+        Determinism is achieved by:
+
+        * Sorting dictionary keys.
+        * Normalising the timestamp to millisecond-precision UTC before
+          converting to ISO-8601 — this ensures the hash is invariant
+          across MongoDB round-trips (which truncate to milliseconds and
+          may strip timezone information).
 
         Args:
             entry: The audit entry to hash.
@@ -873,11 +921,15 @@ class AuditLogger:
         Returns:
             A lowercase hexadecimal SHA-256 digest string.
         """
+        # Normalise timestamp for MongoDB round-trip stability
+        ts = entry.timestamp if isinstance(entry.timestamp, datetime) else datetime.fromisoformat(str(entry.timestamp))
+        normalised_ts = self._normalize_timestamp(ts)
+
         # Build a canonical dictionary omitting the entry_hash field
-        hash_payload: Dict[str, Any] = {
+        hash_payload: dict[str, Any] = {
             "entry_id": entry.entry_id,
-            "event_type": entry.event_type if isinstance(entry.event_type, str) else entry.event_type,
-            "timestamp": entry.timestamp.isoformat() if isinstance(entry.timestamp, datetime) else str(entry.timestamp),
+            "event_type": entry.event_type,
+            "timestamp": normalised_ts.isoformat(),
             "tenant_id": entry.tenant_id,
             "user_id": entry.user_id,
             "dataset_id": entry.dataset_id,
@@ -894,7 +946,7 @@ class AuditLogger:
         canonical_json = json.dumps(hash_payload, sort_keys=True, default=str)
         return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
-    def _get_latest_entry_hash(self, tenant_id: str) -> Optional[str]:
+    def _get_latest_entry_hash(self, tenant_id: str) -> str | None:
         """Query MongoDB for the hash of the most recent entry for a tenant.
 
         This is used to seed the hash chain when ``_last_entry_hash`` is not

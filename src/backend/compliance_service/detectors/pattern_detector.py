@@ -320,16 +320,10 @@ class PatternDetector:
             self._patterns.extend(custom_patterns)
 
         # Pre-compile enabled patterns for scan-time performance.
-        self._compiled: dict[str, re.Pattern[str]] = {
-            p.name: re.compile(p.regex)
-            for p in self._patterns
-            if p.enabled
-        }
+        self._compiled: dict[str, re.Pattern[str]] = {p.name: re.compile(p.regex) for p in self._patterns if p.enabled}
 
         # Build a fast name → pattern lookup.
-        self._pattern_map: dict[str, PIIPattern] = {
-            p.name: p for p in self._patterns
-        }
+        self._pattern_map: dict[str, PIIPattern] = {p.name: p for p in self._patterns}
 
         self._logger.info(
             "pattern_detector_initialized",
@@ -456,11 +450,13 @@ class PatternDetector:
         Example::
 
             detector = PatternDetector()
-            results = detector.detect_batch([
-                "SSN: 123-45-6789",
-                "No PII here",
-                "Card: 4111 1111 1111 1111",
-            ])
+            results = detector.detect_batch(
+                [
+                    "SSN: 123-45-6789",
+                    "No PII here",
+                    "Card: 4111 1111 1111 1111",
+                ]
+            )
             for idx, r in enumerate(results):
                 print(f"Text {idx}: {r.match_count} matches")
         """
@@ -503,18 +499,19 @@ class PatternDetector:
         Example::
 
             detector = PatternDetector()
-            detector.add_pattern(PIIPattern(
-                name="PASSPORT_US",
-                regex=r"\\b[A-Z]\\d{8}\\b",
-                pii_type="PASSPORT",
-                confidence=0.85,
-                description="US passport number",
-            ))
+            detector.add_pattern(
+                PIIPattern(
+                    name="PASSPORT_US",
+                    regex=r"\\b[A-Z]\\d{8}\\b",
+                    pii_type="PASSPORT",
+                    confidence=0.85,
+                    description="US passport number",
+                )
+            )
         """
         if pattern.name in self._pattern_map:
             raise ValueError(
-                f"Pattern '{pattern.name}' already exists. "
-                "Remove it first or use a different name.",
+                f"Pattern '{pattern.name}' already exists. Remove it first or use a different name.",
             )
 
         self._patterns.append(pattern)

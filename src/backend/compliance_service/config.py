@@ -106,13 +106,9 @@ class BaseComplianceConfig(BaseConfig):
 
     SPACY_MODEL_NAME: str = os.environ.get("SPACY_MODEL_NAME", "en_core_web_sm")
 
-    PII_CONFIDENCE_THRESHOLD: float = float(
-        os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.85")
-    )
+    PII_CONFIDENCE_THRESHOLD: float = float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.85"))
 
-    PII_SCAN_BATCH_SIZE: int = int(
-        os.environ.get("PII_SCAN_BATCH_SIZE", "1000")
-    )
+    PII_SCAN_BATCH_SIZE: int = int(os.environ.get("PII_SCAN_BATCH_SIZE", "1000"))
 
     PII_PATTERNS: dict[str, str] = {
         "SSN": r"\b\d{3}-\d{2}-\d{4}\b",
@@ -135,9 +131,7 @@ class BaseComplianceConfig(BaseConfig):
 
     # -- Regulatory Framework Settings -----------------------------------------
 
-    ENABLED_REGULATIONS: list[str] = os.environ.get(
-        "ENABLED_REGULATIONS", "GDPR,HIPAA,CCPA"
-    ).split(",")
+    ENABLED_REGULATIONS: list[str] = os.environ.get("ENABLED_REGULATIONS", "GDPR,HIPAA,CCPA").split(",")
 
     GDPR_ENABLED: bool = "GDPR" in ENABLED_REGULATIONS
     HIPAA_ENABLED: bool = "HIPAA" in ENABLED_REGULATIONS
@@ -147,9 +141,7 @@ class BaseComplianceConfig(BaseConfig):
 
     CERTIFICATION_HASH_ALGORITHM: str = "sha256"
 
-    CERTIFICATION_SIGNING_KEY: str = os.environ.get(
-        "CERTIFICATION_SIGNING_KEY", ""
-    )
+    CERTIFICATION_SIGNING_KEY: str = os.environ.get("CERTIFICATION_SIGNING_KEY", "")
 
     COMPLIANCE_STATE_MACHINE_STATES: list[str] = [
         "Pending",
@@ -163,18 +155,14 @@ class BaseComplianceConfig(BaseConfig):
 
     AUDIT_LOG_COLLECTION: str = "audit_logs"
 
-    AUDIT_LOG_RETENTION_YEARS: int = int(
-        os.environ.get("AUDIT_LOG_RETENTION_YEARS", "7")
-    )
+    AUDIT_LOG_RETENTION_YEARS: int = int(os.environ.get("AUDIT_LOG_RETENTION_YEARS", "7"))
 
     AUDIT_LOG_RETENTION_SECONDS: int = AUDIT_LOG_RETENTION_YEARS * 365 * 24 * 3600
 
     # -- Sensitive keys extension ----------------------------------------------
     # Extend the parent set so that to_safe_dict() redacts compliance secrets.
 
-    _SENSITIVE_KEYS: frozenset[str] = BaseConfig._SENSITIVE_KEYS | frozenset(
-        {"CERTIFICATION_SIGNING_KEY"}
-    )
+    _SENSITIVE_KEYS: frozenset[str] = BaseConfig._SENSITIVE_KEYS | frozenset({"CERTIFICATION_SIGNING_KEY"})
 
     # -----------------------------------------------------------------------
     # Initialiser
@@ -199,9 +187,7 @@ class BaseComplianceConfig(BaseConfig):
 
         # -- PII Detection Settings -------------------------------------------
         self.SPACY_MODEL_NAME = os.environ.get("SPACY_MODEL_NAME", "en_core_web_sm")
-        self.PII_CONFIDENCE_THRESHOLD = float(
-            os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.85")
-        )
+        self.PII_CONFIDENCE_THRESHOLD = float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.85"))
         self.PII_SCAN_BATCH_SIZE = self._get_int_env("PII_SCAN_BATCH_SIZE", 1000)
 
         # PII regex patterns (immutable per deployment — not environment-driven)
@@ -226,18 +212,14 @@ class BaseComplianceConfig(BaseConfig):
         ]
 
         # -- Regulatory Framework Settings -------------------------------------
-        self.ENABLED_REGULATIONS = self._get_list_env(
-            "ENABLED_REGULATIONS", default=["GDPR", "HIPAA", "CCPA"]
-        )
+        self.ENABLED_REGULATIONS = self._get_list_env("ENABLED_REGULATIONS", default=["GDPR", "HIPAA", "CCPA"])
         self.GDPR_ENABLED: bool = "GDPR" in self.ENABLED_REGULATIONS
         self.HIPAA_ENABLED: bool = "HIPAA" in self.ENABLED_REGULATIONS
         self.CCPA_ENABLED: bool = "CCPA" in self.ENABLED_REGULATIONS
 
         # -- Certification Settings --------------------------------------------
         self.CERTIFICATION_HASH_ALGORITHM: str = "sha256"
-        self.CERTIFICATION_SIGNING_KEY = os.environ.get(
-            "CERTIFICATION_SIGNING_KEY", ""
-        )
+        self.CERTIFICATION_SIGNING_KEY = os.environ.get("CERTIFICATION_SIGNING_KEY", "")
         self.COMPLIANCE_STATE_MACHINE_STATES: list[str] = [
             "Pending",
             "Scanning",
@@ -248,13 +230,9 @@ class BaseComplianceConfig(BaseConfig):
 
         # -- Audit Logging Settings --------------------------------------------
         self.AUDIT_LOG_COLLECTION: str = "audit_logs"
-        self.AUDIT_LOG_RETENTION_YEARS = self._get_int_env(
-            "AUDIT_LOG_RETENTION_YEARS", 7
-        )
+        self.AUDIT_LOG_RETENTION_YEARS = self._get_int_env("AUDIT_LOG_RETENTION_YEARS", 7)
         # Pre-compute retention in seconds for MongoDB TTL index configuration
-        self.AUDIT_LOG_RETENTION_SECONDS: int = (
-            self.AUDIT_LOG_RETENTION_YEARS * 365 * 24 * 3600
-        )
+        self.AUDIT_LOG_RETENTION_SECONDS: int = self.AUDIT_LOG_RETENTION_YEARS * 365 * 24 * 3600
 
     # -----------------------------------------------------------------------
     # Validation (extends parent)
@@ -286,16 +264,12 @@ class BaseComplianceConfig(BaseConfig):
         # Confidence threshold must be a valid probability
         if not 0.0 <= self.PII_CONFIDENCE_THRESHOLD <= 1.0:
             raise ConfigurationError(
-                f"PII_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0, "
-                f"got {self.PII_CONFIDENCE_THRESHOLD}."
+                f"PII_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0, got {self.PII_CONFIDENCE_THRESHOLD}."
             )
 
         # Retention years must be positive
         if self.AUDIT_LOG_RETENTION_YEARS < 1:
-            raise ConfigurationError(
-                f"AUDIT_LOG_RETENTION_YEARS must be >= 1, "
-                f"got {self.AUDIT_LOG_RETENTION_YEARS}."
-            )
+            raise ConfigurationError(f"AUDIT_LOG_RETENTION_YEARS must be >= 1, got {self.AUDIT_LOG_RETENTION_YEARS}.")
 
 
 # ---------------------------------------------------------------------------
@@ -323,9 +297,7 @@ class DevelopmentConfig(BaseComplianceConfig):
 
         # Lower confidence threshold for development to surface borderline
         # PII detections that may need tuning.
-        self.PII_CONFIDENCE_THRESHOLD = float(
-            os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.7")
-        )
+        self.PII_CONFIDENCE_THRESHOLD = float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.7"))
 
     def validate(self) -> None:
         """Relaxed validation for the development environment.
@@ -337,8 +309,7 @@ class DevelopmentConfig(BaseComplianceConfig):
         # Validate value ranges without strict production key checks
         if not 0.0 <= self.PII_CONFIDENCE_THRESHOLD <= 1.0:
             raise ConfigurationError(
-                f"PII_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0, "
-                f"got {self.PII_CONFIDENCE_THRESHOLD}."
+                f"PII_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0, got {self.PII_CONFIDENCE_THRESHOLD}."
             )
 
 
@@ -360,9 +331,7 @@ class TestingConfig(BaseComplianceConfig):
         self.LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 
         # Isolated test database
-        self.MONGODB_URI = os.environ.get(
-            "MONGODB_URI", "mongodb://localhost:27017/test_compliance"
-        )
+        self.MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/test_compliance")
         self.MONGODB_DATABASE = os.environ.get("MONGODB_DATABASE", "test_compliance")
 
         # Use the smallest model for speed in CI/CD pipelines
@@ -371,9 +340,7 @@ class TestingConfig(BaseComplianceConfig):
         # Test-friendly secrets
         self.SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "test-compliance-secret")
         self.JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "test-jwt-secret")
-        self.CERTIFICATION_SIGNING_KEY = os.environ.get(
-            "CERTIFICATION_SIGNING_KEY", "test-signing-key"
-        )
+        self.CERTIFICATION_SIGNING_KEY = os.environ.get("CERTIFICATION_SIGNING_KEY", "test-signing-key")
 
         # Use separate Redis database index for test isolation
         self.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
@@ -408,9 +375,7 @@ class ProductionConfig(BaseComplianceConfig):
 
         # Strict PII confidence threshold for production — reduces false
         # negatives at the cost of marginally higher false positives.
-        self.PII_CONFIDENCE_THRESHOLD = float(
-            os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.90")
-        )
+        self.PII_CONFIDENCE_THRESHOLD = float(os.environ.get("PII_CONFIDENCE_THRESHOLD", "0.90"))
 
         # Increase connection pool for production workloads
         self.MONGODB_MAX_POOL_SIZE = self._get_int_env("MONGODB_MAX_POOL_SIZE", 200)

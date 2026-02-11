@@ -23,10 +23,12 @@ Usage::
     # In a service's create_app():
     from shared.observability.tracing import init_tracing
 
+
     def create_app() -> Flask:
         app = Flask(__name__)
         provider = init_tracing(app, service_name="api-gateway")
         return app
+
 
     # In business logic:
     from shared.observability.tracing import get_tracer, create_span
@@ -190,28 +192,19 @@ def init_tracing(
 
     # ---- 1. Guard against double initialisation ----------------------------
     if _initialized and _tracer_provider is not None:
-        logger.warning(
-            "Tracing already initialised for this process. "
-            "Returning existing TracerProvider."
-        )
+        logger.warning("Tracing already initialised for this process. Returning existing TracerProvider.")
         return _tracer_provider
 
     # ---- 2. Resolve configuration (12-factor app) --------------------------
     resolved_endpoint: str | None = (
-        exporter_endpoint
-        or os.environ.get("OTEL_EXPORTER_ENDPOINT")
-        or BaseConfig.OTEL_EXPORTER_ENDPOINT
-        or None
+        exporter_endpoint or os.environ.get("OTEL_EXPORTER_ENDPOINT") or BaseConfig.OTEL_EXPORTER_ENDPOINT or None
     )
     # Treat empty string as None (BaseConfig defaults to "")
     if resolved_endpoint is not None and resolved_endpoint.strip() == "":
         resolved_endpoint = None
 
     resolved_service_name: str = (
-        service_name
-        or os.environ.get("SERVICE_NAME")
-        or BaseConfig.SERVICE_NAME
-        or "unknown-service"
+        service_name or os.environ.get("SERVICE_NAME") or BaseConfig.SERVICE_NAME or "unknown-service"
     )
 
     flask_env: str = os.environ.get("FLASK_ENV", "development")
@@ -260,27 +253,21 @@ def init_tracing(
                 )
             except Exception as exc:
                 logger.error(
-                    "Failed to initialise OTLP span exporter at %s: %s. "
-                    "Falling back to console exporter.",
+                    "Failed to initialise OTLP span exporter at %s: %s. Falling back to console exporter.",
                     resolved_endpoint,
                     exc,
                 )
 
     # Console exporter for development / local debugging
     if enable_console_export or flask_env == "development":
-        console_processor: SimpleSpanProcessor = SimpleSpanProcessor(
-            ConsoleSpanExporter()
-        )
+        console_processor: SimpleSpanProcessor = SimpleSpanProcessor(ConsoleSpanExporter())
         provider.add_span_processor(console_processor)
         logger.info("Console span exporter enabled for local debugging.")
     elif not otlp_configured:
         # No OTLP and not in development — add console as safety-net fallback
         console_processor = SimpleSpanProcessor(ConsoleSpanExporter())
         provider.add_span_processor(console_processor)
-        logger.warning(
-            "No OTLP exporter configured and not in development mode. "
-            "Using console exporter as fallback."
-        )
+        logger.warning("No OTLP exporter configured and not in development mode. Using console exporter as fallback.")
 
     # ---- 6. Set the global TracerProvider ----------------------------------
     trace.set_tracer_provider(provider)
@@ -303,15 +290,12 @@ def init_tracing(
                 excluded_urls="health,ready,metrics",
                 tracer_provider=provider,
             )
-            logger.info(
-                "Flask application instrumented for automatic request tracing."
-            )
+            logger.info("Flask application instrumented for automatic request tracing.")
         except Exception as exc:
             logger.error("Failed to instrument Flask application: %s", exc)
     else:
         logger.warning(
-            "opentelemetry-instrumentation-flask is not installed. "
-            "Automatic Flask request tracing is disabled."
+            "opentelemetry-instrumentation-flask is not installed. Automatic Flask request tracing is disabled."
         )
 
     # ---- 9. Persist module-level state -------------------------------------
@@ -319,8 +303,7 @@ def init_tracing(
     _initialized = True
 
     logger.info(
-        "OpenTelemetry tracing initialised for service '%s' "
-        "(endpoint=%s, env=%s).",
+        "OpenTelemetry tracing initialised for service '%s' (endpoint=%s, env=%s).",
         resolved_service_name,
         resolved_endpoint or "none",
         flask_env,
@@ -557,19 +540,14 @@ def shutdown_tracing() -> None:
     global _tracer_provider, _initialized  # noqa: PLW0603
 
     if not _initialized or _tracer_provider is None:
-        logger.warning(
-            "Tracing shutdown called but tracing was not initialised. "
-            "No action taken."
-        )
+        logger.warning("Tracing shutdown called but tracing was not initialised. No action taken.")
         return
 
     try:
         _tracer_provider.shutdown()
         logger.info("OpenTelemetry tracing shut down successfully.")
     except Exception as exc:
-        logger.error(
-            "Error during OpenTelemetry tracing shutdown: %s", exc
-        )
+        logger.error("Error during OpenTelemetry tracing shutdown: %s", exc)
     finally:
         _tracer_provider = None
         _initialized = False

@@ -152,7 +152,7 @@ class CircuitBreakerRegistry:
     Usage::
 
         registry = CircuitBreakerRegistry.get_instance()
-        status   = registry.get_status()
+        status = registry.get_status()
         registry.reset("auth0_api")
     """
 
@@ -255,9 +255,7 @@ class CircuitBreakerRegistry:
                 status[name] = {
                     "state": breaker.state,
                     "failure_count": breaker.failure_count,
-                    "last_failure": (
-                        str(last_failure) if last_failure is not None else None
-                    ),
+                    "last_failure": (str(last_failure) if last_failure is not None else None),
                 }
             return status
 
@@ -535,13 +533,9 @@ def create_circuit_breaker(
         raise ValueError("Circuit breaker name must be a non-empty string")
 
     if not isinstance(failure_threshold, (int, float)):
-        raise ValueError(
-            f"failure_threshold must be numeric, got {type(failure_threshold).__name__}"
-        )
+        raise ValueError(f"failure_threshold must be numeric, got {type(failure_threshold).__name__}")
     if not isinstance(recovery_timeout, (int, float)):
-        raise ValueError(
-            f"recovery_timeout must be numeric, got {type(recovery_timeout).__name__}"
-        )
+        raise ValueError(f"recovery_timeout must be numeric, got {type(recovery_timeout).__name__}")
 
     breaker = ServiceCircuitBreaker(
         name=name,
@@ -652,7 +646,7 @@ def circuit_breaker_decorator(
 
                     if attempt < effective_max_retries:
                         # Exponential backoff: delay = base ** attempt
-                        delay: float = backoff_base ** attempt
+                        delay: float = backoff_base**attempt
                         logger.info(
                             "circuit_breaker_retry",
                             name=name,
@@ -771,9 +765,7 @@ def handle_circuit_breaker_error(
     recovery_timeout: int = DEFAULT_RECOVERY_TIMEOUT
     circuit_breaker_ref = getattr(error, "_circuit_breaker", None)
     if circuit_breaker_ref is not None:
-        recovery_timeout = int(
-            getattr(circuit_breaker_ref, "_recovery_timeout", DEFAULT_RECOVERY_TIMEOUT)
-        )
+        recovery_timeout = int(getattr(circuit_breaker_ref, "_recovery_timeout", DEFAULT_RECOVERY_TIMEOUT))
 
     # Safely convert the error to string — the circuitbreaker library's
     # __str__ accesses _circuit_breaker.name which may be None if the

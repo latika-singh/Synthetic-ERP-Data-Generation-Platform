@@ -613,7 +613,7 @@ def get_current_user() -> dict[str, Any] | None:
         no valid token is present.
     """
     # Check for already-cached user context.
-    existing_user = getattr(g, "current_user", None)
+    existing_user: dict[str, Any] | None = getattr(g, "current_user", None)
     if existing_user is not None:
         return existing_user
 

@@ -37,6 +37,7 @@ Usage::
 
     from shared.observability.metrics import setup_metrics
 
+
     def create_app() -> Flask:
         app = Flask(__name__)
         setup_metrics(app, service_name="api-gateway")
@@ -316,14 +317,11 @@ def setup_metrics(app: Flask, service_name: str) -> None:
     app.register_blueprint(metrics_blueprint)
 
     if not _PROMETHEUS_AVAILABLE:
-        logger.warning(
-            "Metrics setup skipped — prometheus_client is not installed."
-        )
+        logger.warning("Metrics setup skipped — prometheus_client is not installed.")
         return
 
     logger.info(
-        "Initialising Prometheus metrics for service '%s' "
-        "(port hint: %d).",
+        "Initialising Prometheus metrics for service '%s' (port hint: %d).",
         resolved_service_name,
         BaseConfig.PROMETHEUS_PORT,
     )
@@ -363,9 +361,7 @@ def setup_metrics(app: Flask, service_name: str) -> None:
             return response
 
         try:
-            elapsed: float = time.perf_counter() - getattr(
-                g, "_metrics_start_time", time.perf_counter()
-            )
+            elapsed: float = time.perf_counter() - getattr(g, "_metrics_start_time", time.perf_counter())
             endpoint_label: str = request.endpoint or request.path
             status_label: str = str(response.status_code)
 
@@ -425,8 +421,7 @@ def track_request_metrics(service_name: str) -> Any:
 
         @app.route("/api/v1/data")
         @track_request_metrics("api-gateway")
-        def get_data():
-            ...
+        def get_data(): ...
     """
 
     def decorator(fn: Any) -> Any:
@@ -525,9 +520,7 @@ def register_custom_metric(
         )
     """
     if not _PROMETHEUS_AVAILABLE:
-        raise RuntimeError(
-            "Cannot register custom metric — prometheus_client is not installed."
-        )
+        raise RuntimeError("Cannot register custom metric — prometheus_client is not installed.")
 
     resolved_labels: list[str] = labelnames if labelnames is not None else []
 
@@ -543,10 +536,7 @@ def register_custom_metric(
     constructor = metric_constructors.get(normalised_type)
     if constructor is None:
         supported = ", ".join(sorted(metric_constructors.keys()))
-        raise ValueError(
-            f"Unknown metric_type '{metric_type}'. "
-            f"Supported types: {supported}."
-        )
+        raise ValueError(f"Unknown metric_type '{metric_type}'. Supported types: {supported}.")
 
     try:
         metric: Counter | Histogram | Gauge | Summary = constructor(
@@ -674,8 +664,7 @@ def record_generation_throughput(
 
     if record_count < 0:
         logger.warning(
-            "record_generation_throughput called with negative record_count=%d; "
-            "clamping to 0.",
+            "record_generation_throughput called with negative record_count=%d; clamping to 0.",
             record_count,
         )
         record_count = 0
