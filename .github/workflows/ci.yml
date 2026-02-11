@@ -1,0 +1,509 @@
+# =============================================================================
+# CI Pipeline — Synthetic ERP Data Generation Platform
+# =============================================================================
+# Comprehensive continuous integration workflow that enforces code quality gates
+# across the entire monorepo: Python backend (6 microservices) and React/TypeScript
+# frontend. Runs on every pull request and push to main.
+#
+# Jobs:
+#   1. lint          — Ruff (Python PEP 8) + ESLint/Prettier (TypeScript)
+#   2. type-check    — mypy (Python) + tsc (TypeScript)
+#   3. unit-tests    — pytest matrix across all 6 backend services
+#   4. unit-tests-frontend — vitest for React components
+#   5. integration-tests   — Cross-service tests with MongoDB 7.0 + Redis 7
+#   6. coverage-report     — Aggregate and publish coverage metrics
+# =============================================================================
+
+name: CI Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'src/web/package.json'
+  push:
+    branches: [main]
+
+# Cancel redundant CI runs when new commits are pushed to the same branch/PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# -----------------------------------------------------------------------------
+# Shared environment variables
+# -----------------------------------------------------------------------------
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '20'
+  CI: 'true'
+
+jobs:
+  # ===========================================================================
+  # Job 1: Lint — Python (Ruff) + TypeScript (ESLint + Prettier)
+  # ===========================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # -- Checkout repository ------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -- Python linting with Ruff -------------------------------------------
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-lint-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-lint-
+            ${{ runner.os }}-pip-
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff linter (PEP 8 enforcement)
+        run: ruff check src/backend/ --output-format=github
+
+      - name: Run Ruff format check
+        run: ruff format --check src/backend/
+
+      # -- TypeScript linting with ESLint + Prettier --------------------------
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-lint-${{ hashFiles('src/web/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-lint-
+            ${{ runner.os }}-npm-
+
+      - name: Install frontend dependencies
+        working-directory: src/web
+        run: npm ci
+
+      - name: Run ESLint (TypeScript rules enforcement)
+        working-directory: src/web
+        run: npx eslint src/ --max-warnings=0
+
+      - name: Run Prettier format check
+        working-directory: src/web
+        run: npx prettier --check src/
+
+  # ===========================================================================
+  # Job 2: Type Check — mypy (Python) + tsc (TypeScript)
+  # ===========================================================================
+  type-check:
+    name: Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # -- Checkout repository ------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -- Python type checking with mypy -------------------------------------
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-typecheck-${{ hashFiles('src/backend/*/requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-typecheck-
+            ${{ runner.os }}-pip-
+
+      - name: Install mypy and type stubs
+        run: |
+          pip install mypy pydantic types-redis
+
+      - name: Install backend service dependencies for type resolution
+        run: |
+          pip install -r src/backend/api_gateway/requirements.txt
+          pip install -r src/backend/generation_engine/requirements.txt
+          pip install -r src/backend/profiling_service/requirements.txt
+          pip install -r src/backend/quality_service/requirements.txt
+          pip install -r src/backend/compliance_service/requirements.txt
+          pip install -r src/backend/provisioning_service/requirements.txt
+
+      - name: Run mypy type checker
+        run: mypy src/backend/ --config-file=pyproject.toml
+
+      # -- TypeScript type checking with tsc ----------------------------------
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-typecheck-${{ hashFiles('src/web/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-typecheck-
+            ${{ runner.os }}-npm-
+
+      - name: Install frontend dependencies
+        working-directory: src/web
+        run: npm ci
+
+      - name: Run TypeScript compiler (type check only)
+        working-directory: src/web
+        run: npx tsc --noEmit
+
+  # ===========================================================================
+  # Job 3: Unit Tests — Python backend (pytest matrix for all 6 services)
+  # ===========================================================================
+  unit-tests:
+    name: Unit Tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api_gateway
+          - generation_engine
+          - profiling_service
+          - quality_service
+          - compliance_service
+          - provisioning_service
+    steps:
+      # -- Checkout repository ------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -- Python setup -------------------------------------------------------
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-test-${{ matrix.service }}-${{ hashFiles(format('src/backend/{0}/requirements.txt', matrix.service)) }}
+          restore-keys: |
+            ${{ runner.os }}-pip-test-${{ matrix.service }}-
+            ${{ runner.os }}-pip-test-
+            ${{ runner.os }}-pip-
+
+      - name: Install service dependencies
+        run: |
+          pip install -r src/backend/${{ matrix.service }}/requirements.txt
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest pytest-cov pytest-asyncio httpx mongomock
+
+      - name: Run unit tests with coverage
+        env:
+          PYTHONPATH: src/backend
+          ENVIRONMENT: testing
+        run: |
+          pytest tests/unit/backend/test_${{ matrix.service }}.py \
+            -v \
+            --cov=src/backend/${{ matrix.service }} \
+            --cov-report=xml:coverage-${{ matrix.service }}.xml \
+            --cov-report=term-missing
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.service }}
+          path: coverage-${{ matrix.service }}.xml
+          retention-days: 7
+
+  # ===========================================================================
+  # Job 4: Unit Tests — Frontend (vitest for React components)
+  # ===========================================================================
+  unit-tests-frontend:
+    name: Unit Tests (Frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # -- Checkout repository ------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -- Node.js setup ------------------------------------------------------
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-test-${{ hashFiles('src/web/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-test-
+            ${{ runner.os }}-npm-
+
+      - name: Install frontend dependencies
+        working-directory: src/web
+        run: npm ci
+
+      - name: Run vitest with coverage
+        working-directory: src/web
+        run: npm run test -- --coverage --reporter=verbose
+
+      - name: Upload frontend coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-frontend
+          path: src/web/coverage/
+          retention-days: 7
+
+  # ===========================================================================
+  # Job 5: Integration Tests — Cross-service with MongoDB 7.0 + Redis 7
+  # ===========================================================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [unit-tests, unit-tests-frontend]
+
+    # -- Service containers for integration testing ---------------------------
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MONGODB_URI: mongodb://localhost:27017/test_synthetic_erp
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: testing
+      FLASK_ENV: testing
+      JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+      AUTH0_DOMAIN: test.auth0.com
+      AUTH0_API_AUDIENCE: https://api.synthetic-erp.test
+
+    steps:
+      # -- Checkout repository ------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -- Python setup -------------------------------------------------------
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-integration-${{ hashFiles('src/backend/*/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-integration-
+            ${{ runner.os }}-pip-
+
+      - name: Install all backend service dependencies
+        run: |
+          pip install -r src/backend/api_gateway/requirements.txt
+          pip install -r src/backend/generation_engine/requirements.txt
+          pip install -r src/backend/profiling_service/requirements.txt
+          pip install -r src/backend/quality_service/requirements.txt
+          pip install -r src/backend/compliance_service/requirements.txt
+          pip install -r src/backend/provisioning_service/requirements.txt
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest pytest-cov httpx mongomock
+
+      - name: Verify service containers are healthy
+        run: |
+          echo "Verifying MongoDB connectivity..."
+          python -c "
+          import pymongo
+          client = pymongo.MongoClient('mongodb://localhost:27017/', serverSelectionTimeoutMS=5000)
+          client.admin.command('ping')
+          print('MongoDB is healthy')
+          "
+          echo "Verifying Redis connectivity..."
+          python -c "
+          import redis
+          r = redis.Redis(host='localhost', port=6379, db=0, socket_connect_timeout=5)
+          r.ping()
+          print('Redis is healthy')
+          "
+
+      - name: Run integration tests with coverage
+        env:
+          PYTHONPATH: src/backend
+        run: |
+          pytest tests/integration/ \
+            -v \
+            --cov=src/backend \
+            --cov-report=xml:coverage-integration.xml \
+            --cov-report=term-missing
+
+      - name: Upload integration coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-integration
+          path: coverage-integration.xml
+          retention-days: 7
+
+  # ===========================================================================
+  # Job 6: Coverage Report — Aggregate and publish coverage metrics
+  # ===========================================================================
+  coverage-report:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [unit-tests, unit-tests-frontend, integration-tests]
+    if: always()
+    steps:
+      # -- Checkout repository ------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -- Download all coverage artifacts ------------------------------------
+      - name: Download API Gateway coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-api_gateway
+          path: coverage-reports/
+        continue-on-error: true
+
+      - name: Download Generation Engine coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-generation_engine
+          path: coverage-reports/
+        continue-on-error: true
+
+      - name: Download Profiling Service coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-profiling_service
+          path: coverage-reports/
+        continue-on-error: true
+
+      - name: Download Quality Service coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-quality_service
+          path: coverage-reports/
+        continue-on-error: true
+
+      - name: Download Compliance Service coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-compliance_service
+          path: coverage-reports/
+        continue-on-error: true
+
+      - name: Download Provisioning Service coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-provisioning_service
+          path: coverage-reports/
+        continue-on-error: true
+
+      - name: Download Frontend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-frontend
+          path: coverage-reports/frontend/
+        continue-on-error: true
+
+      - name: Download Integration coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-integration
+          path: coverage-reports/
+        continue-on-error: true
+
+      # -- Set up Python for coverage combination -----------------------------
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install coverage tools
+        run: pip install coverage
+
+      # -- Combine and report coverage ----------------------------------------
+      - name: Combine coverage reports
+        run: |
+          echo "## Coverage Report Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Coverage File | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          for service in api_gateway generation_engine profiling_service quality_service compliance_service provisioning_service; do
+            if [ -f "coverage-reports/coverage-${service}.xml" ]; then
+              echo "| ${service} | coverage-${service}.xml | ✅ Available |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| ${service} | coverage-${service}.xml | ⚠️ Missing |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          if [ -f "coverage-reports/coverage-integration.xml" ]; then
+            echo "| integration | coverage-integration.xml | ✅ Available |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| integration | coverage-integration.xml | ⚠️ Missing |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -d "coverage-reports/frontend" ]; then
+            echo "| frontend | coverage/ | ✅ Available |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| frontend | coverage/ | ⚠️ Missing |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Coverage artifacts are available for download from the workflow run." >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload combined coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          directory: coverage-reports/
+          flags: unittests
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        continue-on-error: true
