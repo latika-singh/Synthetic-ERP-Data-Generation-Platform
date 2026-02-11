@@ -42,9 +42,8 @@ Constants:
 from __future__ import annotations
 
 import os
-from typing import Any
 
-from shared.config.base import BaseConfig
+from shared.config.base import BaseConfig, ConfigurationError
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +70,7 @@ class BaseComplianceConfig(BaseConfig):
         DEBUG: Whether Flask debug mode is enabled.
         TESTING: Whether the application is in testing mode.
         SPACY_MODEL_NAME: spaCy NLP model used for entity recognition.
-        PII_CONFIDENCE_THRESHOLD: Minimum confidence score (0.0–1.0) for
+        PII_CONFIDENCE_THRESHOLD: Minimum confidence score (0.0-1.0) for
             a PII detection to be considered positive.
         PII_SCAN_BATCH_SIZE: Number of records processed per PII scan
             batch to control memory usage.
@@ -261,7 +260,8 @@ class BaseComplianceConfig(BaseConfig):
     # Validation (extends parent)
     # -----------------------------------------------------------------------
 
-    _PRODUCTION_REQUIRED_KEYS: list[str] = BaseConfig._PRODUCTION_REQUIRED_KEYS + [
+    _PRODUCTION_REQUIRED_KEYS: list[str] = [
+        *BaseConfig._PRODUCTION_REQUIRED_KEYS,
         "CERTIFICATION_SIGNING_KEY",
     ]
 
@@ -285,8 +285,6 @@ class BaseComplianceConfig(BaseConfig):
 
         # Confidence threshold must be a valid probability
         if not 0.0 <= self.PII_CONFIDENCE_THRESHOLD <= 1.0:
-            from shared.config.base import ConfigurationError
-
             raise ConfigurationError(
                 f"PII_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0, "
                 f"got {self.PII_CONFIDENCE_THRESHOLD}."
@@ -294,8 +292,6 @@ class BaseComplianceConfig(BaseConfig):
 
         # Retention years must be positive
         if self.AUDIT_LOG_RETENTION_YEARS < 1:
-            from shared.config.base import ConfigurationError
-
             raise ConfigurationError(
                 f"AUDIT_LOG_RETENTION_YEARS must be >= 1, "
                 f"got {self.AUDIT_LOG_RETENTION_YEARS}."
@@ -340,8 +336,6 @@ class DevelopmentConfig(BaseComplianceConfig):
         """
         # Validate value ranges without strict production key checks
         if not 0.0 <= self.PII_CONFIDENCE_THRESHOLD <= 1.0:
-            from shared.config.base import ConfigurationError
-
             raise ConfigurationError(
                 f"PII_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0, "
                 f"got {self.PII_CONFIDENCE_THRESHOLD}."
