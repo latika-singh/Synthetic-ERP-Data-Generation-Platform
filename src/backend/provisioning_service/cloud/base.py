@@ -58,15 +58,20 @@ import mimetypes
 import os
 import time
 from abc import ABC, abstractmethod
-from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 # ---------------------------------------------------------------------------
 # Custom MIME type extensions for synthetic data formats that may not be
 # registered in the system's default MIME database.
 # ---------------------------------------------------------------------------
-_SYNTHETIC_DATA_MIME_MAP: Dict[str, str] = {
+_SYNTHETIC_DATA_MIME_MAP: dict[str, str] = {
     ".csv": "text/csv",
     ".json": "application/json",
     ".jsonl": "application/x-ndjson",
@@ -117,7 +122,7 @@ class BaseCloudProvider(ABC):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialise the cloud storage provider with the given configuration.
 
         Performs the following steps in order:
@@ -143,11 +148,11 @@ class BaseCloudProvider(ABC):
             )
 
         # Full configuration reference -----------------------------------
-        self._config: Dict[str, Any] = config
+        self._config: dict[str, Any] = config
 
         # Common settings extracted from config --------------------------
         self._bucket_name: str = str(config.get("bucket_name", ""))
-        self._prefix: Optional[str] = config.get("prefix")
+        self._prefix: str | None = config.get("prefix")
 
         # Structured logger bound to the concrete subclass name ----------
         self._logger = get_logger(self.__class__.__name__)
@@ -195,9 +200,9 @@ class BaseCloudProvider(ABC):
         self,
         local_path: str,
         remote_key: str,
-        metadata: Optional[Dict[str, str]] = None,
-        content_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, str] | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         """Upload a local file to cloud storage.
 
         Implementations must:
@@ -244,10 +249,10 @@ class BaseCloudProvider(ABC):
         self,
         stream: BinaryIO,
         remote_key: str,
-        content_length: Optional[int] = None,
-        metadata: Optional[Dict[str, str]] = None,
-        content_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        content_length: int | None = None,
+        metadata: dict[str, str] | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         """Upload data from a binary stream to cloud storage.
 
         Supports streaming uploads for large datasets that are generated
@@ -274,7 +279,7 @@ class BaseCloudProvider(ABC):
         """
 
     @abstractmethod
-    def download(self, remote_key: str, local_path: str) -> Dict[str, Any]:
+    def download(self, remote_key: str, local_path: str) -> dict[str, Any]:
         """Download a cloud object to a local file.
 
         Implementations must track bytes downloaded in
@@ -324,9 +329,9 @@ class BaseCloudProvider(ABC):
     @abstractmethod
     def list_objects(
         self,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
         max_results: int = 1000,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List objects in the bucket or container.
 
         Supports prefix-based filtering, which is the primary mechanism for
@@ -370,7 +375,7 @@ class BaseCloudProvider(ABC):
         """
 
     @abstractmethod
-    def delete_many(self, remote_keys: List[str]) -> Dict[str, Any]:
+    def delete_many(self, remote_keys: list[str]) -> dict[str, Any]:
         """Delete multiple objects in a single batch operation.
 
         Implementations should use the provider's native batch-delete API
@@ -413,7 +418,7 @@ class BaseCloudProvider(ABC):
         """
 
     @abstractmethod
-    def get_metadata(self, remote_key: str) -> Dict[str, Any]:
+    def get_metadata(self, remote_key: str) -> dict[str, Any]:
         """Retrieve object metadata without downloading the object body.
 
         Args:
@@ -438,7 +443,7 @@ class BaseCloudProvider(ABC):
         """
 
     @abstractmethod
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Verify cloud storage connectivity and access permissions.
 
         Implementations should perform a lightweight operation (e.g. list
@@ -622,7 +627,7 @@ class BaseCloudProvider(ABC):
                 have been exhausted.
         """
         operation_name = getattr(operation, "__name__", str(operation))
-        last_exception: Optional[Exception] = None
+        last_exception: Exception | None = None
 
         for attempt in range(self._max_retries + 1):
             try:
@@ -661,7 +666,7 @@ class BaseCloudProvider(ABC):
         operation: Callable[..., Any],
         *args: Any,
         **kwargs: Any,
-    ) -> Tuple[Any, float]:
+    ) -> tuple[Any, float]:
         """Execute *operation* and measure its wall-clock latency.
 
         Args:
@@ -682,7 +687,7 @@ class BaseCloudProvider(ABC):
         elapsed_ms = (time.time() - start) * 1000.0
         return result, elapsed_ms
 
-    def _validate_config(self, required_keys: List[str]) -> None:
+    def _validate_config(self, required_keys: list[str]) -> None:
         """Validate that all *required_keys* are present and non-empty.
 
         Called by concrete providers at the start of
@@ -703,7 +708,7 @@ class BaseCloudProvider(ABC):
                 self._validate_config(["bucket_name", "aws_region", "aws_access_key_id"])
                 # ... proceed with client creation ...
         """
-        missing: List[str] = [
+        missing: list[str] = [
             key
             for key in required_keys
             if not self._config.get(key)
@@ -733,7 +738,7 @@ class BaseCloudProvider(ABC):
             )
         return os.path.getsize(file_path)
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Return cumulative operational metrics for this provider instance.
 
         Useful for Prometheus metrics collection and operational dashboards.
@@ -765,7 +770,7 @@ class BaseCloudProvider(ABC):
     # Context-manager protocol
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "BaseCloudProvider":
+    def __enter__(self) -> BaseCloudProvider:
         """Enter the runtime context: ensure the client is initialised.
 
         Returns:
@@ -779,9 +784,9 @@ class BaseCloudProvider(ABC):
 
     def __exit__(
         self,
-        exc_type: Optional[type],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[Any],
+        exc_type: type | None,
+        exc_val: BaseException | None,
+        exc_tb: Any | None,
     ) -> None:
         """Exit the runtime context: log exceptions and release resources.
 
