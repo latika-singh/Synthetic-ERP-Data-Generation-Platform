@@ -1,0 +1,311 @@
+# =============================================================================
+# Build and Push Docker Images
+# =============================================================================
+# GitHub Actions workflow for building and pushing Docker images for all 7
+# services of the Synthetic-ERP-Data-Generation-Platform to GitHub Container
+# Registry (GHCR). Uses matrix strategy across all service Dockerfiles in
+# infrastructure/docker/, builds multi-platform images (linux/amd64, linux/arm64),
+# tags images with git SHA, semantic version, and branch, and caches Docker
+# layers with GitHub Actions cache for build speed.
+#
+# This is the foundational build workflow that deploy-staging.yml depends on
+# via workflow_run trigger.
+# =============================================================================
+
+name: Build and Push Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+    paths:
+      - "src/**"
+      - "infrastructure/docker/**"
+      - "requirements*.txt"
+      - "src/web/package.json"
+
+# ---------------------------------------------------------------------------
+# Global environment variables
+# ---------------------------------------------------------------------------
+env:
+  # GitHub Container Registry base URL (overridable via repository variables)
+  REGISTRY: ghcr.io
+  # Image name prefix: ghcr.io/<owner>/synthetic-erp/<service-name>
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/synthetic-erp
+
+# ---------------------------------------------------------------------------
+# Concurrency: cancel redundant builds on the same ref to save resources
+# ---------------------------------------------------------------------------
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =========================================================================
+  # Job 1: Build and push Docker images for all services
+  # =========================================================================
+  build:
+    name: Build ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: api-gateway
+            dockerfile: infrastructure/docker/api-gateway.Dockerfile
+            context: .
+          - name: generation-engine
+            dockerfile: infrastructure/docker/generation-engine.Dockerfile
+            context: .
+          - name: profiling-service
+            dockerfile: infrastructure/docker/profiling-service.Dockerfile
+            context: .
+          - name: quality-service
+            dockerfile: infrastructure/docker/quality-service.Dockerfile
+            context: .
+          - name: compliance-service
+            dockerfile: infrastructure/docker/compliance-service.Dockerfile
+            context: .
+          - name: provisioning-service
+            dockerfile: infrastructure/docker/provisioning-service.Dockerfile
+            context: .
+          - name: web-console
+            dockerfile: infrastructure/docker/web-console.Dockerfile
+            context: .
+
+    steps:
+      # -------------------------------------------------------------------
+      # Step 1: Checkout repository source code
+      # -------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------
+      # Step 2: Set up Docker Buildx for multi-platform builds
+      # -------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # Use docker-container driver for multi-platform and advanced caching
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      # -------------------------------------------------------------------
+      # Step 3: Set up QEMU for cross-platform emulation (arm64 on amd64)
+      # -------------------------------------------------------------------
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      # -------------------------------------------------------------------
+      # Step 4: Authenticate to GitHub Container Registry
+      # -------------------------------------------------------------------
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------
+      # Step 5: Extract Docker image metadata (tags and labels)
+      # Generates tags based on git ref type:
+      #   - SHA prefix for every build (commit traceability)
+      #   - Branch name for branch pushes
+      #   - Semantic version for version tags (v1.2.3 → 1.2.3, 1.2)
+      #   - "latest" tag only on the default branch
+      # -------------------------------------------------------------------
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # -------------------------------------------------------------------
+      # Step 6: Build and push multi-platform Docker image
+      # Uses GitHub Actions cache backend for Docker layer caching.
+      # Pushes only on main branch or version tags (not on PRs).
+      # -------------------------------------------------------------------
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+
+      # -------------------------------------------------------------------
+      # Step 7: Generate Software Bill of Materials (SBOM) for supply chain
+      # security. Produces SPDX SBOM attached to the built image.
+      # -------------------------------------------------------------------
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        if: github.event_name == 'push'
+        with:
+          image: ${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+          upload-artifact: true
+          upload-release-assets: false
+
+      # -------------------------------------------------------------------
+      # Step 8: Upload SBOM as workflow artifact for audit and compliance
+      # -------------------------------------------------------------------
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: sbom-${{ matrix.service.name }}
+          path: sbom-${{ matrix.service.name }}.spdx.json
+          retention-days: 90
+
+      # -------------------------------------------------------------------
+      # Step 9: Output image digest for downstream consumption
+      # -------------------------------------------------------------------
+      - name: Output image digest
+        if: github.event_name == 'push'
+        run: |
+          echo "### :whale: Docker Image Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ matrix.service.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # =========================================================================
+  # Job 2: Scan built images for vulnerabilities using Trivy
+  # Runs after all images are built and pushed.
+  # =========================================================================
+  scan-built-images:
+    name: Scan ${{ matrix.service.name }}
+    needs: build
+    runs-on: ubuntu-latest
+    # Only scan on actual pushes (images must exist in registry)
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: api-gateway
+          - name: generation-engine
+          - name: profiling-service
+          - name: quality-service
+          - name: compliance-service
+          - name: provisioning-service
+          - name: web-console
+
+    steps:
+      # -------------------------------------------------------------------
+      # Step 1: Checkout repository (needed for SARIF upload context)
+      # -------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------
+      # Step 2: Authenticate to pull the built image from GHCR
+      # -------------------------------------------------------------------
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------------
+      # Step 3: Pull the built image for scanning
+      # -------------------------------------------------------------------
+      - name: Pull built image
+        run: |
+          docker pull ${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}:${{ github.sha }}
+
+      # -------------------------------------------------------------------
+      # Step 4: Run Trivy vulnerability scanner on the built image
+      # Reports HIGH and CRITICAL severity vulnerabilities.
+      # Outputs SARIF format for GitHub Security tab integration.
+      # -------------------------------------------------------------------
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results-${{ matrix.service.name }}.sarif
+          severity: CRITICAL,HIGH
+          # Do not fail the build on vulnerabilities in scan job;
+          # security-scan.yml enforces strict gating on PRs
+          exit-code: 0
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      # -------------------------------------------------------------------
+      # Step 5: Upload Trivy scan results to GitHub Security tab
+      # Enables vulnerability tracking in the repository Security tab.
+      # -------------------------------------------------------------------
+      - name: Upload Trivy SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results-${{ matrix.service.name }}.sarif
+          category: trivy-${{ matrix.service.name }}
+
+      # -------------------------------------------------------------------
+      # Step 6: Upload scan results as workflow artifact for review
+      # -------------------------------------------------------------------
+      - name: Upload scan results artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results-${{ matrix.service.name }}
+          path: trivy-results-${{ matrix.service.name }}.sarif
+          retention-days: 30
+
+      # -------------------------------------------------------------------
+      # Step 7: Output scan summary to workflow run
+      # -------------------------------------------------------------------
+      - name: Output scan summary
+        if: always()
+        run: |
+          echo "### :shield: Trivy Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ matrix.service.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "trivy-results-${{ matrix.service.name }}.sarif" ]; then
+            VULN_COUNT=$(cat "trivy-results-${{ matrix.service.name }}.sarif" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          results = data.get('runs', [{}])[0].get('results', [])
+          print(len(results))
+          " 2>/dev/null || echo "unknown")
+            echo "**Vulnerabilities found:** ${VULN_COUNT}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Status:** Scan results file not found" >> $GITHUB_STEP_SUMMARY
+          fi
