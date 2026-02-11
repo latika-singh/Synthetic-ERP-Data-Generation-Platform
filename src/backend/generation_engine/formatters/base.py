@@ -33,7 +33,7 @@ Typical usage::
 
 import io
 from abc import ABC, abstractmethod
-from typing import Dict, Iterator, Optional, Union
+from collections.abc import Iterator
 
 import pandas as pd
 
@@ -88,8 +88,8 @@ class BaseFormatter(ABC):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Optional[Dict] = None,
-    ) -> Union[str, bytes]:
+        column_definitions: dict | None = None,
+    ) -> str | bytes:
         """Format the entire *data* DataFrame to an output string or bytes.
 
         This method materialises the complete formatted output in memory and
@@ -130,7 +130,7 @@ class BaseFormatter(ABC):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Dict,
+        column_definitions: dict,
         output: io.IOBase,
     ) -> None:
         """Stream formatted output directly to *output* for large datasets.
@@ -195,7 +195,7 @@ class BaseFormatter(ABC):
         self,
         data_batches: Iterator[pd.DataFrame],
         table_name: str,
-        column_definitions: Dict,
+        column_definitions: dict,
         output: io.IOBase,
     ) -> int:
         """Write multiple batches to *output* sequentially.
