@@ -957,6 +957,7 @@ class TabularVAE(tf.keras.Model):
                     patience=20,
                     restore_best_weights=True,
                     verbose=1,
+                    mode="min",
                 ),
                 tf.keras.callbacks.ReduceLROnPlateau(
                     monitor=monitor,
@@ -964,6 +965,7 @@ class TabularVAE(tf.keras.Model):
                     patience=10,
                     min_lr=1e-6,
                     verbose=1,
+                    mode="min",
                 ),
             ]
 
@@ -1155,13 +1157,16 @@ class TabularVAE(tf.keras.Model):
 
         os.makedirs(path, exist_ok=True)
 
+        # Use .keras extension required by Keras 3.x native format
         encoder_path = os.path.join(path, "encoder")
         decoder_path = os.path.join(path, "decoder")
+        encoder_save_path = os.path.join(path, "encoder.keras")
+        decoder_save_path = os.path.join(path, "decoder.keras")
         config_path = os.path.join(path, "vae_config.json")
 
         try:
-            tf.keras.models.save_model(self.encoder, encoder_path)
-            tf.keras.models.save_model(self.decoder, decoder_path)
+            self.encoder.save(encoder_save_path)
+            self.decoder.save(decoder_save_path)
 
             sidecar: Dict[str, Any] = {
                 "config": {
@@ -1260,9 +1265,22 @@ class TabularVAE(tf.keras.Model):
         """
         load_logger = get_logger(__name__)
 
-        encoder_path = os.path.join(path, "encoder")
-        decoder_path = os.path.join(path, "decoder")
+        # Support both legacy directory format and new .keras format
+        encoder_keras_path = os.path.join(path, "encoder.keras")
+        decoder_keras_path = os.path.join(path, "decoder.keras")
+        encoder_dir_path = os.path.join(path, "encoder")
+        decoder_dir_path = os.path.join(path, "decoder")
         config_path = os.path.join(path, "vae_config.json")
+
+        # Determine which encoder/decoder path to use
+        if os.path.exists(encoder_keras_path):
+            encoder_path = encoder_keras_path
+        else:
+            encoder_path = encoder_dir_path
+        if os.path.exists(decoder_keras_path):
+            decoder_path = decoder_keras_path
+        else:
+            decoder_path = decoder_dir_path
 
         # --- Pre-flight checks ---------------------------------------------
         if not os.path.exists(path):
