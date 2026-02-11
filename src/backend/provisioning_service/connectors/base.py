@@ -44,15 +44,20 @@ from __future__ import annotations
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Generic Column Type Vocabulary
 # ---------------------------------------------------------------------------
 
-GENERIC_COLUMN_TYPES: Dict[str, str] = {
+GENERIC_COLUMN_TYPES: dict[str, str] = {
     "STRING": "STRING",
     "INTEGER": "INTEGER",
     "BIGINT": "BIGINT",
@@ -128,7 +133,9 @@ class BaseConnector(ABC):
 
         class PostgreSQLConnector(BaseConnector):
             def connect(self) -> None: ...
+
             # ... implement remaining abstract methods ...
+
 
         with PostgreSQLConnector(config) as conn:
             conn.create_table("invoices", columns)
@@ -139,7 +146,7 @@ class BaseConnector(ABC):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialise the base connector with connection and pool settings.
 
         Args:
@@ -159,7 +166,7 @@ class BaseConnector(ABC):
                   increases exponentially (default 2.0).
         """
         # Store the full configuration for subclass access.
-        self._config: Dict[str, Any] = config
+        self._config: dict[str, Any] = config
 
         # Core connection parameters.
         self._host: str = str(config.get("host", "localhost"))
@@ -177,7 +184,7 @@ class BaseConnector(ABC):
 
         # Connection state tracking.
         self._connected: bool = False
-        self._connection: Optional[Any] = None
+        self._connection: Any | None = None
 
         # Connection pool settings.
         self._pool_min_size: int = int(config.get("pool_min_size", 1))
@@ -222,7 +229,7 @@ class BaseConnector(ABC):
     def create_table(
         self,
         table_name: str,
-        columns: List[Dict[str, Any]],
+        columns: list[dict[str, Any]],
         if_not_exists: bool = True,
     ) -> None:
         """Create a table in the target database.
@@ -257,8 +264,8 @@ class BaseConnector(ABC):
     def batch_insert(
         self,
         table_name: str,
-        columns: List[str],
-        data: List[Tuple],
+        columns: list[str],
+        data: list[tuple],
         batch_size: int = 10000,
     ) -> int:
         """Insert rows into a table using batched transactions.
@@ -287,8 +294,8 @@ class BaseConnector(ABC):
     def execute_query(
         self,
         query: str,
-        params: Optional[Tuple] = None,
-    ) -> List[Dict[str, Any]]:
+        params: tuple | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute an arbitrary SQL query.
 
         For ``SELECT`` statements the method returns a list of row
@@ -309,7 +316,7 @@ class BaseConnector(ABC):
         """
 
     @abstractmethod
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Verify database connectivity and return a health status dict.
 
         Returns:
@@ -390,8 +397,7 @@ class BaseConnector(ABC):
                 error=str(exc),
             )
             raise RuntimeError(
-                f"Failed to establish connection to {self._host}:{self._port}"
-                f"/{self._database}: {exc}"
+                f"Failed to establish connection to {self._host}:{self._port}/{self._database}: {exc}"
             ) from exc
 
         if not self._connected:
@@ -408,7 +414,7 @@ class BaseConnector(ABC):
             database=self._database,
         )
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Return operational metrics for Prometheus / monitoring collection.
 
         Returns:
@@ -461,7 +467,7 @@ class BaseConnector(ABC):
             Exception: The final exception raised by *operation* after all
                 retries are exhausted.
         """
-        last_exception: Optional[Exception] = None
+        last_exception: Exception | None = None
 
         for attempt in range(self._max_retries + 1):
             try:
@@ -469,7 +475,7 @@ class BaseConnector(ABC):
             except Exception as exc:
                 last_exception = exc
                 if attempt < self._max_retries:
-                    delay: float = self._retry_delay * (2 ** attempt)
+                    delay: float = self._retry_delay * (2**attempt)
                     self._logger.warning(
                         "operation_retry",
                         attempt=attempt + 1,
@@ -490,7 +496,7 @@ class BaseConnector(ABC):
         # This line is reached only when all retries are exhausted.
         raise last_exception  # type: ignore[misc]
 
-    def _build_column_definition(self, column: Dict[str, Any]) -> str:
+    def _build_column_definition(self, column: dict[str, Any]) -> str:
         """Build a SQL column-definition fragment from a column spec dict.
 
         Translates a generic column specification into a SQL fragment
@@ -517,28 +523,23 @@ class BaseConnector(ABC):
         if not col_name:
             raise ValueError("Column specification must include a 'name' key.")
         if not col_type:
-            raise ValueError(
-                f"Column '{col_name}' specification must include a 'type' key."
-            )
+            raise ValueError(f"Column '{col_name}' specification must include a 'type' key.")
 
         # Resolve the native SQL type via the concrete connector.
         native_type: str = self._map_column_type(col_type)
 
         # Apply precision modifiers for types that support them.
-        max_length: Optional[int] = column.get("max_length")
-        precision: Optional[int] = column.get("precision")
-        scale: Optional[int] = column.get("scale")
+        max_length: int | None = column.get("max_length")
+        precision: int | None = column.get("precision")
+        scale: int | None = column.get("scale")
 
         if max_length is not None and col_type in ("STRING", "TEXT", "BINARY"):
             native_type = f"{native_type}({max_length})"
         elif precision is not None and col_type == "DECIMAL":
-            if scale is not None:
-                native_type = f"{native_type}({precision}, {scale})"
-            else:
-                native_type = f"{native_type}({precision})"
+            native_type = f"{native_type}({precision}, {scale})" if scale is not None else f"{native_type}({precision})"
 
         # Begin assembling the fragment: <name> <type>
-        parts: List[str] = [col_name, native_type]
+        parts: list[str] = [col_name, native_type]
 
         # Nullability (default is nullable).
         nullable: bool = column.get("nullable", True)
@@ -548,15 +549,7 @@ class BaseConnector(ABC):
         # Default value.
         default_value: Any = column.get("default")
         if default_value is not None:
-            # Strings are quoted; everything else is rendered as-is.
-            if isinstance(default_value, str):
-                # Escape single quotes in default value to prevent SQL injection.
-                safe_default = default_value.replace("'", "''")
-                parts.append(f"DEFAULT '{safe_default}'")
-            elif isinstance(default_value, bool):
-                parts.append(f"DEFAULT {'TRUE' if default_value else 'FALSE'}")
-            else:
-                parts.append(f"DEFAULT {default_value}")
+            parts.append(self._format_default_clause(default_value))
 
         # Primary key constraint.
         if column.get("primary_key", False):
@@ -568,7 +561,28 @@ class BaseConnector(ABC):
 
         return " ".join(parts)
 
-    def _validate_config(self, required_keys: List[str]) -> None:
+    @staticmethod
+    def _format_default_clause(default_value: Any) -> str:
+        """Format a SQL DEFAULT clause from a Python value.
+
+        Strings are single-quoted with internal single quotes escaped.
+        Booleans are rendered as ``TRUE`` / ``FALSE``.  All other values
+        are converted to their string representation.
+
+        Args:
+            default_value: The Python value to render as a SQL default.
+
+        Returns:
+            A SQL ``DEFAULT ...`` clause string.
+        """
+        if isinstance(default_value, str):
+            safe_default = default_value.replace("'", "''")
+            return f"DEFAULT '{safe_default}'"
+        if isinstance(default_value, bool):
+            return f"DEFAULT {'TRUE' if default_value else 'FALSE'}"
+        return f"DEFAULT {default_value}"
+
+    def _validate_config(self, required_keys: list[str]) -> None:
         """Validate that all required keys are present in the config dict.
 
         Called by concrete connector ``__init__`` methods to fail fast when
@@ -581,21 +595,16 @@ class BaseConnector(ABC):
         Raises:
             ValueError: With a message listing all missing keys.
         """
-        missing: List[str] = [
-            key for key in required_keys if key not in self._config
-        ]
+        missing: list[str] = [key for key in required_keys if key not in self._config]
         if missing:
-            raise ValueError(
-                f"{self.__class__.__name__} configuration is missing "
-                f"required keys: {', '.join(missing)}"
-            )
+            raise ValueError(f"{self.__class__.__name__} configuration is missing required keys: {', '.join(missing)}")
 
     def _measure_latency(
         self,
         operation: Callable[..., Any],
         *args: Any,
         **kwargs: Any,
-    ) -> Tuple[Any, float]:
+    ) -> tuple[Any, float]:
         """Execute *operation* and measure wall-clock latency in milliseconds.
 
         Useful for health-check probes and performance monitoring.
@@ -619,7 +628,7 @@ class BaseConnector(ABC):
     # Context Manager Protocol
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "BaseConnector":
+    def __enter__(self) -> BaseConnector:
         """Enter the runtime context — establish a database connection.
 
         Returns:
@@ -630,9 +639,9 @@ class BaseConnector(ABC):
 
     def __exit__(
         self,
-        exc_type: Optional[type],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[Any],
+        exc_type: type | None,
+        exc_val: BaseException | None,
+        exc_tb: Any | None,
     ) -> None:
         """Exit the runtime context — close the database connection.
 
@@ -675,9 +684,4 @@ class BaseConnector(ABC):
             String in the format
             ``ClassName(host=..., port=..., database=...)``.
         """
-        return (
-            f"{self.__class__.__name__}("
-            f"host={self._host}, "
-            f"port={self._port}, "
-            f"database={self._database})"
-        )
+        return f"{self.__class__.__name__}(host={self._host}, port={self._port}, database={self._database})"
