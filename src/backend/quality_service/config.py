@@ -42,8 +42,7 @@ from __future__ import annotations
 
 import os
 
-from shared.config.base import BaseConfig as SharedBaseConfig
-from shared.config.base import ConfigurationError
+from shared.config.base import BaseConfig as SharedBaseConfig, ConfigurationError
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +60,7 @@ class BaseConfig(SharedBaseConfig):
 
     Quality Scoring Model::
 
-        Q = W_stat × S_statistical + W_biz × S_business_rules + W_ri × S_referential_integrity
+        Q = W_stat * S_statistical + W_biz * S_business_rules + W_ri * S_referential_integrity
 
     Where the default weights are:
 
@@ -73,12 +72,12 @@ class BaseConfig(SharedBaseConfig):
     threshold defaults to 0.95 (95%).
 
     Attributes:
-        QUALITY_STATISTICAL_WEIGHT: Scoring weight for statistical fidelity (0.0–1.0).
-        QUALITY_BUSINESS_RULES_WEIGHT: Scoring weight for business rules (0.0–1.0).
+        QUALITY_STATISTICAL_WEIGHT: Scoring weight for statistical fidelity (0.0-1.0).
+        QUALITY_BUSINESS_RULES_WEIGHT: Scoring weight for business rules (0.0-1.0).
         QUALITY_REFERENTIAL_INTEGRITY_WEIGHT: Scoring weight for referential
-            integrity (0.0–1.0).
+            integrity (0.0-1.0).
         QUALITY_MIN_THRESHOLD: Minimum composite quality score to pass
-            validation (0.0–1.0).
+            validation (0.0-1.0).
         QUALITY_BATCH_SIZE: Number of records processed per validation batch.
         GREAT_EXPECTATIONS_DATA_DIR: File-system path to the Great Expectations
             project directory.
@@ -90,18 +89,10 @@ class BaseConfig(SharedBaseConfig):
     # -- Quality scoring weights -----------------------------------------------
     # Class-level defaults; re-read in __init__ for late-binding support.
 
-    QUALITY_STATISTICAL_WEIGHT: float = float(
-        os.environ.get("QUALITY_STATISTICAL_WEIGHT", "0.4")
-    )
-    QUALITY_BUSINESS_RULES_WEIGHT: float = float(
-        os.environ.get("QUALITY_BUSINESS_RULES_WEIGHT", "0.3")
-    )
-    QUALITY_REFERENTIAL_INTEGRITY_WEIGHT: float = float(
-        os.environ.get("QUALITY_REFERENTIAL_INTEGRITY_WEIGHT", "0.3")
-    )
-    QUALITY_MIN_THRESHOLD: float = float(
-        os.environ.get("QUALITY_MIN_THRESHOLD", "0.95")
-    )
+    QUALITY_STATISTICAL_WEIGHT: float = float(os.environ.get("QUALITY_STATISTICAL_WEIGHT", "0.4"))
+    QUALITY_BUSINESS_RULES_WEIGHT: float = float(os.environ.get("QUALITY_BUSINESS_RULES_WEIGHT", "0.3"))
+    QUALITY_REFERENTIAL_INTEGRITY_WEIGHT: float = float(os.environ.get("QUALITY_REFERENTIAL_INTEGRITY_WEIGHT", "0.3"))
+    QUALITY_MIN_THRESHOLD: float = float(os.environ.get("QUALITY_MIN_THRESHOLD", "0.95"))
 
     # -- Batch processing & timeout --------------------------------------------
 
@@ -111,17 +102,14 @@ class BaseConfig(SharedBaseConfig):
     # -- Great Expectations integration ----------------------------------------
 
     GREAT_EXPECTATIONS_DATA_DIR: str = os.environ.get(
-        "GREAT_EXPECTATIONS_DATA_DIR", "/tmp/great_expectations"
+        "GREAT_EXPECTATIONS_DATA_DIR",
+        os.path.join(os.path.expanduser("~"), ".great_expectations"),
     )
 
     # -- Inter-service communication -------------------------------------------
 
-    GENERATION_ENGINE_URL: str = os.environ.get(
-        "GENERATION_ENGINE_URL", "http://localhost:5001"
-    )
-    COMPLIANCE_SERVICE_URL: str = os.environ.get(
-        "COMPLIANCE_SERVICE_URL", "http://localhost:5004"
-    )
+    GENERATION_ENGINE_URL: str = os.environ.get("GENERATION_ENGINE_URL", "http://localhost:5001")
+    COMPLIANCE_SERVICE_URL: str = os.environ.get("COMPLIANCE_SERVICE_URL", "http://localhost:5004")
 
     # -- Internal constants ----------------------------------------------------
 
@@ -146,18 +134,10 @@ class BaseConfig(SharedBaseConfig):
         self.SERVICE_NAME = os.environ.get("SERVICE_NAME", "quality-service")
 
         # -- Quality scoring weights (re-read for late-binding) ----------------
-        self.QUALITY_STATISTICAL_WEIGHT = self._get_float_env(
-            "QUALITY_STATISTICAL_WEIGHT", 0.4
-        )
-        self.QUALITY_BUSINESS_RULES_WEIGHT = self._get_float_env(
-            "QUALITY_BUSINESS_RULES_WEIGHT", 0.3
-        )
-        self.QUALITY_REFERENTIAL_INTEGRITY_WEIGHT = self._get_float_env(
-            "QUALITY_REFERENTIAL_INTEGRITY_WEIGHT", 0.3
-        )
-        self.QUALITY_MIN_THRESHOLD = self._get_float_env(
-            "QUALITY_MIN_THRESHOLD", 0.95
-        )
+        self.QUALITY_STATISTICAL_WEIGHT = self._get_float_env("QUALITY_STATISTICAL_WEIGHT", 0.4)
+        self.QUALITY_BUSINESS_RULES_WEIGHT = self._get_float_env("QUALITY_BUSINESS_RULES_WEIGHT", 0.3)
+        self.QUALITY_REFERENTIAL_INTEGRITY_WEIGHT = self._get_float_env("QUALITY_REFERENTIAL_INTEGRITY_WEIGHT", 0.3)
+        self.QUALITY_MIN_THRESHOLD = self._get_float_env("QUALITY_MIN_THRESHOLD", 0.95)
 
         # -- Batch processing & timeout ----------------------------------------
         self.QUALITY_BATCH_SIZE = self._get_int_env("QUALITY_BATCH_SIZE", 10000)
@@ -165,16 +145,13 @@ class BaseConfig(SharedBaseConfig):
 
         # -- Great Expectations integration ------------------------------------
         self.GREAT_EXPECTATIONS_DATA_DIR = os.environ.get(
-            "GREAT_EXPECTATIONS_DATA_DIR", "/tmp/great_expectations"
+            "GREAT_EXPECTATIONS_DATA_DIR",
+            os.path.join(os.path.expanduser("~"), ".great_expectations"),
         )
 
         # -- Inter-service communication ---------------------------------------
-        self.GENERATION_ENGINE_URL = os.environ.get(
-            "GENERATION_ENGINE_URL", "http://localhost:5001"
-        )
-        self.COMPLIANCE_SERVICE_URL = os.environ.get(
-            "COMPLIANCE_SERVICE_URL", "http://localhost:5004"
-        )
+        self.GENERATION_ENGINE_URL = os.environ.get("GENERATION_ENGINE_URL", "http://localhost:5001")
+        self.COMPLIANCE_SERVICE_URL = os.environ.get("COMPLIANCE_SERVICE_URL", "http://localhost:5004")
 
     # -----------------------------------------------------------------------
     # Helper: float environment variable loader
@@ -251,9 +228,7 @@ class BaseConfig(SharedBaseConfig):
         }
         for name, value in weights.items():
             if not (0.0 <= value <= 1.0):
-                raise ConfigurationError(
-                    f"{name} must be between 0.0 and 1.0, got {value}."
-                )
+                raise ConfigurationError(f"{name} must be between 0.0 and 1.0, got {value}.")
 
         # -- Weight sum check --------------------------------------------------
         weight_sum: float = sum(weights.values())
@@ -268,23 +243,16 @@ class BaseConfig(SharedBaseConfig):
         # -- Threshold range check ---------------------------------------------
         if not (0.0 <= self.QUALITY_MIN_THRESHOLD <= 1.0):
             raise ConfigurationError(
-                f"QUALITY_MIN_THRESHOLD must be between 0.0 and 1.0, "
-                f"got {self.QUALITY_MIN_THRESHOLD}."
+                f"QUALITY_MIN_THRESHOLD must be between 0.0 and 1.0, got {self.QUALITY_MIN_THRESHOLD}."
             )
 
         # -- Batch size check --------------------------------------------------
         if self.QUALITY_BATCH_SIZE <= 0:
-            raise ConfigurationError(
-                f"QUALITY_BATCH_SIZE must be a positive integer, "
-                f"got {self.QUALITY_BATCH_SIZE}."
-            )
+            raise ConfigurationError(f"QUALITY_BATCH_SIZE must be a positive integer, got {self.QUALITY_BATCH_SIZE}.")
 
         # -- Timeout check -----------------------------------------------------
         if self.VALIDATION_TIMEOUT <= 0:
-            raise ConfigurationError(
-                f"VALIDATION_TIMEOUT must be a positive integer, "
-                f"got {self.VALIDATION_TIMEOUT}."
-            )
+            raise ConfigurationError(f"VALIDATION_TIMEOUT must be a positive integer, got {self.VALIDATION_TIMEOUT}.")
 
 
 # ---------------------------------------------------------------------------
@@ -345,12 +313,8 @@ class TestingConfig(BaseConfig):
         self.DEBUG = False
         self.TESTING = True
         self.LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARNING")
-        self.MONGODB_URI = os.environ.get(
-            "MONGODB_URI", "mongodb://localhost:27017/synthetic_erp_test"
-        )
-        self.MONGODB_DATABASE = os.environ.get(
-            "MONGODB_DATABASE", "synthetic_erp_test"
-        )
+        self.MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/synthetic_erp_test")
+        self.MONGODB_DATABASE = os.environ.get("MONGODB_DATABASE", "synthetic_erp_test")
 
     def validate(self) -> None:
         """Relaxed validation for the testing environment.
