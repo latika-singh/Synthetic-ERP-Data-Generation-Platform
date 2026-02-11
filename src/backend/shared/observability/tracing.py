@@ -57,34 +57,28 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import contextmanager
-from typing import Generator
+from typing import TYPE_CHECKING
 
-from flask import Flask
-
-# ---------------------------------------------------------------------------
-# Internal dependency — only from depends_on_files
-# ---------------------------------------------------------------------------
-from shared.config.base import BaseConfig
-
-# ---------------------------------------------------------------------------
-# OpenTelemetry API (opentelemetry-api >= 1.20.0)
-# ---------------------------------------------------------------------------
 from opentelemetry import context, propagate, trace
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.propagators.composite import CompositePropagator
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-
-# ---------------------------------------------------------------------------
-# OpenTelemetry SDK (opentelemetry-sdk >= 1.20.0)
-# ---------------------------------------------------------------------------
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.resources import SERVICE_NAME as RESOURCE_SERVICE_NAME
+from opentelemetry.sdk.resources import SERVICE_NAME as RESOURCE_SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     ConsoleSpanExporter,
     SimpleSpanProcessor,
 )
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+from shared.config.base import BaseConfig
+
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from flask import Flask
+
 
 # ---------------------------------------------------------------------------
 # OTLP gRPC exporter (optional — graceful degradation if not installed)
@@ -125,13 +119,13 @@ _initialized: bool = False
 # ---------------------------------------------------------------------------
 
 __all__ = [
-    "init_tracing",
-    "get_tracer",
-    "inject_trace_context",
-    "extract_trace_context",
-    "get_current_trace_id",
-    "get_current_span_id",
     "create_span",
+    "extract_trace_context",
+    "get_current_span_id",
+    "get_current_trace_id",
+    "get_tracer",
+    "init_tracing",
+    "inject_trace_context",
     "shutdown_tracing",
 ]
 
@@ -247,7 +241,7 @@ def init_tracing(
         else:
             try:
                 is_dev: bool = flask_env != "production"
-                otlp_exporter: OTLPSpanExporter = OTLPSpanExporter(  # type: ignore[possibly-undefined]
+                otlp_exporter: OTLPSpanExporter = OTLPSpanExporter(
                     endpoint=resolved_endpoint,
                     insecure=is_dev,
                 )
@@ -304,7 +298,7 @@ def init_tracing(
     # ---- 8. Instrument Flask application -----------------------------------
     if _FLASK_INSTRUMENTOR_AVAILABLE:
         try:
-            FlaskInstrumentor().instrument_app(  # type: ignore[possibly-undefined]
+            FlaskInstrumentor().instrument_app(
                 app,
                 excluded_urls="health,ready,metrics",
                 tracer_provider=provider,
