@@ -44,8 +44,6 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -419,7 +417,7 @@ class PatternDetector:
                         end_pos=end_pos,
                         confidence=round(confidence, 4),
                         validation_passed=validation_passed,
-                    )
+                    ),
                 )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
@@ -516,7 +514,7 @@ class PatternDetector:
         if pattern.name in self._pattern_map:
             raise ValueError(
                 f"Pattern '{pattern.name}' already exists. "
-                "Remove it first or use a different name."
+                "Remove it first or use a different name.",
             )
 
         self._patterns.append(pattern)
@@ -636,7 +634,7 @@ class PatternDetector:
         Invalid conditions:
             * Area number (first 3 digits) is ``000``.
             * Area number is ``666``.
-            * Area number is in the ``900–999`` range.
+            * Area number is in the ``900-999`` range.
             * Group number (middle 2 digits) is ``00``.
             * Serial number (last 4 digits) is ``0000``.
 
@@ -678,10 +676,7 @@ class PatternDetector:
             return False
 
         # Serial number must not be 0000.
-        if serial == "0000":
-            return False
-
-        return True
+        return serial != "0000"
 
     def _redact_match(self, text: str) -> str:
         """Redact a matched PII string for safe storage in audit records.
