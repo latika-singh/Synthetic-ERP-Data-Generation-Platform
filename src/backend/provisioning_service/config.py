@@ -7,7 +7,7 @@ foundation (MongoDB, Redis, Auth0, JWT, encryption, observability) — and
 adds settings that are unique to data provisioning:
 
 - **JDBC connection pool** — driver paths, pool sizing, and timeout
-  controls for PostgreSQL 12–16, Oracle 19c–23ai, SQL Server 2019–2022,
+  controls for PostgreSQL 12-16, Oracle 19c-23ai, SQL Server 2019-2022,
   and SAP HANA 2.0 SPS 07+.
 - **Cloud storage credentials** — AWS S3 (with multi-part upload tuning),
   Azure Blob Storage (with managed-identity support), and GCP Cloud
@@ -37,9 +37,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.base import BaseConfig
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — uses the standard library ``logging`` module
@@ -131,56 +132,41 @@ class ProvisioningServiceConfig(BaseConfig):
 
     # -- AWS S3 settings ----------------------------------------------------
 
-    AWS_ACCESS_KEY_ID: Optional[str] = os.environ.get("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY: Optional[str] = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    AWS_ACCESS_KEY_ID: str | None = os.environ.get("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: str | None = os.environ.get("AWS_SECRET_ACCESS_KEY")
     AWS_REGION: str = os.environ.get("AWS_REGION", "us-east-1")
-    AWS_S3_BUCKET: Optional[str] = os.environ.get("AWS_S3_BUCKET")
-    AWS_S3_ENDPOINT_URL: Optional[str] = os.environ.get("AWS_S3_ENDPOINT_URL")
-    AWS_S3_MULTIPART_THRESHOLD: int = int(
-        os.environ.get("AWS_S3_MULTIPART_THRESHOLD", str(8 * 1024 * 1024))
-    )
-    AWS_S3_MULTIPART_CHUNKSIZE: int = int(
-        os.environ.get("AWS_S3_MULTIPART_CHUNKSIZE", str(8 * 1024 * 1024))
-    )
+    AWS_S3_BUCKET: str | None = os.environ.get("AWS_S3_BUCKET")
+    AWS_S3_ENDPOINT_URL: str | None = os.environ.get("AWS_S3_ENDPOINT_URL")
+    AWS_S3_MULTIPART_THRESHOLD: int = int(os.environ.get("AWS_S3_MULTIPART_THRESHOLD", str(8 * 1024 * 1024)))
+    AWS_S3_MULTIPART_CHUNKSIZE: int = int(os.environ.get("AWS_S3_MULTIPART_CHUNKSIZE", str(8 * 1024 * 1024)))
 
     # -- Azure Blob Storage settings ----------------------------------------
 
-    AZURE_STORAGE_CONNECTION_STRING: Optional[str] = os.environ.get(
-        "AZURE_STORAGE_CONNECTION_STRING"
-    )
-    AZURE_STORAGE_ACCOUNT_NAME: Optional[str] = os.environ.get(
-        "AZURE_STORAGE_ACCOUNT_NAME"
-    )
-    AZURE_STORAGE_CONTAINER: Optional[str] = os.environ.get("AZURE_STORAGE_CONTAINER")
-    AZURE_USE_MANAGED_IDENTITY: bool = (
-        os.environ.get("AZURE_USE_MANAGED_IDENTITY", "false").lower() == "true"
-    )
+    AZURE_STORAGE_CONNECTION_STRING: str | None = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    AZURE_STORAGE_ACCOUNT_NAME: str | None = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
+    AZURE_STORAGE_CONTAINER: str | None = os.environ.get("AZURE_STORAGE_CONTAINER")
+    AZURE_USE_MANAGED_IDENTITY: bool = os.environ.get("AZURE_USE_MANAGED_IDENTITY", "false").lower() == "true"
 
     # -- GCP Cloud Storage settings -----------------------------------------
 
-    GCP_PROJECT_ID: Optional[str] = os.environ.get("GCP_PROJECT_ID")
-    GCP_STORAGE_BUCKET: Optional[str] = os.environ.get("GCP_STORAGE_BUCKET")
-    GCP_SERVICE_ACCOUNT_KEY_PATH: Optional[str] = os.environ.get(
-        "GCP_SERVICE_ACCOUNT_KEY_PATH"
-    )
+    GCP_PROJECT_ID: str | None = os.environ.get("GCP_PROJECT_ID")
+    GCP_STORAGE_BUCKET: str | None = os.environ.get("GCP_STORAGE_BUCKET")
+    GCP_SERVICE_ACCOUNT_KEY_PATH: str | None = os.environ.get("GCP_SERVICE_ACCOUNT_KEY_PATH")
 
     # -- Export settings ----------------------------------------------------
 
     EXPORT_BATCH_SIZE: int = int(os.environ.get("EXPORT_BATCH_SIZE", "10000"))
     EXPORT_MAX_FILE_SIZE_MB: int = int(os.environ.get("EXPORT_MAX_FILE_SIZE_MB", "500"))
     EXPORT_TEMP_DIR: str = os.environ.get(
-        "EXPORT_TEMP_DIR", "/tmp/provisioning-exports"
+        "EXPORT_TEMP_DIR",
+        "/tmp/provisioning-exports",  # noqa: S108
     )
-    EXPORT_COMPRESSION_ENABLED: bool = (
-        os.environ.get("EXPORT_COMPRESSION_ENABLED", "true").lower() == "true"
-    )
+    EXPORT_COMPRESSION_ENABLED: bool = os.environ.get("EXPORT_COMPRESSION_ENABLED", "true").lower() == "true"
     EXPORT_TIMEOUT: int = int(os.environ.get("EXPORT_TIMEOUT", "3600"))
 
     # -- Encryption settings ------------------------------------------------
 
-    EXPORT_ENCRYPTION_ENABLED: bool = (
-        os.environ.get("EXPORT_ENCRYPTION_ENABLED", "true").lower() == "true"
-    )
+    EXPORT_ENCRYPTION_ENABLED: bool = os.environ.get("EXPORT_ENCRYPTION_ENABLED", "true").lower() == "true"
     EXPORT_ENCRYPTION_ALGORITHM: str = "AES-256-GCM"
 
     # -----------------------------------------------------------------------
@@ -204,14 +190,10 @@ class ProvisioningServiceConfig(BaseConfig):
         self.SERVICE_NAME = "provisioning-service"
 
         # -- JDBC connection pool -------------------------------------------
-        self.JDBC_DRIVER_PATH = os.environ.get(
-            "JDBC_DRIVER_PATH", "/opt/jdbc-drivers"
-        )
+        self.JDBC_DRIVER_PATH = os.environ.get("JDBC_DRIVER_PATH", "/opt/jdbc-drivers")
         self.JDBC_POOL_MIN_SIZE = self._get_int_env("JDBC_POOL_MIN_SIZE", 5)
         self.JDBC_POOL_MAX_SIZE = self._get_int_env("JDBC_POOL_MAX_SIZE", 20)
-        self.JDBC_CONNECTION_TIMEOUT = self._get_int_env(
-            "JDBC_CONNECTION_TIMEOUT", 30
-        )
+        self.JDBC_CONNECTION_TIMEOUT = self._get_int_env("JDBC_CONNECTION_TIMEOUT", 30)
         self.JDBC_QUERY_TIMEOUT = self._get_int_env("JDBC_QUERY_TIMEOUT", 300)
 
         # -- JDBC driver identifiers (static, not env-driven) ---------------
@@ -221,9 +203,7 @@ class ProvisioningServiceConfig(BaseConfig):
         self.ORACLE_JDBC_DRIVER = "oracle.jdbc.OracleDriver"
         self.ORACLE_JDBC_JAR = "ojdbc11.jar"
 
-        self.SQLSERVER_JDBC_DRIVER = (
-            "com.microsoft.sqlserver.jdbc.SQLServerDriver"
-        )
+        self.SQLSERVER_JDBC_DRIVER = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
         self.SQLSERVER_JDBC_JAR = "mssql-jdbc-12.4.2.jre11.jar"
 
         self.HANA_JDBC_DRIVER = "com.sap.db.jdbc.Driver"
@@ -235,51 +215,32 @@ class ProvisioningServiceConfig(BaseConfig):
         self.AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
         self.AWS_S3_BUCKET = os.environ.get("AWS_S3_BUCKET")
         self.AWS_S3_ENDPOINT_URL = os.environ.get("AWS_S3_ENDPOINT_URL")
-        self.AWS_S3_MULTIPART_THRESHOLD = self._get_int_env(
-            "AWS_S3_MULTIPART_THRESHOLD", 8 * 1024 * 1024
-        )
-        self.AWS_S3_MULTIPART_CHUNKSIZE = self._get_int_env(
-            "AWS_S3_MULTIPART_CHUNKSIZE", 8 * 1024 * 1024
-        )
+        self.AWS_S3_MULTIPART_THRESHOLD = self._get_int_env("AWS_S3_MULTIPART_THRESHOLD", 8 * 1024 * 1024)
+        self.AWS_S3_MULTIPART_CHUNKSIZE = self._get_int_env("AWS_S3_MULTIPART_CHUNKSIZE", 8 * 1024 * 1024)
 
         # -- Azure Blob Storage ---------------------------------------------
-        self.AZURE_STORAGE_CONNECTION_STRING = os.environ.get(
-            "AZURE_STORAGE_CONNECTION_STRING"
-        )
-        self.AZURE_STORAGE_ACCOUNT_NAME = os.environ.get(
-            "AZURE_STORAGE_ACCOUNT_NAME"
-        )
-        self.AZURE_STORAGE_CONTAINER = os.environ.get(
-            "AZURE_STORAGE_CONTAINER"
-        )
-        self.AZURE_USE_MANAGED_IDENTITY = self._get_bool_env(
-            "AZURE_USE_MANAGED_IDENTITY", False
-        )
+        self.AZURE_STORAGE_CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+        self.AZURE_STORAGE_ACCOUNT_NAME = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME")
+        self.AZURE_STORAGE_CONTAINER = os.environ.get("AZURE_STORAGE_CONTAINER")
+        self.AZURE_USE_MANAGED_IDENTITY = self._get_bool_env("AZURE_USE_MANAGED_IDENTITY", False)
 
         # -- GCP Cloud Storage ----------------------------------------------
         self.GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
         self.GCP_STORAGE_BUCKET = os.environ.get("GCP_STORAGE_BUCKET")
-        self.GCP_SERVICE_ACCOUNT_KEY_PATH = os.environ.get(
-            "GCP_SERVICE_ACCOUNT_KEY_PATH"
-        )
+        self.GCP_SERVICE_ACCOUNT_KEY_PATH = os.environ.get("GCP_SERVICE_ACCOUNT_KEY_PATH")
 
         # -- Export settings ------------------------------------------------
         self.EXPORT_BATCH_SIZE = self._get_int_env("EXPORT_BATCH_SIZE", 10000)
-        self.EXPORT_MAX_FILE_SIZE_MB = self._get_int_env(
-            "EXPORT_MAX_FILE_SIZE_MB", 500
-        )
+        self.EXPORT_MAX_FILE_SIZE_MB = self._get_int_env("EXPORT_MAX_FILE_SIZE_MB", 500)
         self.EXPORT_TEMP_DIR = os.environ.get(
-            "EXPORT_TEMP_DIR", "/tmp/provisioning-exports"
+            "EXPORT_TEMP_DIR",
+            "/tmp/provisioning-exports",  # noqa: S108
         )
-        self.EXPORT_COMPRESSION_ENABLED = self._get_bool_env(
-            "EXPORT_COMPRESSION_ENABLED", True
-        )
+        self.EXPORT_COMPRESSION_ENABLED = self._get_bool_env("EXPORT_COMPRESSION_ENABLED", True)
         self.EXPORT_TIMEOUT = self._get_int_env("EXPORT_TIMEOUT", 3600)
 
         # -- Encryption settings --------------------------------------------
-        self.EXPORT_ENCRYPTION_ENABLED = self._get_bool_env(
-            "EXPORT_ENCRYPTION_ENABLED", True
-        )
+        self.EXPORT_ENCRYPTION_ENABLED = self._get_bool_env("EXPORT_ENCRYPTION_ENABLED", True)
         self.EXPORT_ENCRYPTION_ALGORITHM = "AES-256-GCM"
 
     # -----------------------------------------------------------------------
@@ -331,19 +292,11 @@ class ProvisioningServiceConfig(BaseConfig):
 
         # -- Cloud credentials presence check (production only) -------------
         if self.FLASK_ENV == "production":
-            aws_configured: bool = bool(
-                self.AWS_ACCESS_KEY_ID and self.AWS_SECRET_ACCESS_KEY
-            )
-            azure_configured: bool = bool(
-                self.AZURE_STORAGE_CONNECTION_STRING
-                or self.AZURE_USE_MANAGED_IDENTITY
-            )
+            aws_configured: bool = bool(self.AWS_ACCESS_KEY_ID and self.AWS_SECRET_ACCESS_KEY)
+            azure_configured: bool = bool(self.AZURE_STORAGE_CONNECTION_STRING or self.AZURE_USE_MANAGED_IDENTITY)
             gcp_configured: bool = bool(
                 self.GCP_PROJECT_ID
-                and (
-                    self.GCP_SERVICE_ACCOUNT_KEY_PATH
-                    or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-                )
+                and (self.GCP_SERVICE_ACCOUNT_KEY_PATH or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
             )
 
             if not any([aws_configured, azure_configured, gcp_configured]):
@@ -404,7 +357,7 @@ class ProvisioningServiceConfig(BaseConfig):
         # Mask provisioning-specific sensitive values that were not
         # already handled by the parent's _SENSITIVE_KEYS set.
         for key in self._PROVISIONING_SENSITIVE_KEYS:
-            if key in safe and safe[key]:
+            if safe.get(key):
                 safe[key] = self._REDACTED
 
         return safe
