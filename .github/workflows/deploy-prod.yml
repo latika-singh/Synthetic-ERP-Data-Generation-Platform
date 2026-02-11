@@ -1,0 +1,1115 @@
+# =============================================================================
+# Production Deployment Workflow
+# Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+# Deploys platform services to the production Kubernetes cluster using a
+# rolling update strategy with zero-downtime guarantees. Includes manual
+# approval gates via GitHub environment protection rules, pre-deployment
+# validation against staging, post-deployment health verification, and
+# automated rollback on failure.
+#
+# Prerequisites:
+#   - GitHub environment "production" configured with required reviewers
+#   - secrets.PROD_KUBECONFIG set with production cluster credentials
+#   - secrets.REGISTRY_USERNAME / secrets.REGISTRY_PASSWORD for container registry
+#   - secrets.STAGING_API_URL set to the staging API base URL
+#   - secrets.PROD_API_URL set to the production API base URL
+#   - secrets.SLACK_WEBHOOK_URL for deployment notifications (optional)
+# =============================================================================
+
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: >
+          Docker image tag to deploy. Use a git SHA from the main branch
+          or a semantic version tag (e.g., v1.2.3). Defaults to the SHA
+          of the commit that triggered the workflow.
+        required: true
+        default: ''
+        type: string
+      dry_run:
+        description: >
+          Preview the deployment changes without applying them to the
+          production cluster. Useful for validating manifests and image
+          availability before committing to a real deployment.
+        required: false
+        default: false
+        type: boolean
+
+# Prevent concurrent production deployments to avoid conflicting rollouts
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+env:
+  # Container registry coordinates — must match build.yml outputs
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/synthetic-erp
+  # Kubernetes namespace for production workloads
+  PROD_NAMESPACE: synthetic-erp-production
+  # List of all deployable backend services
+  BACKEND_SERVICES: >-
+    api-gateway
+    generation-engine
+    profiling-service
+    quality-service
+    compliance-service
+    provisioning-service
+  # Frontend service name
+  FRONTEND_SERVICE: web-console
+  # Rollout timeout per service (10 minutes)
+  ROLLOUT_TIMEOUT: 600s
+  # Post-deployment stabilization period (seconds)
+  STABILIZATION_WAIT: 60
+
+jobs:
+  # ===========================================================================
+  # Job 1: Pre-Deployment Validation
+  # ===========================================================================
+  # Validates that all preconditions are met before entering the approval gate.
+  # Checks image availability, runs integration tests against staging, and
+  # validates Kubernetes manifest syntax with a dry-run apply.
+  # ===========================================================================
+  pre-deployment-validation:
+    name: Pre-Deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    outputs:
+      image_tag: ${{ steps.resolve-tag.outputs.tag }}
+      validation_status: ${{ steps.summary.outputs.status }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Resolve the image tag — use the input or fall back to the triggering SHA
+      - name: Resolve image tag
+        id: resolve-tag
+        run: |
+          TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.sha }}"
+            echo "No image_tag input provided, defaulting to commit SHA: $TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "### Resolved Image Tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Tag:** \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # Authenticate with the container registry to verify image existence
+      - name: Login to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verify that every service image with the specified tag exists in the
+      # registry. A missing image would cause a deployment failure.
+      - name: Validate image availability
+        id: validate-images
+        run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
+          MISSING_IMAGES=""
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+
+          echo "### Image Validation Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service | Image | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|-------|--------|" >> "$GITHUB_STEP_SUMMARY"
+
+          for SERVICE in $ALL_SERVICES; do
+            IMAGE="${{ env.IMAGE_PREFIX }}/${SERVICE}:${TAG}"
+            echo "Checking image: $IMAGE"
+
+            if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+              echo "  ✅ Image found: $IMAGE"
+              echo "| $SERVICE | \`$IMAGE\` | ✅ Found |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  ❌ Image NOT found: $IMAGE"
+              echo "| $SERVICE | \`$IMAGE\` | ❌ Missing |" >> "$GITHUB_STEP_SUMMARY"
+              MISSING_IMAGES="$MISSING_IMAGES $SERVICE"
+            fi
+          done
+
+          if [ -n "$MISSING_IMAGES" ]; then
+            echo "::error::Missing container images for services:$MISSING_IMAGES"
+            echo "Ensure the build workflow has completed for tag '$TAG'."
+            exit 1
+          fi
+          echo "All service images validated successfully."
+
+      # Run integration tests against the staging environment to confirm that
+      # the current codebase is production-ready before deploying.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-integration-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-integration-
+            ${{ runner.os }}-pip-
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov httpx mongomock requests
+
+          # Install backend service dependencies needed for integration tests
+          for SERVICE_DIR in src/backend/*/; do
+            if [ -f "${SERVICE_DIR}requirements.txt" ]; then
+              pip install -r "${SERVICE_DIR}requirements.txt" || true
+            fi
+          done
+
+      - name: Run integration tests against staging
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+          ENVIRONMENT: staging
+          PYTHONPATH: src/backend
+        run: |
+          echo "Running integration test suite against staging environment..."
+          echo "Staging API URL: $STAGING_API_URL"
+
+          pytest tests/integration/ \
+            --tb=short \
+            --no-header \
+            -q \
+            --junitxml=integration-test-results.xml \
+            || {
+              echo "::warning::Integration tests reported failures. Review test output above."
+              exit 1
+            }
+
+          echo "### Integration Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ All integration tests passed against staging." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: integration-test-results.xml
+          retention-days: 30
+
+      # Install kubectl for manifest validation
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.0'
+
+      # Perform a client-side dry-run to validate all Kubernetes manifest
+      # syntax and structural correctness before the real deployment.
+      - name: Validate Kubernetes manifests (dry-run)
+        run: |
+          echo "Validating Kubernetes manifest syntax..."
+
+          MANIFEST_ERRORS=0
+
+          # Validate namespace manifest
+          echo "Validating namespace.yaml..."
+          kubectl apply --dry-run=client -f infrastructure/kubernetes/namespace.yaml || MANIFEST_ERRORS=$((MANIFEST_ERRORS + 1))
+
+          # Validate cluster-wide resources
+          for MANIFEST in \
+            infrastructure/kubernetes/network-policies.yaml \
+            infrastructure/kubernetes/resource-quotas.yaml \
+            infrastructure/kubernetes/secrets.yaml \
+            infrastructure/kubernetes/ingress.yaml \
+            infrastructure/kubernetes/hpa.yaml; do
+            if [ -f "$MANIFEST" ]; then
+              echo "Validating $MANIFEST..."
+              kubectl apply --dry-run=client -f "$MANIFEST" || MANIFEST_ERRORS=$((MANIFEST_ERRORS + 1))
+            fi
+          done
+
+          # Validate per-service manifests (deployments, services, configmaps)
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+          for SERVICE in $ALL_SERVICES; do
+            SERVICE_DIR="infrastructure/kubernetes/${SERVICE}"
+            if [ -d "$SERVICE_DIR" ]; then
+              echo "Validating manifests in $SERVICE_DIR/..."
+              kubectl apply --dry-run=client -f "$SERVICE_DIR/" || MANIFEST_ERRORS=$((MANIFEST_ERRORS + 1))
+            fi
+          done
+
+          # Validate StatefulSets for data stores
+          for STORE in mongodb redis; do
+            STORE_DIR="infrastructure/kubernetes/${STORE}"
+            if [ -d "$STORE_DIR" ]; then
+              echo "Validating manifests in $STORE_DIR/..."
+              kubectl apply --dry-run=client -f "$STORE_DIR/" || MANIFEST_ERRORS=$((MANIFEST_ERRORS + 1))
+            fi
+          done
+
+          if [ "$MANIFEST_ERRORS" -gt 0 ]; then
+            echo "::error::$MANIFEST_ERRORS manifest validation errors detected."
+            exit 1
+          fi
+
+          echo "### Manifest Validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ All Kubernetes manifests passed dry-run validation." >> "$GITHUB_STEP_SUMMARY"
+
+      # Summarize the overall validation status
+      - name: Validation summary
+        id: summary
+        if: always()
+        run: |
+          echo "status=complete" >> "$GITHUB_OUTPUT"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Pre-Deployment Validation Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "Ready for production deployment approval." >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # Job 2: Deploy to Production
+  # ===========================================================================
+  # Executes the rolling deployment to the production Kubernetes cluster.
+  # This job is gated by the GitHub "production" environment, which requires
+  # manual approval from designated reviewers before execution begins.
+  #
+  # Strategy: Rolling update with maxSurge=1, maxUnavailable=0 to ensure
+  # zero-downtime during the deployment process.
+  # ===========================================================================
+  deploy-production:
+    name: Deploy to Production
+    needs: pre-deployment-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # The "production" environment triggers GitHub's approval gate.
+    # Required reviewers must approve before this job executes.
+    environment:
+      name: production
+      url: https://api.synthetic-erp.com
+
+    outputs:
+      deployment_status: ${{ steps.deploy-summary.outputs.status }}
+      deployed_tag: ${{ needs.pre-deployment-validation.outputs.image_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Configure kubectl with production cluster credentials stored as a
+      # GitHub secret. The kubeconfig is written to a temporary file and
+      # cleaned up after the workflow completes.
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.0'
+
+      - name: Configure production cluster credentials
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Verify cluster connectivity
+        run: |
+          echo "Verifying connectivity to production cluster..."
+          kubectl cluster-info || {
+            echo "::error::Cannot connect to the production Kubernetes cluster."
+            exit 1
+          }
+          kubectl get nodes -o wide
+          echo "Cluster connectivity verified."
+
+      - name: Set kubectl context to production namespace
+        run: |
+          kubectl config set-context --current --namespace=${{ env.PROD_NAMESPACE }}
+          echo "Active namespace: ${{ env.PROD_NAMESPACE }}"
+
+      # Capture the current state of all deployments so we can restore them
+      # if the deployment fails and an automated rollback is triggered.
+      - name: Create deployment snapshot for rollback
+        id: snapshot
+        run: |
+          echo "Creating pre-deployment snapshot of all deployments..."
+
+          kubectl get deployments -n ${{ env.PROD_NAMESPACE }} -o yaml > rollback-snapshot.yaml 2>/dev/null || {
+            echo "No existing deployments found (first deployment). Creating empty snapshot."
+            echo "---" > rollback-snapshot.yaml
+          }
+
+          kubectl get statefulsets -n ${{ env.PROD_NAMESPACE }} -o yaml > rollback-statefulsets.yaml 2>/dev/null || {
+            echo "No existing statefulsets found. Creating empty snapshot."
+            echo "---" > rollback-statefulsets.yaml
+          }
+
+          echo "Snapshot saved. Current deployment state captured."
+
+      - name: Upload rollback snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-snapshot-${{ github.run_id }}
+          path: |
+            rollback-snapshot.yaml
+            rollback-statefulsets.yaml
+          retention-days: 7
+
+      # Determine the resolved image tag from the validation job
+      - name: Set image tag
+        id: image-tag
+        run: |
+          TAG="${{ needs.pre-deployment-validation.outputs.image_tag }}"
+          echo "Deploying image tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # If dry_run is enabled, only preview the changes without applying
+      - name: Check dry run mode
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "::notice::DRY RUN MODE — No changes will be applied to the production cluster."
+          echo "### 🔍 Dry Run Mode" >> "$GITHUB_STEP_SUMMARY"
+          echo "Changes were validated but NOT applied." >> "$GITHUB_STEP_SUMMARY"
+
+      # -----------------------------------------------------------------------
+      # Phase 1: Apply foundational resources (namespace, config, policies)
+      # -----------------------------------------------------------------------
+      - name: "Phase 1: Apply namespace and foundational resources"
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "=========================================="
+          echo "Phase 1: Foundational Resources"
+          echo "=========================================="
+
+          echo "Applying namespace..."
+          kubectl apply -f infrastructure/kubernetes/namespace.yaml
+
+          echo "Applying ConfigMaps..."
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+          for SERVICE in $ALL_SERVICES; do
+            CONFIG="infrastructure/kubernetes/${SERVICE}/configmap.yaml"
+            if [ -f "$CONFIG" ]; then
+              echo "  Applying ConfigMap for $SERVICE..."
+              kubectl apply -f "$CONFIG" -n ${{ env.PROD_NAMESPACE }}
+            fi
+          done
+
+          echo "Applying Secrets..."
+          if [ -f "infrastructure/kubernetes/secrets.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/secrets.yaml -n ${{ env.PROD_NAMESPACE }}
+          fi
+
+          echo "Applying NetworkPolicies..."
+          if [ -f "infrastructure/kubernetes/network-policies.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/network-policies.yaml -n ${{ env.PROD_NAMESPACE }}
+          fi
+
+          echo "Applying ResourceQuotas..."
+          if [ -f "infrastructure/kubernetes/resource-quotas.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/resource-quotas.yaml -n ${{ env.PROD_NAMESPACE }}
+          fi
+
+          echo "Phase 1 complete."
+
+      # -----------------------------------------------------------------------
+      # Phase 2: Apply StatefulSets for data stores (MongoDB, Redis)
+      # StatefulSets are only updated if the manifests have changed to avoid
+      # unnecessary data store restarts.
+      # -----------------------------------------------------------------------
+      - name: "Phase 2: Apply StatefulSets (MongoDB, Redis)"
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "=========================================="
+          echo "Phase 2: Data Store StatefulSets"
+          echo "=========================================="
+
+          for STORE in mongodb redis; do
+            STORE_DIR="infrastructure/kubernetes/${STORE}"
+            if [ -d "$STORE_DIR" ]; then
+              echo "Applying StatefulSet for $STORE..."
+              kubectl apply -f "$STORE_DIR/" -n ${{ env.PROD_NAMESPACE }}
+
+              echo "Waiting for $STORE StatefulSet to be ready..."
+              kubectl rollout status statefulset/${STORE} \
+                -n ${{ env.PROD_NAMESPACE }} \
+                --timeout=300s || {
+                  echo "::warning::StatefulSet $STORE rollout did not complete within timeout."
+                  echo "Checking current status..."
+                  kubectl get statefulset/${STORE} -n ${{ env.PROD_NAMESPACE }}
+                }
+            else
+              echo "No manifests found for $STORE, skipping."
+            fi
+          done
+
+          echo "Phase 2 complete."
+
+      # -----------------------------------------------------------------------
+      # Phase 3: Rolling update of all backend service Deployments.
+      # Uses kubectl set image to update each deployment's container image
+      # to the new tag, then waits for the rollout to complete.
+      # Rolling update parameters: maxSurge=1, maxUnavailable=0
+      # -----------------------------------------------------------------------
+      - name: "Phase 3: Rolling update backend service deployments"
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "=========================================="
+          echo "Phase 3: Backend Service Rolling Updates"
+          echo "=========================================="
+
+          TAG="${{ steps.image-tag.outputs.tag }}"
+          FAILED_SERVICES=""
+
+          for SERVICE in ${{ env.BACKEND_SERVICES }}; do
+            SERVICE_DIR="infrastructure/kubernetes/${SERVICE}"
+            IMAGE="${{ env.IMAGE_PREFIX }}/${SERVICE}:${TAG}"
+
+            echo "------------------------------------------"
+            echo "Deploying $SERVICE with image: $IMAGE"
+            echo "------------------------------------------"
+
+            # Apply the service manifests (deployment, service, configmap)
+            if [ -d "$SERVICE_DIR" ]; then
+              kubectl apply -f "$SERVICE_DIR/" -n ${{ env.PROD_NAMESPACE }}
+            fi
+
+            # Ensure rolling update strategy with zero-downtime parameters
+            kubectl patch deployment "${SERVICE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              --type='json' \
+              -p='[
+                {"op": "replace", "path": "/spec/strategy", "value": {
+                  "type": "RollingUpdate",
+                  "rollingUpdate": {
+                    "maxSurge": 1,
+                    "maxUnavailable": 0
+                  }
+                }}
+              ]' 2>/dev/null || echo "Strategy patch skipped (may already be set)."
+
+            # Update the container image to the target tag
+            kubectl set image deployment/${SERVICE} \
+              ${SERVICE}=${IMAGE} \
+              -n ${{ env.PROD_NAMESPACE }} \
+              --record || {
+                echo "::error::Failed to set image for deployment/${SERVICE}"
+                FAILED_SERVICES="$FAILED_SERVICES $SERVICE"
+                continue
+              }
+
+            echo "Waiting for rollout of $SERVICE to complete..."
+            kubectl rollout status deployment/${SERVICE} \
+              -n ${{ env.PROD_NAMESPACE }} \
+              --timeout=${{ env.ROLLOUT_TIMEOUT }} || {
+                echo "::error::Rollout of $SERVICE failed or timed out."
+                FAILED_SERVICES="$FAILED_SERVICES $SERVICE"
+              }
+          done
+
+          if [ -n "$FAILED_SERVICES" ]; then
+            echo "::error::The following services failed to deploy:$FAILED_SERVICES"
+            exit 1
+          fi
+
+          echo "All backend services deployed successfully."
+
+      # -----------------------------------------------------------------------
+      # Phase 4: Rolling update the frontend web-console Deployment.
+      # -----------------------------------------------------------------------
+      - name: "Phase 4: Rolling update web-console deployment"
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "=========================================="
+          echo "Phase 4: Web Console Deployment"
+          echo "=========================================="
+
+          TAG="${{ steps.image-tag.outputs.tag }}"
+          SERVICE="${{ env.FRONTEND_SERVICE }}"
+          SERVICE_DIR="infrastructure/kubernetes/${SERVICE}"
+          IMAGE="${{ env.IMAGE_PREFIX }}/${SERVICE}:${TAG}"
+
+          echo "Deploying $SERVICE with image: $IMAGE"
+
+          # Apply frontend service manifests
+          if [ -d "$SERVICE_DIR" ]; then
+            kubectl apply -f "$SERVICE_DIR/" -n ${{ env.PROD_NAMESPACE }}
+          fi
+
+          # Ensure rolling update strategy
+          kubectl patch deployment "${SERVICE}" \
+            -n ${{ env.PROD_NAMESPACE }} \
+            --type='json' \
+            -p='[
+              {"op": "replace", "path": "/spec/strategy", "value": {
+                "type": "RollingUpdate",
+                "rollingUpdate": {
+                  "maxSurge": 1,
+                  "maxUnavailable": 0
+                }
+              }}
+            ]' 2>/dev/null || echo "Strategy patch skipped."
+
+          # Update the container image
+          kubectl set image deployment/${SERVICE} \
+            ${SERVICE}=${IMAGE} \
+            -n ${{ env.PROD_NAMESPACE }} \
+            --record
+
+          echo "Waiting for rollout of $SERVICE to complete..."
+          kubectl rollout status deployment/${SERVICE} \
+            -n ${{ env.PROD_NAMESPACE }} \
+            --timeout=${{ env.ROLLOUT_TIMEOUT }} || {
+              echo "::error::Rollout of $SERVICE failed or timed out."
+              exit 1
+            }
+
+          echo "Web console deployed successfully."
+
+      # -----------------------------------------------------------------------
+      # Phase 5: Apply HPA and Ingress configuration updates.
+      # These are applied last to avoid autoscaler interference during rollout.
+      # -----------------------------------------------------------------------
+      - name: "Phase 5: Apply HPA and Ingress"
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          echo "=========================================="
+          echo "Phase 5: HPA and Ingress Updates"
+          echo "=========================================="
+
+          echo "Applying Horizontal Pod Autoscaler configurations..."
+          if [ -f "infrastructure/kubernetes/hpa.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/hpa.yaml -n ${{ env.PROD_NAMESPACE }}
+          fi
+
+          echo "Applying Ingress configuration..."
+          if [ -f "infrastructure/kubernetes/ingress.yaml" ]; then
+            kubectl apply -f infrastructure/kubernetes/ingress.yaml -n ${{ env.PROD_NAMESPACE }}
+          fi
+
+          echo "Phase 5 complete."
+
+      # Produce a deployment summary for the GitHub Actions UI
+      - name: Deployment summary
+        id: deploy-summary
+        if: always()
+        run: |
+          TAG="${{ steps.image-tag.outputs.tag }}"
+          DRY_RUN="${{ github.event.inputs.dry_run }}"
+
+          echo "### Production Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image Tag | \`$TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Namespace | \`${{ env.PROD_NAMESPACE }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dry Run | $DRY_RUN |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Run ID | ${{ github.run_id }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered By | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | $(date -u '+%Y-%m-%dT%H:%M:%SZ') |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$DRY_RUN" == "true" ]; then
+            echo "status=dry-run" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=deployed" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Clean up kubeconfig to avoid credential leakage in runner cache
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f $HOME/.kube/config
+          echo "Credentials cleaned up."
+
+  # ===========================================================================
+  # Job 3: Post-Deployment Verification
+  # ===========================================================================
+  # Runs health checks, smoke tests, and pod readiness verification against
+  # the production environment after deployment completes. Failures here will
+  # trigger the automated rollback job.
+  # ===========================================================================
+  post-deployment-verification:
+    name: Post-Deployment Verification
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    # Skip verification if this was a dry run
+    if: ${{ github.event.inputs.dry_run != 'true' }}
+    timeout-minutes: 15
+
+    outputs:
+      verification_status: ${{ steps.verification-summary.outputs.status }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Allow time for DNS propagation and load balancer stabilization
+      - name: Wait for services to stabilize
+        run: |
+          echo "Waiting ${{ env.STABILIZATION_WAIT }} seconds for services to stabilize..."
+          sleep ${{ env.STABILIZATION_WAIT }}
+          echo "Stabilization period complete."
+
+      # Verify all critical health endpoints return successful responses.
+      # Uses retry logic to account for transient failures during stabilization.
+      - name: Verify service health endpoints
+        id: health-checks
+        env:
+          PROD_API_URL: ${{ secrets.PROD_API_URL }}
+        run: |
+          # Default production API URL if secret is not set
+          API_URL="${PROD_API_URL:-https://api.synthetic-erp.com}"
+          HEALTH_FAILURES=0
+          MAX_RETRIES=5
+          RETRY_DELAY=15
+
+          echo "### Health Check Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Endpoint | Status | Attempts |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|--------|----------|" >> "$GITHUB_STEP_SUMMARY"
+
+          # Function to check a health endpoint with retries
+          check_endpoint() {
+            local URL="$1"
+            local NAME="$2"
+            local ATTEMPT=0
+
+            while [ $ATTEMPT -lt $MAX_RETRIES ]; do
+              ATTEMPT=$((ATTEMPT + 1))
+              echo "Checking $NAME ($URL) — attempt $ATTEMPT/$MAX_RETRIES"
+
+              HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+                --connect-timeout 10 \
+                --max-time 30 \
+                "$URL" 2>/dev/null) || HTTP_CODE="000"
+
+              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+                echo "  ✅ $NAME returned HTTP $HTTP_CODE"
+                echo "| $NAME | ✅ HTTP $HTTP_CODE | $ATTEMPT |" >> "$GITHUB_STEP_SUMMARY"
+                return 0
+              fi
+
+              echo "  ⏳ $NAME returned HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            done
+
+            echo "  ❌ $NAME failed after $MAX_RETRIES attempts (last HTTP $HTTP_CODE)"
+            echo "| $NAME | ❌ HTTP $HTTP_CODE | $MAX_RETRIES |" >> "$GITHUB_STEP_SUMMARY"
+            return 1
+          }
+
+          # Check all required health endpoints
+          check_endpoint "${API_URL}/health" "Health Check (/health)" || HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
+          check_endpoint "${API_URL}/api/v1/health" "API Health (/api/v1/health)" || HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
+          check_endpoint "${API_URL}/ready" "Readiness (/ready)" || HEALTH_FAILURES=$((HEALTH_FAILURES + 1))
+
+          if [ "$HEALTH_FAILURES" -gt 0 ]; then
+            echo "::error::$HEALTH_FAILURES health endpoint(s) failed verification."
+            exit 1
+          fi
+
+          echo "All health endpoints verified successfully."
+
+      # Run lightweight smoke tests against production endpoints to verify
+      # basic API functionality (non-destructive, read-only operations).
+      - name: Run production smoke tests
+        id: smoke-tests
+        env:
+          PROD_API_URL: ${{ secrets.PROD_API_URL }}
+        run: |
+          API_URL="${PROD_API_URL:-https://api.synthetic-erp.com}"
+          SMOKE_FAILURES=0
+
+          echo "### Smoke Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Test | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|--------|" >> "$GITHUB_STEP_SUMMARY"
+
+          # Smoke test: API version endpoint responds correctly
+          echo "Smoke test: API version endpoint..."
+          HTTP_CODE=$(curl -sf -o /tmp/api_response.json -w "%{http_code}" \
+            --connect-timeout 10 --max-time 30 \
+            "${API_URL}/api/v1/health" 2>/dev/null) || HTTP_CODE="000"
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "  ✅ API version endpoint accessible"
+            echo "| API Version Endpoint | ✅ Pass |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ❌ API version endpoint returned HTTP $HTTP_CODE"
+            echo "| API Version Endpoint | ❌ Fail (HTTP $HTTP_CODE) |" >> "$GITHUB_STEP_SUMMARY"
+            SMOKE_FAILURES=$((SMOKE_FAILURES + 1))
+          fi
+
+          # Smoke test: CORS headers are present
+          echo "Smoke test: CORS headers..."
+          CORS_HEADER=$(curl -sf -I --connect-timeout 10 --max-time 30 \
+            -H "Origin: https://console.synthetic-erp.com" \
+            "${API_URL}/health" 2>/dev/null | grep -i "access-control" || true)
+          if [ -n "$CORS_HEADER" ]; then
+            echo "  ✅ CORS headers present"
+            echo "| CORS Headers | ✅ Present |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ⚠️ CORS headers not detected (may be expected depending on config)"
+            echo "| CORS Headers | ⚠️ Not detected |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Smoke test: TLS connection succeeds
+          echo "Smoke test: TLS connectivity..."
+          if curl -sf --tlsv1.3 --connect-timeout 10 --max-time 30 \
+            "${API_URL}/health" > /dev/null 2>&1; then
+            echo "  ✅ TLS 1.3 connection successful"
+            echo "| TLS 1.3 Connectivity | ✅ Pass |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ⚠️ TLS 1.3 not confirmed (may fall back to TLS 1.2)"
+            echo "| TLS 1.3 Connectivity | ⚠️ Unconfirmed |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Smoke test: Response time is acceptable (< 2 seconds)
+          echo "Smoke test: Response latency..."
+          RESPONSE_TIME=$(curl -sf -o /dev/null -w "%{time_total}" \
+            --connect-timeout 10 --max-time 30 \
+            "${API_URL}/health" 2>/dev/null) || RESPONSE_TIME="0"
+          RESPONSE_MS=$(echo "$RESPONSE_TIME * 1000" | bc 2>/dev/null || echo "N/A")
+          if [ "$(echo "$RESPONSE_TIME < 2.0" | bc 2>/dev/null)" = "1" ]; then
+            echo "  ✅ Response time: ${RESPONSE_MS}ms"
+            echo "| Response Latency | ✅ ${RESPONSE_MS}ms |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "  ⚠️ Response time: ${RESPONSE_MS}ms (above 2s threshold)"
+            echo "| Response Latency | ⚠️ ${RESPONSE_MS}ms |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$SMOKE_FAILURES" -gt 0 ]; then
+            echo "::error::$SMOKE_FAILURES smoke test(s) failed."
+            exit 1
+          fi
+
+          echo "All smoke tests passed."
+
+      # Verify that the expected number of pod replicas are running and ready
+      # for each deployment in the production namespace.
+      - name: Verify pod counts and readiness
+        id: pod-verification
+        run: |
+          echo "Setting up kubectl for pod verification..."
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+          echo "### Pod Readiness Verification" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deployment | Ready | Available | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------------|-------|-----------|--------|" >> "$GITHUB_STEP_SUMMARY"
+
+          POD_FAILURES=0
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+
+          for SERVICE in $ALL_SERVICES; do
+            echo "Checking deployment: $SERVICE"
+
+            # Get deployment status
+            READY=$(kubectl get deployment "${SERVICE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || READY=0
+            DESIRED=$(kubectl get deployment "${SERVICE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              -o jsonpath='{.spec.replicas}' 2>/dev/null) || DESIRED=0
+            AVAILABLE=$(kubectl get deployment "${SERVICE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              -o jsonpath='{.status.availableReplicas}' 2>/dev/null) || AVAILABLE=0
+
+            # Handle empty/null values
+            READY=${READY:-0}
+            DESIRED=${DESIRED:-0}
+            AVAILABLE=${AVAILABLE:-0}
+
+            if [ "$READY" -ge "$DESIRED" ] && [ "$DESIRED" -gt 0 ]; then
+              echo "  ✅ $SERVICE: $READY/$DESIRED ready, $AVAILABLE available"
+              echo "| $SERVICE | $READY/$DESIRED | $AVAILABLE | ✅ Healthy |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  ❌ $SERVICE: $READY/$DESIRED ready, $AVAILABLE available"
+              echo "| $SERVICE | $READY/$DESIRED | $AVAILABLE | ❌ Unhealthy |" >> "$GITHUB_STEP_SUMMARY"
+              POD_FAILURES=$((POD_FAILURES + 1))
+            fi
+          done
+
+          # Also verify StatefulSets
+          for STORE in mongodb redis; do
+            READY=$(kubectl get statefulset "${STORE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || READY=0
+            DESIRED=$(kubectl get statefulset "${STORE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              -o jsonpath='{.spec.replicas}' 2>/dev/null) || DESIRED=0
+
+            READY=${READY:-0}
+            DESIRED=${DESIRED:-0}
+
+            if [ "$READY" -ge "$DESIRED" ] && [ "$DESIRED" -gt 0 ]; then
+              echo "  ✅ $STORE (StatefulSet): $READY/$DESIRED ready"
+              echo "| $STORE (SS) | $READY/$DESIRED | — | ✅ Healthy |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  ❌ $STORE (StatefulSet): $READY/$DESIRED ready"
+              echo "| $STORE (SS) | $READY/$DESIRED | — | ❌ Unhealthy |" >> "$GITHUB_STEP_SUMMARY"
+              POD_FAILURES=$((POD_FAILURES + 1))
+            fi
+          done
+
+          # Clean up credentials
+          rm -f $HOME/.kube/config
+
+          if [ "$POD_FAILURES" -gt 0 ]; then
+            echo "::error::$POD_FAILURES deployment(s) have unhealthy pod counts."
+            exit 1
+          fi
+
+          echo "All deployments have healthy pod counts."
+
+      # Summarize overall verification results
+      - name: Verification summary
+        id: verification-summary
+        if: always()
+        run: |
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Post-Deployment Verification Complete" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ All production verification checks passed." >> "$GITHUB_STEP_SUMMARY"
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ One or more verification checks failed. Rollback will be triggered." >> "$GITHUB_STEP_SUMMARY"
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ===========================================================================
+  # Job 4: Automated Rollback
+  # ===========================================================================
+  # Triggered automatically when the post-deployment-verification job fails.
+  # Rolls back all service deployments to their previous revision using
+  # kubectl rollout undo, then verifies the rollback completed successfully
+  # and sends a notification alert.
+  # ===========================================================================
+  rollback:
+    name: Automated Rollback
+    needs: post-deployment-verification
+    runs-on: ubuntu-latest
+    if: failure()
+    timeout-minutes: 20
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.0'
+
+      - name: Configure production cluster credentials
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Set kubectl context to production namespace
+        run: |
+          kubectl config set-context --current --namespace=${{ env.PROD_NAMESPACE }}
+
+      # Roll back each service deployment to the previous known-good revision
+      - name: Rollback all service deployments
+        id: rollback-services
+        run: |
+          echo "=========================================="
+          echo "AUTOMATED ROLLBACK — Production"
+          echo "=========================================="
+          echo "::warning::Rolling back production deployments due to verification failure."
+
+          ROLLBACK_FAILURES=0
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+
+          for SERVICE in $ALL_SERVICES; do
+            echo "------------------------------------------"
+            echo "Rolling back deployment: $SERVICE"
+            echo "------------------------------------------"
+
+            kubectl rollout undo deployment/${SERVICE} \
+              -n ${{ env.PROD_NAMESPACE }} 2>/dev/null || {
+                echo "::warning::Could not rollback $SERVICE (may not exist or no previous revision)."
+                ROLLBACK_FAILURES=$((ROLLBACK_FAILURES + 1))
+                continue
+              }
+
+            echo "Waiting for rollback of $SERVICE to complete..."
+            kubectl rollout status deployment/${SERVICE} \
+              -n ${{ env.PROD_NAMESPACE }} \
+              --timeout=300s || {
+                echo "::error::Rollback of $SERVICE did not complete within timeout."
+                ROLLBACK_FAILURES=$((ROLLBACK_FAILURES + 1))
+              }
+          done
+
+          if [ "$ROLLBACK_FAILURES" -gt 0 ]; then
+            echo "::error::$ROLLBACK_FAILURES service(s) had issues during rollback. Manual intervention may be required."
+          else
+            echo "All service deployments rolled back successfully."
+          fi
+
+      # Verify that the rollback restored services to a healthy state
+      - name: Verify rollback health
+        run: |
+          echo "Verifying service health after rollback..."
+          sleep 30
+
+          ALL_SERVICES="${{ env.BACKEND_SERVICES }} ${{ env.FRONTEND_SERVICE }}"
+          for SERVICE in $ALL_SERVICES; do
+            READY=$(kubectl get deployment "${SERVICE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || READY=0
+            DESIRED=$(kubectl get deployment "${SERVICE}" \
+              -n ${{ env.PROD_NAMESPACE }} \
+              -o jsonpath='{.spec.replicas}' 2>/dev/null) || DESIRED=0
+
+            READY=${READY:-0}
+            DESIRED=${DESIRED:-0}
+
+            if [ "$READY" -ge "$DESIRED" ] && [ "$DESIRED" -gt 0 ]; then
+              echo "  ✅ $SERVICE: $READY/$DESIRED ready after rollback"
+            else
+              echo "  ⚠️ $SERVICE: $READY/$DESIRED ready after rollback — may need manual review"
+            fi
+          done
+
+      # Send a notification about the rollback event for incident response
+      - name: Send rollback notification
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          TAG="${{ needs.deploy-production.outputs.deployed_tag || 'unknown' }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          echo "### ⚠️ Rollback Notification" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Event | Production Rollback |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image Tag | \`$TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered By | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | $TIMESTAMP |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Workflow Run | [${{ github.run_id }}]($RUN_URL) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Production deployment of tag \`$TAG\` failed verification." >> "$GITHUB_STEP_SUMMARY"
+          echo "All services have been rolled back to the previous version." >> "$GITHUB_STEP_SUMMARY"
+
+          # Send Slack notification if webhook is configured
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"text\": \"⚠️ *Production Rollback Alert*\",
+                \"blocks\": [
+                  {
+                    \"type\": \"header\",
+                    \"text\": {
+                      \"type\": \"plain_text\",
+                      \"text\": \"⚠️ Production Deployment Rolled Back\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {\"type\": \"mrkdwn\", \"text\": \"*Image Tag:*\n\`$TAG\`\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Triggered By:*\n${{ github.actor }}\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Timestamp:*\n$TIMESTAMP\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Reason:*\nPost-deployment verification failed\"}
+                    ]
+                  },
+                  {
+                    \"type\": \"actions\",
+                    \"elements\": [
+                      {
+                        \"type\": \"button\",
+                        \"text\": {\"type\": \"plain_text\", \"text\": \"View Workflow Run\"},
+                        \"url\": \"$RUN_URL\"
+                      }
+                    ]
+                  }
+                ]
+              }" || echo "::warning::Failed to send Slack notification."
+          else
+            echo "Slack webhook not configured — skipping notification."
+          fi
+
+      # Clean up kubeconfig credentials
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f $HOME/.kube/config
+          echo "Credentials cleaned up."
+
+  # ===========================================================================
+  # Job 5: Deployment Success Notification
+  # ===========================================================================
+  # Sends a success notification when the entire deployment pipeline completes
+  # successfully (all validations pass, no rollback triggered).
+  # ===========================================================================
+  notify-success:
+    name: Deployment Success Notification
+    needs: post-deployment-verification
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Send success notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          TAG="${{ needs.deploy-production.outputs.deployed_tag || github.sha }}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          echo "### ✅ Production Deployment Successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image Tag | \`$TAG\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Namespace | \`${{ env.PROD_NAMESPACE }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deployed By | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | $TIMESTAMP |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Workflow Run | [${{ github.run_id }}]($RUN_URL) |" >> "$GITHUB_STEP_SUMMARY"
+
+          # Send Slack notification if webhook is configured
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"text\": \"✅ *Production Deployment Successful*\",
+                \"blocks\": [
+                  {
+                    \"type\": \"header\",
+                    \"text\": {
+                      \"type\": \"plain_text\",
+                      \"text\": \"✅ Production Deployment Successful\"
+                    }
+                  },
+                  {
+                    \"type\": \"section\",
+                    \"fields\": [
+                      {\"type\": \"mrkdwn\", \"text\": \"*Image Tag:*\n\`$TAG\`\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Deployed By:*\n${{ github.actor }}\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Timestamp:*\n$TIMESTAMP\"},
+                      {\"type\": \"mrkdwn\", \"text\": \"*Status:*\nAll health checks passed\"}
+                    ]
+                  },
+                  {
+                    \"type\": \"actions\",
+                    \"elements\": [
+                      {
+                        \"type\": \"button\",
+                        \"text\": {\"type\": \"plain_text\", \"text\": \"View Workflow Run\"},
+                        \"url\": \"$RUN_URL\"
+                      }
+                    ]
+                  }
+                ]
+              }" || echo "::warning::Failed to send Slack notification."
+          else
+            echo "Slack webhook not configured — skipping notification."
+          fi
