@@ -35,7 +35,7 @@ __version__: str = "1.0.0"
 # project generation. The create_app function is the package's primary
 # public API, used by wsgi.py, test fixtures, and Docker entrypoints.
 try:
-    from api_gateway.app import create_app  # type: ignore[import-not-found]
+    from api_gateway.app import create_app
 except ImportError:
 
     def create_app(config_name: str | None = None) -> object:
