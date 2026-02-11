@@ -9,7 +9,7 @@ Settings include:
 
 - **Model paths** — Directory for persisted GAN/VAE model artifacts.
 - **Batch processing** — Configurable batch size (default 10K records,
-  valid range 1K–100K) for throughput tuning.
+  valid range 1K-100K) for throughput tuning.
 - **GPU acceleration** — CUDA device selection, memory fraction limits,
   and an enable/disable toggle.
 - **LangChain integration** — Optional API key for LangChain-orchestrated
@@ -32,8 +32,8 @@ Usage::
     from generation_engine.config import get_config
 
     config = get_config()
-    print(config.BATCH_SIZE)    # 10000 in production
-    print(config.GPU_ENABLED)   # True / False based on env
+    print(config.BATCH_SIZE)  # 10000 in production
+    print(config.GPU_ENABLED)  # True / False based on env
 
 No credentials, connection strings, or secrets are hard-coded anywhere in
 this module.  Every sensitive value is read exclusively from the process
@@ -78,7 +78,7 @@ class GenerationEngineConfig(BaseConfig):
         GPU_ENABLED: Whether GPU-accelerated generation is active.
         CUDA_DEVICE: CUDA device identifier (e.g. ``cuda:0``, ``cuda:1``).
         GPU_MEMORY_LIMIT: Maximum fraction of GPU memory the engine may
-            consume (0.0–1.0).
+            consume (0.0-1.0).
         GENERATION_TIMEOUT: Maximum wall-clock seconds for a single
             generation job before it is forcibly terminated.
         CHECKPOINT_INTERVAL: Seconds between Redis-backed progress
@@ -86,7 +86,7 @@ class GenerationEngineConfig(BaseConfig):
         WORKER_CONCURRENCY: Number of parallel generation worker threads
             or processes.
         QUALITY_THRESHOLD: Minimum acceptable weighted quality score
-            (0.0–1.0).  The default of 0.95 corresponds to the ≥ 95%
+            (0.0-1.0).  The default of 0.95 corresponds to the >= 95%
             fidelity target.
         LANGCHAIN_API_KEY: Optional API key for LangChain cloud services.
         PROGRESS_UPDATE_INTERVAL: Seconds between Redis progress-
@@ -139,14 +139,13 @@ class GenerationEngineConfig(BaseConfig):
     # -- Sensitive-key extension --------------------------------------------
     # LANGCHAIN_API_KEY must be redacted in to_safe_dict() output.
 
-    _SENSITIVE_KEYS: frozenset[str] = BaseConfig._SENSITIVE_KEYS | frozenset(
-        {"LANGCHAIN_API_KEY"}
-    )
+    _SENSITIVE_KEYS: frozenset[str] = BaseConfig._SENSITIVE_KEYS | frozenset({"LANGCHAIN_API_KEY"})
 
     # -- Production-required keys -------------------------------------------
     # Extend the base list with generation-engine-specific requirements.
 
-    _PRODUCTION_REQUIRED_KEYS: list[str] = BaseConfig._PRODUCTION_REQUIRED_KEYS + [
+    _PRODUCTION_REQUIRED_KEYS: list[str] = [
+        *BaseConfig._PRODUCTION_REQUIRED_KEYS,
         "MODEL_PATH",
     ]
 
@@ -177,16 +176,12 @@ class GenerationEngineConfig(BaseConfig):
 
         # -- Batch processing -----------------------------------------------
         raw_batch_size: int = self._get_int_env("BATCH_SIZE", self.DEFAULT_BATCH_SIZE)
-        self.BATCH_SIZE: int = max(
-            self.MIN_BATCH_SIZE, min(self.MAX_BATCH_SIZE, raw_batch_size)
-        )
+        self.BATCH_SIZE: int = max(self.MIN_BATCH_SIZE, min(self.MAX_BATCH_SIZE, raw_batch_size))
 
         # -- GPU acceleration -----------------------------------------------
         self.GPU_ENABLED: bool = self._get_bool_env("GPU_ENABLED", False)
         self.CUDA_DEVICE: str = os.environ.get("CUDA_DEVICE", "cuda:0")
-        raw_gpu_memory: float = self._get_env(
-            "GPU_MEMORY_LIMIT", 0.8, cast_type=float
-        )
+        raw_gpu_memory: float = self._get_env("GPU_MEMORY_LIMIT", 0.8, cast_type=float)
         self.GPU_MEMORY_LIMIT: float = max(0.1, min(1.0, raw_gpu_memory))
 
         # -- Timeouts and intervals -----------------------------------------
@@ -195,28 +190,20 @@ class GenerationEngineConfig(BaseConfig):
         self.WORKER_CONCURRENCY: int = self._get_int_env("WORKER_CONCURRENCY", 4)
 
         # -- Quality scoring ------------------------------------------------
-        raw_quality: float = self._get_env(
-            "QUALITY_THRESHOLD", 0.95, cast_type=float
-        )
+        raw_quality: float = self._get_env("QUALITY_THRESHOLD", 0.95, cast_type=float)
         self.QUALITY_THRESHOLD: float = max(0.0, min(1.0, raw_quality))
 
         # -- LangChain integration ------------------------------------------
         self.LANGCHAIN_API_KEY: str = os.environ.get("LANGCHAIN_API_KEY", "")
 
         # -- Progress reporting ---------------------------------------------
-        self.PROGRESS_UPDATE_INTERVAL: int = self._get_int_env(
-            "PROGRESS_UPDATE_INTERVAL", 5
-        )
+        self.PROGRESS_UPDATE_INTERVAL: int = self._get_int_env("PROGRESS_UPDATE_INTERVAL", 5)
 
         # -- Retry / resilience ---------------------------------------------
         self.MAX_RETRIES: int = self._get_int_env("MAX_RETRIES", 3)
         self.RETRY_DELAY: int = self._get_int_env("RETRY_DELAY", 2)
-        self.CIRCUIT_BREAKER_THRESHOLD: int = self._get_int_env(
-            "CIRCUIT_BREAKER_THRESHOLD", 5
-        )
-        self.CIRCUIT_BREAKER_TIMEOUT: int = self._get_int_env(
-            "CIRCUIT_BREAKER_TIMEOUT", 60
-        )
+        self.CIRCUIT_BREAKER_THRESHOLD: int = self._get_int_env("CIRCUIT_BREAKER_THRESHOLD", 5)
+        self.CIRCUIT_BREAKER_TIMEOUT: int = self._get_int_env("CIRCUIT_BREAKER_TIMEOUT", 60)
 
     # -----------------------------------------------------------------------
     # Validation
@@ -254,9 +241,7 @@ class GenerationEngineConfig(BaseConfig):
 
         # -- Batch size range enforcement -----------------------------------
         if self.BATCH_SIZE < self.MIN_BATCH_SIZE or self.BATCH_SIZE > self.MAX_BATCH_SIZE:
-            self.BATCH_SIZE = max(
-                self.MIN_BATCH_SIZE, min(self.MAX_BATCH_SIZE, self.BATCH_SIZE)
-            )
+            self.BATCH_SIZE = max(self.MIN_BATCH_SIZE, min(self.MAX_BATCH_SIZE, self.BATCH_SIZE))
 
         # -- GPU memory fraction sanity -------------------------------------
         if self.GPU_MEMORY_LIMIT <= 0.0 or self.GPU_MEMORY_LIMIT > 1.0:
@@ -378,12 +363,8 @@ class TestingConfig(GenerationEngineConfig):
         self.LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 
         # Separate test databases to avoid polluting development data
-        self.MONGODB_URI = os.environ.get(
-            "MONGODB_URI", "mongodb://localhost:27017/test_synthetic_erp"
-        )
-        self.MONGODB_DATABASE = os.environ.get(
-            "MONGODB_DATABASE", "test_synthetic_erp"
-        )
+        self.MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/test_synthetic_erp")
+        self.MONGODB_DATABASE = os.environ.get("MONGODB_DATABASE", "test_synthetic_erp")
         self.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
 
         # Tiny batch size for fast test execution (below MIN_BATCH_SIZE on
