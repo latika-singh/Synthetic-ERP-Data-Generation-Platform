@@ -55,9 +55,13 @@ Usage::
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 from flask import Blueprint, Flask, current_app, jsonify
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from shared.database.mongodb import check_mongo_health
 from shared.database.redis_client import check_redis_health

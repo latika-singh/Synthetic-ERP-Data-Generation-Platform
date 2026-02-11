@@ -51,18 +51,17 @@ from shared.middleware.health_check import (
     register_health_check,
 )
 
+
 __all__: list[str] = [
-    # Circuit breaker
-    "ServiceCircuitBreaker",
-    "create_circuit_breaker",
-    "circuit_breaker_decorator",
-    "CircuitBreakerRegistry",
     "CircuitBreakerError",
-    "with_circuit_breaker",
-    "handle_circuit_breaker_error",
-    # Health check
-    "health_blueprint",
-    "register_health_check",
-    "init_health_checks",
+    "CircuitBreakerRegistry",
+    "ServiceCircuitBreaker",
+    "circuit_breaker_decorator",
     "clear_health_checks",
+    "create_circuit_breaker",
+    "handle_circuit_breaker_error",
+    "health_blueprint",
+    "init_health_checks",
+    "register_health_check",
+    "with_circuit_breaker",
 ]

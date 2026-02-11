@@ -95,7 +95,7 @@ DEFAULT_FAILURE_THRESHOLD: int = 5
 DEFAULT_RECOVERY_TIMEOUT: int = 30
 """Seconds before attempting a test call in half-open state."""
 
-DEFAULT_EXPECTED_EXCEPTION: type = Exception
+DEFAULT_EXPECTED_EXCEPTION: type[BaseException] = Exception
 """Default exception type to treat as a failure."""
 
 MAX_FAILURE_THRESHOLD: int = 10
@@ -338,7 +338,7 @@ class ServiceCircuitBreaker(CircuitBreaker):
         name: str,
         failure_threshold: int = DEFAULT_FAILURE_THRESHOLD,
         recovery_timeout: int = DEFAULT_RECOVERY_TIMEOUT,
-        expected_exception: type = DEFAULT_EXPECTED_EXCEPTION,
+        expected_exception: type[BaseException] = DEFAULT_EXPECTED_EXCEPTION,
     ) -> None:
         """Initialise with validation, base-class init, and registry registration."""
         # Validate and clamp thresholds within allowed bounds
@@ -500,7 +500,7 @@ def create_circuit_breaker(
     name: str,
     failure_threshold: int = DEFAULT_FAILURE_THRESHOLD,
     recovery_timeout: int = DEFAULT_RECOVERY_TIMEOUT,
-    expected_exception: type = DEFAULT_EXPECTED_EXCEPTION,
+    expected_exception: type[BaseException] = DEFAULT_EXPECTED_EXCEPTION,
 ) -> ServiceCircuitBreaker:
     """Create and return a fully configured :class:`ServiceCircuitBreaker`.
 
@@ -569,7 +569,7 @@ def circuit_breaker_decorator(
     name: str,
     failure_threshold: int = DEFAULT_FAILURE_THRESHOLD,
     recovery_timeout: int = DEFAULT_RECOVERY_TIMEOUT,
-    expected_exception: type = DEFAULT_EXPECTED_EXCEPTION,
+    expected_exception: type[BaseException] = DEFAULT_EXPECTED_EXCEPTION,
     max_retries: int = DEFAULT_MAX_RETRIES,
     backoff_base: float = DEFAULT_BACKOFF_BASE,
 ) -> Callable[[F], F]:
@@ -631,7 +631,7 @@ def circuit_breaker_decorator(
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception: Exception | None = None
+            last_exception: BaseException | None = None
 
             for attempt in range(effective_max_retries + 1):
                 try:
