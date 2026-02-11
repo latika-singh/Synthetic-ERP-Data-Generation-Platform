@@ -37,7 +37,7 @@ fail.
 from __future__ import annotations
 
 import os
-from typing import Optional
+import re
 
 from shared.config.base import BaseConfig
 
@@ -113,27 +113,25 @@ class ProfilingServiceConfig(BaseConfig):
 
     # -- SAP RFC/BAPI connection settings ------------------------------------
 
-    SAP_RFC_HOST: Optional[str] = os.environ.get("SAP_RFC_HOST")
+    SAP_RFC_HOST: str | None = os.environ.get("SAP_RFC_HOST")
     SAP_RFC_SYSNR: str = os.environ.get("SAP_RFC_SYSNR", "00")
     SAP_RFC_CLIENT: str = os.environ.get("SAP_RFC_CLIENT", "100")
-    SAP_RFC_USER: Optional[str] = os.environ.get("SAP_RFC_USER")
-    SAP_RFC_PASSWORD: Optional[str] = os.environ.get("SAP_RFC_PASSWORD")
+    SAP_RFC_USER: str | None = os.environ.get("SAP_RFC_USER")
+    SAP_RFC_PASSWORD: str | None = os.environ.get("SAP_RFC_PASSWORD")
 
     # -- Oracle E-Business Suite JDBC connection settings --------------------
 
-    ORACLE_EBS_JDBC_URL: Optional[str] = os.environ.get("ORACLE_EBS_JDBC_URL")
-    ORACLE_EBS_USER: Optional[str] = os.environ.get("ORACLE_EBS_USER")
-    ORACLE_EBS_PASSWORD: Optional[str] = os.environ.get("ORACLE_EBS_PASSWORD")
-    ORACLE_JDBC_DRIVER: str = os.environ.get(
-        "ORACLE_JDBC_DRIVER", "oracle.jdbc.OracleDriver"
-    )
+    ORACLE_EBS_JDBC_URL: str | None = os.environ.get("ORACLE_EBS_JDBC_URL")
+    ORACLE_EBS_USER: str | None = os.environ.get("ORACLE_EBS_USER")
+    ORACLE_EBS_PASSWORD: str | None = os.environ.get("ORACLE_EBS_PASSWORD")
+    ORACLE_JDBC_DRIVER: str = os.environ.get("ORACLE_JDBC_DRIVER", "oracle.jdbc.OracleDriver")
 
     # -- Microsoft Dynamics 365 Web API / OData settings ---------------------
 
-    DYNAMICS_API_URL: Optional[str] = os.environ.get("DYNAMICS_API_URL")
-    DYNAMICS_CLIENT_ID: Optional[str] = os.environ.get("DYNAMICS_CLIENT_ID")
-    DYNAMICS_CLIENT_SECRET: Optional[str] = os.environ.get("DYNAMICS_CLIENT_SECRET")
-    DYNAMICS_TENANT_ID: Optional[str] = os.environ.get("DYNAMICS_TENANT_ID")
+    DYNAMICS_API_URL: str | None = os.environ.get("DYNAMICS_API_URL")
+    DYNAMICS_CLIENT_ID: str | None = os.environ.get("DYNAMICS_CLIENT_ID")
+    DYNAMICS_CLIENT_SECRET: str | None = os.environ.get("DYNAMICS_CLIENT_SECRET")
+    DYNAMICS_TENANT_ID: str | None = os.environ.get("DYNAMICS_TENANT_ID")
 
     # -- Generic JDBC legacy system settings ---------------------------------
 
@@ -141,9 +139,7 @@ class ProfilingServiceConfig(BaseConfig):
 
     # -- Schema discovery settings -------------------------------------------
 
-    DISCOVERY_TIMEOUT_SECONDS: int = int(
-        os.environ.get("DISCOVERY_TIMEOUT_SECONDS", "300")
-    )
+    DISCOVERY_TIMEOUT_SECONDS: int = int(os.environ.get("DISCOVERY_TIMEOUT_SECONDS", "300"))
     DISCOVERY_MAX_TABLES: int = int(os.environ.get("DISCOVERY_MAX_TABLES", "500"))
     DISCOVERY_BATCH_SIZE: int = int(os.environ.get("DISCOVERY_BATCH_SIZE", "50"))
     DISCOVERY_MAX_RETRIES: int = int(os.environ.get("DISCOVERY_MAX_RETRIES", "3"))
@@ -152,15 +148,9 @@ class ProfilingServiceConfig(BaseConfig):
     # -- Statistical profiling settings --------------------------------------
 
     PROFILING_SAMPLE_SIZE: int = int(os.environ.get("PROFILING_SAMPLE_SIZE", "10000"))
-    PROFILING_TIMEOUT_SECONDS: int = int(
-        os.environ.get("PROFILING_TIMEOUT_SECONDS", "600")
-    )
-    PROFILING_MAX_CATEGORIES: int = int(
-        os.environ.get("PROFILING_MAX_CATEGORIES", "100")
-    )
-    PROFILING_DISTRIBUTION_BINS: int = int(
-        os.environ.get("PROFILING_DISTRIBUTION_BINS", "50")
-    )
+    PROFILING_TIMEOUT_SECONDS: int = int(os.environ.get("PROFILING_TIMEOUT_SECONDS", "600"))
+    PROFILING_MAX_CATEGORIES: int = int(os.environ.get("PROFILING_MAX_CATEGORIES", "100"))
+    PROFILING_DISTRIBUTION_BINS: int = int(os.environ.get("PROFILING_DISTRIBUTION_BINS", "50"))
 
     # -- Supported ERP modules and types (C-005: initial release) ------------
 
@@ -207,63 +197,39 @@ class ProfilingServiceConfig(BaseConfig):
         self.SERVICE_PORT = self._get_int_env("PROFILING_SERVICE_PORT", 8002)
 
         # SAP RFC/BAPI connection settings
-        self.SAP_RFC_HOST: Optional[str] = os.environ.get("SAP_RFC_HOST")
+        self.SAP_RFC_HOST: str | None = os.environ.get("SAP_RFC_HOST")
         self.SAP_RFC_SYSNR: str = os.environ.get("SAP_RFC_SYSNR", "00")
         self.SAP_RFC_CLIENT: str = os.environ.get("SAP_RFC_CLIENT", "100")
-        self.SAP_RFC_USER: Optional[str] = os.environ.get("SAP_RFC_USER")
-        self.SAP_RFC_PASSWORD: Optional[str] = os.environ.get("SAP_RFC_PASSWORD")
+        self.SAP_RFC_USER: str | None = os.environ.get("SAP_RFC_USER")
+        self.SAP_RFC_PASSWORD: str | None = os.environ.get("SAP_RFC_PASSWORD")
 
         # Oracle E-Business Suite JDBC connection settings
-        self.ORACLE_EBS_JDBC_URL: Optional[str] = os.environ.get("ORACLE_EBS_JDBC_URL")
-        self.ORACLE_EBS_USER: Optional[str] = os.environ.get("ORACLE_EBS_USER")
-        self.ORACLE_EBS_PASSWORD: Optional[str] = os.environ.get("ORACLE_EBS_PASSWORD")
-        self.ORACLE_JDBC_DRIVER: str = os.environ.get(
-            "ORACLE_JDBC_DRIVER", "oracle.jdbc.OracleDriver"
-        )
+        self.ORACLE_EBS_JDBC_URL: str | None = os.environ.get("ORACLE_EBS_JDBC_URL")
+        self.ORACLE_EBS_USER: str | None = os.environ.get("ORACLE_EBS_USER")
+        self.ORACLE_EBS_PASSWORD: str | None = os.environ.get("ORACLE_EBS_PASSWORD")
+        self.ORACLE_JDBC_DRIVER: str = os.environ.get("ORACLE_JDBC_DRIVER", "oracle.jdbc.OracleDriver")
 
         # Microsoft Dynamics 365 Web API / OData settings
-        self.DYNAMICS_API_URL: Optional[str] = os.environ.get("DYNAMICS_API_URL")
-        self.DYNAMICS_CLIENT_ID: Optional[str] = os.environ.get("DYNAMICS_CLIENT_ID")
-        self.DYNAMICS_CLIENT_SECRET: Optional[str] = os.environ.get(
-            "DYNAMICS_CLIENT_SECRET"
-        )
-        self.DYNAMICS_TENANT_ID: Optional[str] = os.environ.get("DYNAMICS_TENANT_ID")
+        self.DYNAMICS_API_URL: str | None = os.environ.get("DYNAMICS_API_URL")
+        self.DYNAMICS_CLIENT_ID: str | None = os.environ.get("DYNAMICS_CLIENT_ID")
+        self.DYNAMICS_CLIENT_SECRET: str | None = os.environ.get("DYNAMICS_CLIENT_SECRET")
+        self.DYNAMICS_TENANT_ID: str | None = os.environ.get("DYNAMICS_TENANT_ID")
 
         # Generic JDBC legacy system settings
-        self.JDBC_DRIVER_PATH: str = os.environ.get(
-            "JDBC_DRIVER_PATH", "/opt/jdbc-drivers"
-        )
+        self.JDBC_DRIVER_PATH: str = os.environ.get("JDBC_DRIVER_PATH", "/opt/jdbc-drivers")
 
         # Schema discovery settings
-        self.DISCOVERY_TIMEOUT_SECONDS: int = self._get_int_env(
-            "DISCOVERY_TIMEOUT_SECONDS", 300
-        )
-        self.DISCOVERY_MAX_TABLES: int = self._get_int_env(
-            "DISCOVERY_MAX_TABLES", 500
-        )
-        self.DISCOVERY_BATCH_SIZE: int = self._get_int_env(
-            "DISCOVERY_BATCH_SIZE", 50
-        )
-        self.DISCOVERY_MAX_RETRIES: int = self._get_int_env(
-            "DISCOVERY_MAX_RETRIES", 3
-        )
-        self.DISCOVERY_RETRY_DELAY: float = self._get_float_env(
-            "DISCOVERY_RETRY_DELAY", 2.0
-        )
+        self.DISCOVERY_TIMEOUT_SECONDS: int = self._get_int_env("DISCOVERY_TIMEOUT_SECONDS", 300)
+        self.DISCOVERY_MAX_TABLES: int = self._get_int_env("DISCOVERY_MAX_TABLES", 500)
+        self.DISCOVERY_BATCH_SIZE: int = self._get_int_env("DISCOVERY_BATCH_SIZE", 50)
+        self.DISCOVERY_MAX_RETRIES: int = self._get_int_env("DISCOVERY_MAX_RETRIES", 3)
+        self.DISCOVERY_RETRY_DELAY: float = self._get_float_env("DISCOVERY_RETRY_DELAY", 2.0)
 
         # Statistical profiling settings
-        self.PROFILING_SAMPLE_SIZE: int = self._get_int_env(
-            "PROFILING_SAMPLE_SIZE", 10000
-        )
-        self.PROFILING_TIMEOUT_SECONDS: int = self._get_int_env(
-            "PROFILING_TIMEOUT_SECONDS", 600
-        )
-        self.PROFILING_MAX_CATEGORIES: int = self._get_int_env(
-            "PROFILING_MAX_CATEGORIES", 100
-        )
-        self.PROFILING_DISTRIBUTION_BINS: int = self._get_int_env(
-            "PROFILING_DISTRIBUTION_BINS", 50
-        )
+        self.PROFILING_SAMPLE_SIZE: int = self._get_int_env("PROFILING_SAMPLE_SIZE", 10000)
+        self.PROFILING_TIMEOUT_SECONDS: int = self._get_int_env("PROFILING_TIMEOUT_SECONDS", 600)
+        self.PROFILING_MAX_CATEGORIES: int = self._get_int_env("PROFILING_MAX_CATEGORIES", 100)
+        self.PROFILING_DISTRIBUTION_BINS: int = self._get_int_env("PROFILING_DISTRIBUTION_BINS", 50)
 
         # Supported ERP modules and types — immutable per C-005
         self.SUPPORTED_ERP_MODULES: list[str] = [
@@ -335,19 +301,15 @@ class ProfilingServiceConfig(BaseConfig):
             # Ensure at least one ERP connection is configured by checking
             # that the primary host/URL for at least one connector is set.
             has_sap: bool = self.SAP_RFC_HOST is not None and len(self.SAP_RFC_HOST) > 0
-            has_oracle: bool = (
-                self.ORACLE_EBS_JDBC_URL is not None
-                and len(self.ORACLE_EBS_JDBC_URL) > 0
-            )
-            has_dynamics: bool = (
-                self.DYNAMICS_API_URL is not None and len(self.DYNAMICS_API_URL) > 0
-            )
+            has_oracle: bool = self.ORACLE_EBS_JDBC_URL is not None and len(self.ORACLE_EBS_JDBC_URL) > 0
+            has_dynamics: bool = self.DYNAMICS_API_URL is not None and len(self.DYNAMICS_API_URL) > 0
 
             # It is acceptable to have no ERP connections in production if the
             # service is being deployed for JDBC-only legacy connectivity.
-            # We log a warning via the standard validation path but do not
-            # raise — the individual connectors perform their own connectivity
-            # checks at runtime.
+            # The individual connectors perform their own connectivity checks
+            # at runtime; however we record whether any managed connector is
+            # configured to aid observability.
+            self._has_managed_erp_connector: bool = has_sap or has_oracle or has_dynamics
 
             # Validate numeric ranges are sensible
             if self.DISCOVERY_TIMEOUT_SECONDS <= 0:
@@ -378,11 +340,9 @@ class ProfilingServiceConfig(BaseConfig):
         safe: dict[str, object] = super().to_safe_dict()
 
         # Mask any credentials embedded in JDBC URLs
-        jdbc_url: Optional[str] = safe.get("ORACLE_EBS_JDBC_URL")  # type: ignore[assignment]
+        jdbc_url: str | None = safe.get("ORACLE_EBS_JDBC_URL")  # type: ignore[assignment]
         if jdbc_url and isinstance(jdbc_url, str) and "@" in jdbc_url:
             # Mask user:password in jdbc:oracle:thin:user/password@host:port:sid
-            import re
-
             safe["ORACLE_EBS_JDBC_URL"] = re.sub(
                 r"(://|:thin:)([^/@]+)/([^@]+)@",
                 r"\1\2/***REDACTED***@",
@@ -446,25 +406,17 @@ class TestingConfig(ProfilingServiceConfig):
         self.DEBUG = False
         self.TESTING = True
         self.LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
-        self.MONGODB_URI = os.environ.get(
-            "MONGODB_URI", "mongodb://localhost:27017/synthetic_erp_test"
-        )
-        self.MONGODB_DATABASE = os.environ.get(
-            "MONGODB_DATABASE", "synthetic_erp_test"
-        )
+        self.MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017/synthetic_erp_test")
+        self.MONGODB_DATABASE = os.environ.get("MONGODB_DATABASE", "synthetic_erp_test")
         self.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
         self.SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "test-secret-key")
         self.JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "test-jwt-secret")
 
         # Discovery settings tuned for fast test execution
-        self.DISCOVERY_TIMEOUT_SECONDS = self._get_int_env(
-            "DISCOVERY_TIMEOUT_SECONDS", 30
-        )
+        self.DISCOVERY_TIMEOUT_SECONDS = self._get_int_env("DISCOVERY_TIMEOUT_SECONDS", 30)
         self.DISCOVERY_MAX_TABLES = self._get_int_env("DISCOVERY_MAX_TABLES", 50)
         self.PROFILING_SAMPLE_SIZE = self._get_int_env("PROFILING_SAMPLE_SIZE", 100)
-        self.PROFILING_TIMEOUT_SECONDS = self._get_int_env(
-            "PROFILING_TIMEOUT_SECONDS", 60
-        )
+        self.PROFILING_TIMEOUT_SECONDS = self._get_int_env("PROFILING_TIMEOUT_SECONDS", 60)
 
     def validate(self) -> None:
         """Relaxed validation for the testing environment.
@@ -495,9 +447,7 @@ class ProductionConfig(ProfilingServiceConfig):
         self.DEBUG = False
         self.TESTING = False
         self.LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARNING")
-        self.MONGODB_MAX_POOL_SIZE = self._get_int_env(
-            "MONGODB_MAX_POOL_SIZE", 200
-        )
+        self.MONGODB_MAX_POOL_SIZE = self._get_int_env("MONGODB_MAX_POOL_SIZE", 200)
 
     # validate() is inherited from ProfilingServiceConfig which chains to
     # BaseConfig.validate(), enforcing strict production checks.
@@ -517,7 +467,7 @@ configuration classes.
 """
 
 
-def get_config(config_name: Optional[str] = None) -> ProfilingServiceConfig:
+def get_config(config_name: str | None = None) -> ProfilingServiceConfig:
     """Create and validate the appropriate Profiling Service configuration.
 
     Inspects the ``FLASK_ENV`` environment variable (or uses the explicitly
@@ -553,15 +503,9 @@ def get_config(config_name: Optional[str] = None) -> ProfilingServiceConfig:
         # Explicit environment override
         config = get_config("testing")
     """
-    env: str = (
-        config_name
-        if config_name is not None
-        else os.environ.get("FLASK_ENV", "development")
-    ).lower()
+    env: str = (config_name if config_name is not None else os.environ.get("FLASK_ENV", "development")).lower()
 
-    config_class: type[ProfilingServiceConfig] = _config_registry.get(
-        env, DevelopmentConfig
-    )
+    config_class: type[ProfilingServiceConfig] = _config_registry.get(env, DevelopmentConfig)
     config: ProfilingServiceConfig = config_class()
     config.validate()
     return config
