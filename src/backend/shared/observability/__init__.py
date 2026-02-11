@@ -12,7 +12,7 @@ six backend microservices:
 Usage::
 
     from shared.observability.tracing import init_tracing, get_tracer, create_span
-    from shared.observability.metrics import init_metrics, track_request
+    from shared.observability.metrics import setup_metrics, track_request_metrics
 
 Sub-modules that have not yet been installed or created are silently skipped
 to allow incremental deployment and avoid circular import errors.
@@ -53,8 +53,44 @@ except ImportError:
 
 # --- metrics --------------------------------------------------------------
 try:
-    from shared.observability.metrics import init_metrics  # type: ignore[import-untyped]
+    from shared.observability.metrics import (
+        ACTIVE_CONNECTIONS,
+        COMPLIANCE_CHECK_DURATION,
+        ERROR_COUNTER,
+        GENERATION_JOB_DURATION,
+        GENERATION_JOB_THROUGHPUT,
+        HTTP_REQUEST_DURATION,
+        HTTP_REQUEST_IN_PROGRESS,
+        HTTP_REQUEST_TOTAL,
+        QUALITY_SCORE,
+        get_metrics_registry,
+        metrics_blueprint,
+        record_error,
+        record_generation_throughput,
+        register_custom_metric,
+        setup_metrics,
+        track_request_metrics,
+    )
 
-    __all__.append("init_metrics")
+    __all__.extend(
+        [
+            "setup_metrics",
+            "metrics_blueprint",
+            "register_custom_metric",
+            "get_metrics_registry",
+            "track_request_metrics",
+            "record_error",
+            "record_generation_throughput",
+            "HTTP_REQUEST_DURATION",
+            "HTTP_REQUEST_TOTAL",
+            "HTTP_REQUEST_IN_PROGRESS",
+            "ACTIVE_CONNECTIONS",
+            "GENERATION_JOB_THROUGHPUT",
+            "GENERATION_JOB_DURATION",
+            "ERROR_COUNTER",
+            "QUALITY_SCORE",
+            "COMPLIANCE_CHECK_DURATION",
+        ]
+    )
 except ImportError:
     pass
