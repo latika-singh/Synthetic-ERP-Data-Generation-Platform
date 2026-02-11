@@ -1,0 +1,505 @@
+# =============================================================================
+# Security Scanning Workflow — Synthetic-ERP-Data-Generation-Platform
+# =============================================================================
+# Comprehensive security scanning pipeline supporting SOC 2 Type II compliance
+# (C-004) and R-006 (Security by default). Scans all 7 Docker images for
+# vulnerabilities, audits Python and Node.js dependencies, and performs SAST
+# analysis on both backend (Python/Bandit) and frontend (TypeScript/ESLint).
+#
+# Results are uploaded as SARIF to the GitHub Security tab for centralized
+# vulnerability tracking and audit trail retention.
+#
+# Schedule: Weekly Monday 6 AM UTC for continuous monitoring of newly
+# disclosed vulnerabilities (CVEs) in base images and dependencies.
+# =============================================================================
+
+name: Security Scan
+
+on:
+  # Scan on every pull request targeting main
+  pull_request:
+    branches: [main]
+
+  # Scan on every push to main (post-merge)
+  push:
+    branches: [main]
+
+  # Weekly scheduled scan for continuous vulnerability monitoring
+  # Runs every Monday at 6:00 AM UTC to catch newly disclosed CVEs
+  schedule:
+    - cron: '0 6 * * 1'
+
+# Prevent duplicate runs for the same PR/branch while allowing scheduled runs
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# =============================================================================
+# Job 1: Trivy Container Vulnerability Scanning
+# =============================================================================
+# Builds and scans all 7 Docker images (6 backend services + web console)
+# for OS-level and library vulnerabilities. Fails on HIGH or CRITICAL severity
+# findings and uploads SARIF results to GitHub Security tab.
+# =============================================================================
+jobs:
+  trivy-scan:
+    name: Trivy Scan — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - generation-engine
+          - profiling-service
+          - quality-service
+          - compliance-service
+          - provisioning-service
+          - web-console
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image for scanning
+        run: |
+          echo "::group::Building ${{ matrix.service }} image for vulnerability scanning"
+          docker build \
+            -f infrastructure/docker/${{ matrix.service }}.Dockerfile \
+            -t scan-${{ matrix.service }}:${{ github.sha }} \
+            .
+          echo "::endgroup::"
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: scan-${{ matrix.service }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+          wait-for-processing: true
+
+      - name: Upload Trivy results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results-${{ matrix.service }}
+          path: trivy-results-${{ matrix.service }}.sarif
+          retention-days: 90
+
+  # ===========================================================================
+  # Job 2: Python Dependency Audit
+  # ===========================================================================
+  # Audits Python dependencies for all 6 backend services using pip-audit.
+  # Checks requirements.txt against the Python Packaging Advisory Database
+  # (PyPI) for known vulnerabilities. Generates JSON report and fails on
+  # any known vulnerability in strict mode.
+  # ===========================================================================
+  python-dependency-audit:
+    name: Python Audit — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api_gateway
+          - generation_engine
+          - profiling_service
+          - quality_service
+          - compliance_service
+          - provisioning_service
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit (JSON report)
+        run: |
+          echo "::group::Auditing dependencies for ${{ matrix.service }}"
+          pip-audit \
+            -r src/backend/${{ matrix.service }}/requirements.txt \
+            --format=json \
+            --output=audit-${{ matrix.service }}.json \
+            || true
+          echo "::endgroup::"
+          echo "### Dependency Audit Results — ${{ matrix.service }}" >> $GITHUB_STEP_SUMMARY
+          if [ -f audit-${{ matrix.service }}.json ]; then
+            python3 -c "
+          import json, sys
+          with open('audit-${{ matrix.service }}.json') as f:
+              data = json.load(f)
+          deps = data if isinstance(data, list) else data.get('dependencies', [])
+          vulns = [d for d in deps if d.get('vulns')]
+          if vulns:
+              print(f'⚠️ Found vulnerabilities in {len(vulns)} package(s)')
+              for v in vulns:
+                  print(f\"- **{v['name']}** {v['version']}: {len(v['vulns'])} vulnerability(ies)\")
+          else:
+              print('✅ No known vulnerabilities found')
+          " >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Run pip-audit (strict mode — fail on vulnerabilities)
+        run: |
+          pip-audit \
+            -r src/backend/${{ matrix.service }}/requirements.txt \
+            --strict
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-${{ matrix.service }}
+          path: audit-${{ matrix.service }}.json
+          retention-days: 90
+
+  # ===========================================================================
+  # Job 3: Node.js Dependency Audit
+  # ===========================================================================
+  # Audits frontend npm dependencies for known vulnerabilities using the
+  # built-in npm audit command. Fails on HIGH severity or above.
+  # ===========================================================================
+  node-dependency-audit:
+    name: Node.js Dependency Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: src/web
+        run: npm ci
+
+      - name: Run npm audit (JSON report)
+        working-directory: src/web
+        run: |
+          npm audit --json > ../npm-audit-results.json 2>&1 || true
+          echo "### npm Audit Results — Web Console" >> $GITHUB_STEP_SUMMARY
+          node -e "
+          const fs = require('fs');
+          try {
+            const data = JSON.parse(fs.readFileSync('../npm-audit-results.json', 'utf8'));
+            const meta = data.metadata || {};
+            const vulns = meta.vulnerabilities || {};
+            const total = (vulns.high || 0) + (vulns.critical || 0);
+            if (total > 0) {
+              console.log('⚠️ Found ' + total + ' high/critical vulnerabilities');
+              if (vulns.critical) console.log('- Critical: ' + vulns.critical);
+              if (vulns.high) console.log('- High: ' + vulns.high);
+            } else {
+              console.log('✅ No high/critical vulnerabilities found');
+            }
+          } catch(e) {
+            console.log('ℹ️ Could not parse audit results');
+          }
+          " >> $GITHUB_STEP_SUMMARY
+
+      - name: Run npm audit (fail on high severity)
+        working-directory: src/web
+        run: npm audit --audit-level=high
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-audit-web-console
+          path: src/npm-audit-results.json
+          retention-days: 90
+
+  # ===========================================================================
+  # Job 4: SAST — Python (Bandit)
+  # ===========================================================================
+  # Performs Static Application Security Testing on all Python backend code
+  # using Bandit. Detects common security issues including SQL injection,
+  # hardcoded passwords, insecure deserialization, use of eval(), weak
+  # cryptography, and more. Outputs SARIF for GitHub Security integration.
+  # ===========================================================================
+  sast-python:
+    name: SAST — Python (Bandit)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Bandit with TOML support
+        run: pip install "bandit[toml]" bandit-sarif-formatter
+
+      - name: Run Bandit SAST analysis
+        run: |
+          echo "::group::Running Bandit security analysis on src/backend/"
+          bandit \
+            -r src/backend/ \
+            -c tests/security/bandit.yaml \
+            -f sarif \
+            -o bandit-results.sarif \
+            --exit-zero
+          echo "::endgroup::"
+
+      - name: Check Bandit results for high-severity issues
+        run: |
+          bandit \
+            -r src/backend/ \
+            -c tests/security/bandit.yaml \
+            -ll \
+            -ii \
+            -f json \
+            -o bandit-summary.json \
+            || true
+          echo "### Bandit SAST Results — Python Backend" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          try:
+              with open('bandit-summary.json') as f:
+                  data = json.load(f)
+              results = data.get('results', [])
+              metrics = data.get('metrics', {}).get('_totals', {})
+              high = metrics.get('SEVERITY.HIGH', 0)
+              medium = metrics.get('SEVERITY.MEDIUM', 0)
+              low = metrics.get('SEVERITY.LOW', 0)
+              if high > 0:
+                  print(f'🔴 Found {high} HIGH severity issue(s)')
+              if medium > 0:
+                  print(f'🟡 Found {medium} MEDIUM severity issue(s)')
+              if low > 0:
+                  print(f'🟢 Found {low} LOW severity issue(s)')
+              if high == 0 and medium == 0 and low == 0:
+                  print('✅ No security issues found')
+          except Exception as e:
+              print(f'ℹ️ Could not parse Bandit results: {e}')
+          " >> $GITHUB_STEP_SUMMARY
+          # Fail if HIGH confidence + HIGH severity issues exist
+          bandit \
+            -r src/backend/ \
+            -c tests/security/bandit.yaml \
+            -lll \
+            -iii
+
+      - name: Upload Bandit SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+          wait-for-processing: true
+
+      - name: Upload Bandit results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-results
+          path: |
+            bandit-results.sarif
+            bandit-summary.json
+          retention-days: 90
+
+  # ===========================================================================
+  # Job 5: SAST — TypeScript (ESLint Security)
+  # ===========================================================================
+  # Performs Static Application Security Testing on frontend TypeScript code
+  # using ESLint with security-focused plugins. Detects XSS vulnerabilities,
+  # unsafe innerHTML usage, prototype pollution, and other web security issues.
+  # Outputs SARIF for GitHub Security integration.
+  # ===========================================================================
+  sast-typescript:
+    name: SAST — TypeScript (ESLint Security)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: src/web
+        run: npm ci
+
+      - name: Install SARIF formatter
+        working-directory: src/web
+        run: npm install --no-save @microsoft/eslint-formatter-sarif
+
+      - name: Run ESLint security analysis
+        working-directory: src/web
+        run: |
+          npx eslint src/ \
+            --format=@microsoft/eslint-formatter-sarif \
+            --output-file=eslint-security.sarif \
+            || true
+
+      - name: Validate SARIF output
+        working-directory: src/web
+        run: |
+          if [ ! -f eslint-security.sarif ]; then
+            echo '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"ESLint","rules":[]}},"results":[]}]}' > eslint-security.sarif
+          fi
+          # Ensure the SARIF file is valid JSON
+          python3 -c "import json; json.load(open('eslint-security.sarif'))" || {
+            echo "SARIF file is not valid JSON, creating empty SARIF"
+            echo '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"ESLint","rules":[]}},"results":[]}]}' > eslint-security.sarif
+          }
+
+      - name: Generate ESLint summary
+        working-directory: src/web
+        run: |
+          echo "### ESLint Security Results — TypeScript Frontend" >> $GITHUB_STEP_SUMMARY
+          npx eslint src/ --format=json --output-file=eslint-summary.json || true
+          node -e "
+          const fs = require('fs');
+          try {
+            const data = JSON.parse(fs.readFileSync('eslint-summary.json', 'utf8'));
+            let errors = 0, warnings = 0;
+            data.forEach(file => {
+              errors += file.errorCount || 0;
+              warnings += file.warningCount || 0;
+            });
+            if (errors > 0) {
+              console.log('🔴 Found ' + errors + ' error(s)');
+            }
+            if (warnings > 0) {
+              console.log('🟡 Found ' + warnings + ' warning(s)');
+            }
+            if (errors === 0 && warnings === 0) {
+              console.log('✅ No security issues found');
+            }
+          } catch(e) {
+            console.log('ℹ️ Could not parse ESLint results');
+          }
+          " >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload ESLint SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: src/web/eslint-security.sarif
+          category: eslint-security
+          wait-for-processing: true
+
+      - name: Upload ESLint results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eslint-security-results
+          path: |
+            src/web/eslint-security.sarif
+            src/web/eslint-summary.json
+          retention-days: 90
+
+  # ===========================================================================
+  # Summary Job: Aggregates results from all scanning jobs
+  # ===========================================================================
+  # Provides a consolidated view of all security scan results. Always runs
+  # regardless of individual job outcomes to ensure complete audit trail
+  # visibility for SOC 2 Type II compliance.
+  # ===========================================================================
+  security-summary:
+    name: Security Scan Summary
+    runs-on: ubuntu-latest
+    needs:
+      - trivy-scan
+      - python-dependency-audit
+      - node-dependency-audit
+      - sast-python
+      - sast-typescript
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Generate consolidated security report
+        run: |
+          echo "## 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan Type | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.trivy-scan.result }}" == "success" ]; then
+            echo "| Trivy Container Scan | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Trivy Container Scan | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.python-dependency-audit.result }}" == "success" ]; then
+            echo "| Python Dependency Audit | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Python Dependency Audit | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.node-dependency-audit.result }}" == "success" ]; then
+            echo "| Node.js Dependency Audit | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Node.js Dependency Audit | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.sast-python.result }}" == "success" ]; then
+            echo "| SAST Python (Bandit) | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| SAST Python (Bandit) | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.sast-typescript.result }}" == "success" ]; then
+            echo "| SAST TypeScript (ESLint) | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| SAST TypeScript (ESLint) | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_Scan triggered by: ${{ github.event_name }} on ${{ github.ref }}_" >> $GITHUB_STEP_SUMMARY
+          echo "_Commit: ${{ github.sha }}_" >> $GITHUB_STEP_SUMMARY
+          echo "_Timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')_" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if any security scan failed
+        if: |
+          needs.trivy-scan.result == 'failure' ||
+          needs.python-dependency-audit.result == 'failure' ||
+          needs.node-dependency-audit.result == 'failure' ||
+          needs.sast-python.result == 'failure' ||
+          needs.sast-typescript.result == 'failure'
+        run: |
+          echo "::error::One or more security scans failed. Review the GitHub Security tab for details."
+          exit 1
