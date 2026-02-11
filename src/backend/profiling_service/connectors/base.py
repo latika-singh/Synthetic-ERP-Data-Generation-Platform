@@ -55,14 +55,18 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from datetime import datetime
-from enum import Enum
-from typing import Any, Optional
+from datetime import datetime  # noqa: TC003 — required at runtime by Pydantic field validators
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 # Module-level logger for this base module.  Concrete connectors initialise
 # their own logger via ``get_logger(__name__)`` in ``BaseConnector.__init__``.
@@ -74,7 +78,7 @@ _module_logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class ERPModule(str, Enum):
+class ERPModule(StrEnum):
     """Enumeration of supported ERP functional modules.
 
     Constraint C-005 limits the initial release to these four modules.
@@ -153,18 +157,18 @@ class ConnectionConfig(BaseModel):
     model_config = ConfigDict(frozen=False, str_strip_whitespace=True)
 
     erp_type: str
-    host: Optional[str] = None
-    port: Optional[int] = None
-    username: Optional[str] = None
-    password: Optional[str] = None
-    database: Optional[str] = None
-    jdbc_url: Optional[str] = None
-    jdbc_driver_class: Optional[str] = None
-    jdbc_driver_path: Optional[str] = None
-    api_url: Optional[str] = None
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
-    tenant_id: Optional[str] = None
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+    password: str | None = None
+    database: str | None = None
+    jdbc_url: str | None = None
+    jdbc_driver_class: str | None = None
+    jdbc_driver_path: str | None = None
+    api_url: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    tenant_id: str | None = None
     additional_params: dict[str, Any] = Field(default_factory=dict)
     max_retries: int = Field(default=3, ge=0, le=10)
     retry_delay: float = Field(default=2.0, gt=0.0)
@@ -198,12 +202,12 @@ class TableMetadata(BaseModel):
     model_config = ConfigDict(frozen=False, str_strip_whitespace=True)
 
     table_name: str
-    schema_name: Optional[str] = None
-    description: Optional[str] = None
-    estimated_row_count: Optional[int] = Field(default=None, ge=0)
-    module: Optional[ERPModule] = None
-    table_type: Optional[str] = Field(default="TABLE")
-    last_analyzed: Optional[datetime] = None
+    schema_name: str | None = None
+    description: str | None = None
+    estimated_row_count: int | None = Field(default=None, ge=0)
+    module: ERPModule | None = None
+    table_type: str | None = Field(default="TABLE")
+    last_analyzed: datetime | None = None
 
 
 class ColumnMetadata(BaseModel):
@@ -239,16 +243,16 @@ class ColumnMetadata(BaseModel):
 
     column_name: str
     native_type: str
-    standard_type: Optional[str] = None
-    max_length: Optional[int] = Field(default=None, ge=0)
-    precision: Optional[int] = Field(default=None, ge=0)
-    scale: Optional[int] = Field(default=None, ge=0)
+    standard_type: str | None = None
+    max_length: int | None = Field(default=None, ge=0)
+    precision: int | None = Field(default=None, ge=0)
+    scale: int | None = Field(default=None, ge=0)
     is_nullable: bool = True
     is_primary_key: bool = False
     is_auto_increment: bool = False
-    ordinal_position: Optional[int] = Field(default=None, ge=1)
-    description: Optional[str] = None
-    default_value: Optional[str] = None
+    ordinal_position: int | None = Field(default=None, ge=1)
+    description: str | None = None
+    default_value: str | None = None
 
 
 class RelationshipMetadata(BaseModel):
@@ -281,14 +285,14 @@ class RelationshipMetadata(BaseModel):
 
     model_config = ConfigDict(frozen=False, str_strip_whitespace=True)
 
-    constraint_name: Optional[str] = None
+    constraint_name: str | None = None
     source_table: str
     source_column: str
     target_table: str
     target_column: str
     relationship_type: str = Field(default="ONE_TO_MANY")
-    on_delete: Optional[str] = None
-    on_update: Optional[str] = None
+    on_delete: str | None = None
+    on_update: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -315,8 +319,8 @@ class ConnectorError(Exception):
     def __init__(
         self,
         message: str,
-        erp_type: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        erp_type: str | None = None,
+        original_error: Exception | None = None,
     ) -> None:
         """Initialise a ConnectorError.
 
@@ -470,8 +474,8 @@ class BaseConnector(ABC):
     @abstractmethod
     def discover_tables(
         self,
-        schema_name: Optional[str] = None,
-        module: Optional[ERPModule] = None,
+        schema_name: str | None = None,
+        module: ERPModule | None = None,
     ) -> list[TableMetadata]:
         """Discover tables and views in the target ERP schema.
 
@@ -499,7 +503,7 @@ class BaseConnector(ABC):
     def discover_columns(
         self,
         table_name: str,
-        schema_name: Optional[str] = None,
+        schema_name: str | None = None,
     ) -> list[ColumnMetadata]:
         """Discover columns for a specific table.
 
@@ -527,7 +531,7 @@ class BaseConnector(ABC):
     @abstractmethod
     def discover_relationships(
         self,
-        schema_name: Optional[str] = None,
+        schema_name: str | None = None,
     ) -> list[RelationshipMetadata]:
         """Discover foreign-key relationships across the target schema.
 
@@ -566,8 +570,8 @@ class BaseConnector(ABC):
         operation: Callable[..., Any],
         *args: Any,
         operation_name: str = "operation",
-        max_retries: Optional[int] = None,
-        base_delay: Optional[float] = None,
+        max_retries: int | None = None,
+        base_delay: float | None = None,
         **kwargs: Any,
     ) -> Any:
         """Execute an operation with automatic retry and exponential backoff.
@@ -600,7 +604,7 @@ class BaseConnector(ABC):
         effective_retries: int = max_retries if max_retries is not None else self._config.max_retries
         effective_delay: float = base_delay if base_delay is not None else self._config.retry_delay
 
-        last_exception: Optional[Exception] = None
+        last_exception: Exception | None = None
 
         for attempt in range(effective_retries + 1):
             try:
@@ -689,10 +693,10 @@ class BaseConnector(ABC):
 
     def __exit__(
         self,
-        exc_type: Optional[type[BaseException]],
-        exc_val: Optional[BaseException],
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
         exc_tb: Any,
-    ) -> bool:
+    ) -> None:
         """Exit the context manager, closing the ERP connection.
 
         Always calls :meth:`close` to release resources, even when an
@@ -706,7 +710,7 @@ class BaseConnector(ABC):
             exc_tb: The traceback object, if any.
 
         Returns:
-            ``False`` — exceptions are never suppressed by this context
+            ``None`` — exceptions are never suppressed by this context
             manager.
         """
         try:
@@ -725,4 +729,3 @@ class BaseConnector(ABC):
                 erp_type=self._config.erp_type,
                 had_exception=exc_type is not None,
             )
-        return False
