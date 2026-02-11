@@ -647,7 +647,7 @@ class SchemaDefinitionRepository:
                     "total_tables": doc.get("total_tables", 0),
                 },
             )
-            return doc["schema_id"]
+            return str(doc["schema_id"])
         except Exception:
             logger.error(
                 "Failed to create schema definition",
