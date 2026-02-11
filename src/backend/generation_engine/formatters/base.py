@@ -8,18 +8,21 @@ prevent circular imports between ``__init__.py`` (which registers concrete
 formatters) and the concrete formatter implementations (which inherit from
 ``BaseFormatter``).
 
-All formatters accept pandas DataFrames containing generated synthetic ERP
-data and produce output in their respective format.  The abstract interface
-guarantees consistent dispatch from the generation orchestrator.
+All formatters accept :class:`pandas.DataFrame` instances containing generated
+synthetic ERP data and produce output in their respective format.  The
+abstract interface guarantees consistent dispatch from the generation
+orchestrator and batch processor.
 
-Example::
+Typical usage::
 
-    class MyFormatter(BaseFormatter):
+    from generation_engine.formatters.base import BaseFormatter
+
+    class CSVFormatter(BaseFormatter):
         def format(self, data, table_name, column_definitions=None):
-            return data.to_csv()
+            return data.to_csv(index=False)
 
         def format_to_stream(self, data, table_name, column_definitions, output):
-            output.write(data.to_csv().encode())
+            output.write(data.to_csv(index=False).encode("utf-8"))
 
         def get_file_extension(self):
             return ".csv"
@@ -28,17 +31,11 @@ Example::
             return "text/csv"
 """
 
-from __future__ import annotations
-
+import io
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import Dict, Iterator, Optional, Union
 
-
-if TYPE_CHECKING:
-    import io
-    from collections.abc import Iterator
-
-    import pandas as pd
+import pandas as pd
 
 
 class BaseFormatter(ABC):
@@ -60,7 +57,26 @@ class BaseFormatter(ABC):
         The :meth:`format_batch` method provides a default batch-processing
         implementation that iterates over batches and delegates to
         :meth:`format_to_stream`.  Override it only if the concrete
-        formatter can implement a more efficient batch strategy.
+        formatter can implement a more efficient batch strategy (e.g. a
+        ``ParquetWriter`` that emits row-groups without closing the file
+        between batches).
+
+    Example:
+        Minimal concrete formatter::
+
+            class MyFormatter(BaseFormatter):
+                def format(self, data, table_name, column_definitions=None):
+                    return data.to_string()
+
+                def format_to_stream(self, data, table_name,
+                                     column_definitions, output):
+                    output.write(data.to_string().encode("utf-8"))
+
+                def get_file_extension(self):
+                    return ".txt"
+
+                def get_content_type(self):
+                    return "text/plain"
     """
 
     # ------------------------------------------------------------------
@@ -72,21 +88,40 @@ class BaseFormatter(ABC):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: dict | None = None,
-    ) -> str | bytes:
-        """Format the entire *data* DataFrame to output string or bytes.
+        column_definitions: Optional[Dict] = None,
+    ) -> Union[str, bytes]:
+        """Format the entire *data* DataFrame to an output string or bytes.
+
+        This method materialises the complete formatted output in memory and
+        is appropriate for datasets that comfortably fit in the available
+        RAM budget.  For larger datasets prefer :meth:`format_to_stream` or
+        :meth:`format_batch`.
 
         Args:
             data: Pandas DataFrame containing generated synthetic ERP data.
+                Each row represents a single record and columns correspond
+                to ERP table fields.
             table_name: Qualified name of the ERP table (e.g.
-                ``"gl_journal_entries"``).
+                ``"gl_journal_entries"``, ``"hr_employees"``).  Formatters
+                may use this to generate DDL statements, JSON root keys, or
+                file names.
             column_definitions: Optional mapping of column names to their
-                ERP type metadata.  When provided the formatter may use it
-                to coerce types or select encoding strategies.
+                ERP type metadata (e.g.
+                ``{"amount": {"type": "DECIMAL", "precision": 15, "scale": 2}}``).
+                When provided the formatter may use it to coerce types,
+                select encoding strategies, or generate schema-aware output.
+                Defaults to ``None``, in which case the formatter infers
+                types from the DataFrame dtypes.
 
         Returns:
             The formatted output as a ``str`` (text formats such as SQL,
             CSV, JSON) or ``bytes`` (binary formats such as Parquet).
+
+        Raises:
+            ValueError: If *data* is empty and the formatter does not
+                support empty output.
+            TypeError: If *column_definitions* contains unsupported type
+                metadata.
         """
         ...
 
@@ -95,20 +130,32 @@ class BaseFormatter(ABC):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: dict,
+        column_definitions: Dict,
         output: io.IOBase,
     ) -> None:
         """Stream formatted output directly to *output* for large datasets.
 
         This method avoids materialising the entire output in memory and is
         the preferred path for datasets exceeding the available RAM budget.
+        The orchestrator calls this method when writing to files, network
+        sockets, or cloud storage upload streams.
 
         Args:
             data: Pandas DataFrame containing generated synthetic ERP data.
             table_name: Qualified name of the ERP table.
             column_definitions: Column-name → ERP-type metadata mapping.
-            output: Writable stream (file handle, ``BytesIO``,
-                ``StringIO``, network socket wrapper, etc.).
+                Unlike :meth:`format`, this parameter is required because
+                streaming formatters typically need schema information to
+                write headers or determine encoding up-front.
+            output: Writable stream accepting the formatted data.  Must be
+                compatible with :class:`io.IOBase` (e.g. a file handle
+                opened in the correct mode, :class:`io.BytesIO`,
+                :class:`io.StringIO`, or a network socket wrapper).
+
+        Raises:
+            IOError: If writing to *output* fails.
+            ValueError: If *data* is empty and the formatter does not
+                support empty output.
         """
         ...
 
@@ -116,9 +163,12 @@ class BaseFormatter(ABC):
     def get_file_extension(self) -> str:
         """Return the canonical file extension including the leading dot.
 
+        The orchestrator uses this value when constructing output file paths
+        for export operations.
+
         Returns:
-            A string such as ``".csv"``, ``".json"``, ``".sql"``, or
-            ``".parquet"``.
+            A string such as ``".csv"``, ``".json"``, ``".jsonl"``,
+            ``".sql"``, or ``".parquet"``.
         """
         ...
 
@@ -126,9 +176,13 @@ class BaseFormatter(ABC):
     def get_content_type(self) -> str:
         """Return the MIME content type for HTTP responses.
 
+        The API Gateway uses this value to set the ``Content-Type`` header
+        when serving generated data via download endpoints.
+
         Returns:
             A MIME type string such as ``"text/csv"``,
-            ``"application/json"``, or
+            ``"application/json"``, ``"application/x-ndjson"``,
+            ``"application/sql"``, or
             ``"application/vnd.apache.parquet"``.
         """
         ...
@@ -141,7 +195,7 @@ class BaseFormatter(ABC):
         self,
         data_batches: Iterator[pd.DataFrame],
         table_name: str,
-        column_definitions: dict,
+        column_definitions: Dict,
         output: io.IOBase,
     ) -> int:
         """Write multiple batches to *output* sequentially.
@@ -149,21 +203,36 @@ class BaseFormatter(ABC):
         The default implementation simply iterates over *data_batches* and
         delegates each batch to :meth:`format_to_stream`.  Subclasses that
         can achieve higher throughput by keeping state between batches (for
-        example a ``ParquetWriter`` that emits row-groups) should override
-        this method.
+        example a ``ParquetWriter`` that emits row-groups without closing
+        the file, or a SQL formatter that keeps a running transaction) are
+        encouraged to override this method.
+
+        The generation engine's batch processor produces batches of 10,000
+        rows by default.  This method processes them one at a time, flushing
+        output after each batch to bound memory usage.
 
         Args:
-            data_batches: Iterator yielding ``pd.DataFrame`` instances,
-                each representing one generation batch (typically 10 000
-                rows).
+            data_batches: Iterator yielding :class:`pd.DataFrame` instances,
+                each representing one generation batch (typically 10,000
+                rows per the ``BATCH_SIZE`` configuration).
             table_name: Qualified name of the ERP table.
-            column_definitions: Column-name → ERP-type metadata mapping.
+            column_definitions: Column-name → ERP-type metadata mapping
+                that remains constant across all batches.
             output: Writable stream that receives the formatted output.
+                The stream is **not** closed by this method — the caller
+                is responsible for closing it after all batches have been
+                written.
 
         Returns:
-            The total number of rows written across all batches.
+            The total number of rows written across all batches.  This
+            value can be used for progress reporting and audit logging.
+
+        Raises:
+            IOError: If writing to *output* fails for any batch.
+            StopIteration: Implicitly when *data_batches* is exhausted
+                (handled by the ``for`` loop).
         """
-        total_rows = 0
+        total_rows: int = 0
         for batch in data_batches:
             self.format_to_stream(batch, table_name, column_definitions, output)
             total_rows += len(batch)
