@@ -39,9 +39,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Optional, Union
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -49,6 +49,7 @@ from shared.database.mongodb import (
     COLLECTION_STATISTICAL_PROFILES,
     get_collection,
 )
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — uses standard ``logging`` (not shared.logging) to
@@ -62,7 +63,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 # ===================================================================
 
 
-class DistributionType(str, Enum):
+class DistributionType(StrEnum):
     """Statistical distribution types supported by the profiling engine.
 
     Each value corresponds to a SciPy 1.12+ continuous or discrete
@@ -83,7 +84,7 @@ class DistributionType(str, Enum):
     CUSTOM = "custom"
 
 
-class ProfileStatus(str, Enum):
+class ProfileStatus(StrEnum):
     """Lifecycle status of a statistical profiling job."""
 
     PENDING = "pending"
@@ -93,7 +94,7 @@ class ProfileStatus(str, Enum):
     STALE = "stale"
 
 
-class DataCategory(str, Enum):
+class DataCategory(StrEnum):
     """High-level categorisation of a column's data type."""
 
     NUMERIC = "numeric"
@@ -119,7 +120,7 @@ class DistributionParameters(BaseModel):
     * Poisson: ``{"lambda": 3.2}``
     * Categorical: ``{"categories": {"A": 0.4, "B": 0.35, "C": 0.25}}``
 
-    Goodness-of-fit is measured via the Kolmogorov–Smirnov test (for
+    Goodness-of-fit is measured via the Kolmogorov-Smirnov test (for
     continuous distributions) or the chi-square test (for categorical).
     """
 
@@ -134,11 +135,11 @@ class DistributionParameters(BaseModel):
         le=1.0,
         description="KS test or chi-square p-value; higher is better fit.",
     )
-    ks_statistic: Optional[float] = Field(
+    ks_statistic: float | None = Field(
         default=None,
-        description="Kolmogorov–Smirnov test statistic.",
+        description="Kolmogorov-Smirnov test statistic.",
     )
-    chi_square_statistic: Optional[float] = Field(
+    chi_square_statistic: float | None = Field(
         default=None,
         description="Chi-square test statistic (categorical distributions).",
     )
@@ -154,11 +155,11 @@ class PatternMetadata(BaseModel):
     **anonymised format exemplars** — never actual data values (C-001).
     """
 
-    format_pattern: Optional[str] = Field(
+    format_pattern: str | None = Field(
         default=None,
         description="Detected format pattern, e.g. 'XXXX-XXXX-XXXX'.",
     )
-    regex_pattern: Optional[str] = Field(
+    regex_pattern: str | None = Field(
         default=None,
         description="Regex that matches the detected pattern.",
     )
@@ -170,16 +171,16 @@ class PatternMetadata(BaseModel):
         default_factory=list,
         description="Most common string suffixes.",
     )
-    average_length: Optional[float] = Field(
+    average_length: float | None = Field(
         default=None,
         description="Average string/value length.",
     )
-    min_length: Optional[int] = Field(
+    min_length: int | None = Field(
         default=None,
         ge=0,
         description="Minimum observed length.",
     )
-    max_length: Optional[int] = Field(
+    max_length: int | None = Field(
         default=None,
         ge=0,
         description="Maximum observed length.",
@@ -202,50 +203,50 @@ class ValueRange(BaseModel):
     strings to support temporal columns.
     """
 
-    min_value: Optional[Union[float, str]] = Field(
+    min_value: float | str | None = Field(
         default=None,
         description="Minimum observed value (numeric or date string).",
     )
-    max_value: Optional[Union[float, str]] = Field(
+    max_value: float | str | None = Field(
         default=None,
         description="Maximum observed value (numeric or date string).",
     )
-    mean: Optional[float] = Field(default=None, description="Arithmetic mean.")
-    median: Optional[float] = Field(default=None, description="Median value.")
-    mode: Optional[Union[float, str]] = Field(
+    mean: float | None = Field(default=None, description="Arithmetic mean.")
+    median: float | None = Field(default=None, description="Median value.")
+    mode: float | str | None = Field(
         default=None,
         description="Most frequent value.",
     )
-    standard_deviation: Optional[float] = Field(
+    standard_deviation: float | None = Field(
         default=None,
         ge=0.0,
         description="Standard deviation.",
     )
-    variance: Optional[float] = Field(
+    variance: float | None = Field(
         default=None,
         ge=0.0,
         description="Variance.",
     )
-    skewness: Optional[float] = Field(default=None, description="Skewness measure.")
-    kurtosis: Optional[float] = Field(default=None, description="Kurtosis measure.")
+    skewness: float | None = Field(default=None, description="Skewness measure.")
+    kurtosis: float | None = Field(default=None, description="Kurtosis measure.")
 
 
 class Percentiles(BaseModel):
     """Percentile breakdown for a numeric column."""
 
-    p1: Optional[float] = Field(default=None, description="1st percentile.")
-    p5: Optional[float] = Field(default=None, description="5th percentile.")
-    p10: Optional[float] = Field(default=None, description="10th percentile.")
-    p25: Optional[float] = Field(default=None, description="25th percentile (Q1).")
-    p50: Optional[float] = Field(default=None, description="50th percentile (median).")
-    p75: Optional[float] = Field(default=None, description="75th percentile (Q3).")
-    p90: Optional[float] = Field(default=None, description="90th percentile.")
-    p95: Optional[float] = Field(default=None, description="95th percentile.")
-    p99: Optional[float] = Field(default=None, description="99th percentile.")
-    iqr: Optional[float] = Field(
+    p1: float | None = Field(default=None, description="1st percentile.")
+    p5: float | None = Field(default=None, description="5th percentile.")
+    p10: float | None = Field(default=None, description="10th percentile.")
+    p25: float | None = Field(default=None, description="25th percentile (Q1).")
+    p50: float | None = Field(default=None, description="50th percentile (median).")
+    p75: float | None = Field(default=None, description="75th percentile (Q3).")
+    p90: float | None = Field(default=None, description="90th percentile.")
+    p95: float | None = Field(default=None, description="95th percentile.")
+    p99: float | None = Field(default=None, description="99th percentile.")
+    iqr: float | None = Field(
         default=None,
         ge=0.0,
-        description="Interquartile range (Q3 − Q1).",
+        description="Interquartile range (Q3 - Q1).",
     )
 
 
@@ -304,7 +305,7 @@ class ColumnProfile(BaseModel):
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Fraction of NULL values (0.0–1.0).",
+        description="Fraction of NULL values (0.0-1.0).",
     )
     distinct_count: int = Field(
         default=0, ge=0, description="Number of distinct values."
@@ -319,25 +320,25 @@ class ColumnProfile(BaseModel):
         default=False,
         description="Whether all non-null values are unique.",
     )
-    distribution: Optional[DistributionParameters] = Field(
+    distribution: DistributionParameters | None = Field(
         default=None, description="Best-fit distribution parameters."
     )
-    pattern: Optional[PatternMetadata] = Field(
+    pattern: PatternMetadata | None = Field(
         default=None, description="String/format pattern metadata."
     )
-    value_range: Optional[ValueRange] = Field(
+    value_range: ValueRange | None = Field(
         default=None, description="Min/max/mean/median statistics."
     )
-    percentiles: Optional[Percentiles] = Field(
+    percentiles: Percentiles | None = Field(
         default=None, description="Percentile breakdown."
     )
-    frequency: Optional[FrequencyDistribution] = Field(
+    frequency: FrequencyDistribution | None = Field(
         default=None, description="Histogram / frequency data."
     )
     outlier_count: int = Field(
         default=0, ge=0, description="Number of statistical outliers detected."
     )
-    outlier_boundaries: Optional[dict[str, float]] = Field(
+    outlier_boundaries: dict[str, float] | None = Field(
         default=None,
         description="{'lower': x, 'upper': y} IQR-based outlier fences.",
     )
@@ -379,25 +380,25 @@ class CorrelationEntry(BaseModel):
     table_name: str = Field(
         ..., description="Table containing both columns."
     )
-    pearson_coefficient: Optional[float] = Field(
+    pearson_coefficient: float | None = Field(
         default=None,
         ge=-1.0,
         le=1.0,
-        description="Pearson correlation coefficient (−1 to 1).",
+        description="Pearson correlation coefficient (-1 to 1).",
     )
-    spearman_coefficient: Optional[float] = Field(
+    spearman_coefficient: float | None = Field(
         default=None,
         ge=-1.0,
         le=1.0,
         description="Spearman rank correlation coefficient.",
     )
-    cramers_v: Optional[float] = Field(
+    cramers_v: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
         description="Cramér's V for categorical columns.",
     )
-    mutual_information: Optional[float] = Field(
+    mutual_information: float | None = Field(
         default=None,
         ge=0.0,
         description="Mutual information score (≥ 0).",
@@ -423,7 +424,7 @@ class TableProfile(BaseModel):
     estimated_row_count: int = Field(
         default=0, ge=0, description="Estimated total rows in the table."
     )
-    profiling_duration_seconds: Optional[float] = Field(
+    profiling_duration_seconds: float | None = Field(
         default=None,
         ge=0.0,
         description="Wall-clock time taken to profile this table (seconds).",
@@ -499,14 +500,14 @@ class StatisticalProfile(BaseModel):
         description="Additional metadata (duration, errors, warnings).",
     )
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the profile was created.",
     )
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp of the most recent update.",
     )
-    created_by: Optional[str] = Field(
+    created_by: str | None = Field(
         default=None,
         description="User who initiated profiling.",
     )
@@ -706,7 +707,7 @@ class StatisticalProfileRepository:
             Exception: If the MongoDB insert operation fails.
         """
         profile.tenant_id = self._tenant_id
-        profile.updated_at = datetime.now(timezone.utc)
+        profile.updated_at = datetime.now(UTC)
         doc = self._profile_to_doc(profile)
         try:
             self._collection.insert_one(doc)
@@ -730,7 +731,7 @@ class StatisticalProfileRepository:
             )
             raise
 
-    def get_by_id(self, profile_id: str) -> Optional[StatisticalProfile]:
+    def get_by_id(self, profile_id: str) -> StatisticalProfile | None:
         """Retrieve a statistical profile by its unique identifier.
 
         Args:
@@ -764,7 +765,7 @@ class StatisticalProfileRepository:
             )
             raise
 
-    def get_by_schema_id(self, schema_id: str) -> Optional[StatisticalProfile]:
+    def get_by_schema_id(self, schema_id: str) -> StatisticalProfile | None:
         """Retrieve the most recent profile for a given schema.
 
         Returns the latest profile (by ``created_at`` descending) that
@@ -805,8 +806,8 @@ class StatisticalProfileRepository:
 
     def list_profiles(
         self,
-        schema_id: Optional[str] = None,
-        status: Optional[ProfileStatus] = None,
+        schema_id: str | None = None,
+        status: ProfileStatus | None = None,
         skip: int = 0,
         limit: int = 20,
     ) -> list[StatisticalProfile]:
@@ -885,7 +886,7 @@ class StatisticalProfileRepository:
         for protected in ("_id", "profile_id", "tenant_id"):
             updates.pop(protected, None)
 
-        updates["updated_at"] = datetime.now(timezone.utc)
+        updates["updated_at"] = datetime.now(UTC)
 
         query = self._tenant_filter({"profile_id": profile_id})
         try:
@@ -966,7 +967,7 @@ class StatisticalProfileRepository:
                         "total_tables_profiled": 1,
                         "total_columns_profiled": num_new_columns,
                     },
-                    "$set": {"updated_at": datetime.now(timezone.utc)},
+                    "$set": {"updated_at": datetime.now(UTC)},
                 },
             )
             modified = result.modified_count > 0
@@ -1044,7 +1045,7 @@ class StatisticalProfileRepository:
             )
             raise
 
-    def count(self, schema_id: Optional[str] = None) -> int:
+    def count(self, schema_id: str | None = None) -> int:
         """Count statistical profiles for the current tenant.
 
         Args:

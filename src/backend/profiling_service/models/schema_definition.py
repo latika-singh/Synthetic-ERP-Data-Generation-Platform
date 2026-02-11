@@ -43,13 +43,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Optional
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shared.database.mongodb import COLLECTION_SCHEMA_DEFINITIONS, get_collection
+
 
 # ---------------------------------------------------------------------------
 # Module logger — uses standard ``logging`` (not shared.logging) to avoid
@@ -63,7 +64,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 # ===================================================================
 
 
-class ERPType(str, Enum):
+class ERPType(StrEnum):
     """Supported ERP system types for schema discovery.
 
     Each member corresponds to a distinct ERP platform with its own
@@ -76,7 +77,7 @@ class ERPType(str, Enum):
     JDBC_LEGACY = "jdbc_legacy"
 
 
-class ERPModule(str, Enum):
+class ERPModule(StrEnum):
     """ERP functional modules supported in the initial release (C-005).
 
     Limited to four modules for the first release: Financial Accounting,
@@ -89,7 +90,7 @@ class ERPModule(str, Enum):
     MATERIAL_MANAGEMENT = "material_management"
 
 
-class ColumnDataType(str, Enum):
+class ColumnDataType(StrEnum):
     """Normalised column data types across ERP systems.
 
     Each member maps to one or more native data types from SAP, Oracle EBS,
@@ -115,7 +116,7 @@ class ColumnDataType(str, Enum):
     CLOB = "clob"
 
 
-class RelationshipType(str, Enum):
+class RelationshipType(StrEnum):
     """Types of inter-table relationships discovered in the source schema."""
 
     ONE_TO_ONE = "one_to_one"
@@ -123,7 +124,7 @@ class RelationshipType(str, Enum):
     MANY_TO_MANY = "many_to_many"
 
 
-class SchemaStatus(str, Enum):
+class SchemaStatus(StrEnum):
     """Lifecycle states for a schema discovery/profiling workflow.
 
     The state machine progresses as follows::
@@ -178,12 +179,12 @@ class ColumnDefinition(BaseModel):
     is_primary_key: bool = False
     is_unique: bool = False
     is_indexed: bool = False
-    max_length: Optional[int] = None
-    precision: Optional[int] = None
-    scale: Optional[int] = None
-    default_value: Optional[str] = None
-    description: Optional[str] = None
-    erp_field_label: Optional[str] = None
+    max_length: int | None = None
+    precision: int | None = None
+    scale: int | None = None
+    default_value: str | None = None
+    description: str | None = None
+    erp_field_label: str | None = None
 
     @field_validator("column_name")
     @classmethod
@@ -196,7 +197,7 @@ class ColumnDefinition(BaseModel):
 
     @field_validator("max_length", "precision", "scale")
     @classmethod
-    def _non_negative_int(cls, value: Optional[int]) -> Optional[int]:
+    def _non_negative_int(cls, value: int | None) -> int | None:
         """Ensure optional numeric constraints are non-negative when set."""
         if value is not None and value < 0:
             raise ValueError("Value must be non-negative")
@@ -218,8 +219,8 @@ class ConstraintDefinition(BaseModel):
     constraint_name: str
     constraint_type: str
     columns: list[str]
-    expression: Optional[str] = None
-    description: Optional[str] = None
+    expression: str | None = None
+    description: str | None = None
 
     @field_validator("constraint_name")
     @classmethod
@@ -267,9 +268,9 @@ class RelationshipDefinition(BaseModel):
     target_table: str
     target_columns: list[str]
     is_enforced: bool = True
-    on_delete: Optional[str] = None
-    on_update: Optional[str] = None
-    description: Optional[str] = None
+    on_delete: str | None = None
+    on_update: str | None = None
+    description: str | None = None
 
     @field_validator("source_columns", "target_columns")
     @classmethod
@@ -294,7 +295,7 @@ class IndexDefinition(BaseModel):
     columns: list[str]
     is_unique: bool = False
     is_clustered: bool = False
-    description: Optional[str] = None
+    description: str | None = None
 
     @field_validator("index_name")
     @classmethod
@@ -335,15 +336,15 @@ class TableDefinition(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     table_name: str
-    schema_name: Optional[str] = None
+    schema_name: str | None = None
     erp_module: ERPModule
     columns: list[ColumnDefinition]
     constraints: list[ConstraintDefinition] = []
     indexes: list[IndexDefinition] = []
     primary_key_columns: list[str] = []
-    estimated_row_count: Optional[int] = None
-    description: Optional[str] = None
-    erp_table_label: Optional[str] = None
+    estimated_row_count: int | None = None
+    description: str | None = None
+    erp_table_label: str | None = None
 
     @field_validator("table_name")
     @classmethod
@@ -362,7 +363,7 @@ class TableDefinition(BaseModel):
 
     @field_validator("estimated_row_count")
     @classmethod
-    def _row_count_non_negative(cls, value: Optional[int]) -> Optional[int]:
+    def _row_count_non_negative(cls, value: int | None) -> int | None:
         if value is not None and value < 0:
             raise ValueError("estimated_row_count must be non-negative")
         return value
@@ -411,7 +412,7 @@ class SchemaDefinition(BaseModel):
     schema_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tenant_id: str
     erp_type: ERPType
-    erp_version: Optional[str] = None
+    erp_version: str | None = None
     connection_name: str
     status: SchemaStatus = SchemaStatus.DISCOVERING
     tables: list[TableDefinition] = []
@@ -421,9 +422,9 @@ class SchemaDefinition(BaseModel):
     total_columns: int = 0
     total_relationships: int = 0
     discovery_metadata: dict[str, Any] = {}
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    created_by: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_by: str | None = None
     tags: list[str] = []
 
     @model_validator(mode="before")
@@ -457,9 +458,8 @@ class SchemaDefinition(BaseModel):
                 if data.get("total_columns", 0) == 0:
                     data["total_columns"] = computed_columns
 
-            if relationships:
-                if data.get("total_relationships", 0) == 0:
-                    data["total_relationships"] = len(relationships)
+            if relationships and data.get("total_relationships", 0) == 0:
+                data["total_relationships"] = len(relationships)
 
         return data
 
@@ -512,7 +512,7 @@ class SchemaDiscoveryRequest(BaseModel):
         ERPModule.SALES_DISTRIBUTION,
         ERPModule.MATERIAL_MANAGEMENT,
     ]
-    max_tables: Optional[int] = None
+    max_tables: int | None = None
     include_indexes: bool = True
     include_constraints: bool = True
     tags: list[str] = []
@@ -534,7 +534,7 @@ class SchemaDiscoveryRequest(BaseModel):
 
     @field_validator("max_tables")
     @classmethod
-    def _max_tables_positive(cls, value: Optional[int]) -> Optional[int]:
+    def _max_tables_positive(cls, value: int | None) -> int | None:
         if value is not None and value <= 0:
             raise ValueError("max_tables must be a positive integer")
         return value
@@ -633,7 +633,7 @@ class SchemaDefinitionRepository:
             # Enforce tenant isolation on writes
             doc["tenant_id"] = self._tenant_id
             # Ensure timestamps are current
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             doc["created_at"] = now
             doc["updated_at"] = now
 
@@ -660,7 +660,7 @@ class SchemaDefinitionRepository:
     # Read
     # ------------------------------------------------------------------
 
-    def get_by_id(self, schema_id: str) -> Optional[SchemaDefinition]:
+    def get_by_id(self, schema_id: str) -> SchemaDefinition | None:
         """Retrieve a schema definition by its ``schema_id``.
 
         The query is always scoped to the repository's ``tenant_id`` so
@@ -703,9 +703,9 @@ class SchemaDefinitionRepository:
 
     def list_schemas(
         self,
-        erp_type: Optional[ERPType] = None,
-        module: Optional[ERPModule] = None,
-        status: Optional[SchemaStatus] = None,
+        erp_type: ERPType | None = None,
+        module: ERPModule | None = None,
+        status: SchemaStatus | None = None,
         skip: int = 0,
         limit: int = 20,
     ) -> list[SchemaDefinition]:
@@ -800,7 +800,7 @@ class SchemaDefinitionRepository:
             sanitised = {
                 k: v for k, v in updates.items() if k not in ("schema_id", "tenant_id", "_id")
             }
-            sanitised["updated_at"] = datetime.now(timezone.utc)
+            sanitised["updated_at"] = datetime.now(UTC)
 
             result = self._collection.update_one(
                 {"schema_id": schema_id, "tenant_id": self._tenant_id},
@@ -908,7 +908,7 @@ class SchemaDefinitionRepository:
     # Count
     # ------------------------------------------------------------------
 
-    def count(self, erp_type: Optional[ERPType] = None) -> int:
+    def count(self, erp_type: ERPType | None = None) -> int:
         """Count schema definitions for this tenant.
 
         Args:
