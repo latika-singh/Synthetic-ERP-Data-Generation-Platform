@@ -245,6 +245,35 @@ class _RequestMetricsTracker:
             }
         return result
 
+    def to_json(self) -> str:
+        """Serialise the summary to a JSON string for file or pipeline output."""
+        return json.dumps(self.summary(), indent=2, sort_keys=True)
+
+    @classmethod
+    def from_json(cls, raw: str) -> "_RequestMetricsTracker":
+        """Reconstruct a tracker from a previously serialised JSON summary.
+
+        This supports merging metrics collected across distributed Locust
+        workers by deserialising worker-reported JSON payloads.
+
+        Args:
+            raw: JSON string produced by ``to_json()``.
+
+        Returns:
+            A new ``_RequestMetricsTracker`` pre-populated with the
+            deserialised counts and averages.
+        """
+        data = json.loads(raw)
+        tracker = cls()
+        for group, metrics in data.items():
+            count = int(metrics.get("total_requests", 0))
+            tracker.requests_by_group[group] = count
+            tracker.errors_by_group[group] = int(metrics.get("errors", 0))
+            avg_ms = float(metrics.get("avg_response_time_ms", 0.0))
+            # Reconstruct a representative list with the average (preserves avg)
+            tracker.response_times_by_group[group] = [avg_ms] * count if count else []
+        return tracker
+
 
 _request_metrics = _RequestMetricsTracker()
 
@@ -617,7 +646,7 @@ class SchemaTaskSet(TaskSet, AuthMixin):
     def get_schema_details(self) -> None:
         """GET /api/v1/schemas/{schema_id} — Retrieve full schema definition."""
         if not self.user.schema_ids:
-            # Fallback to a placeholder UUID if no real IDs available
+            # Use a synthetic UUID when no real IDs have been collected yet
             schema_id = str(uuid.uuid4())
         else:
             schema_id = random.choice(self.user.schema_ids)
@@ -1358,6 +1387,11 @@ def on_test_stop(environment, **kwargs) -> None:
                 metrics["error_rate_pct"],
                 metrics["avg_response_time_ms"],
             )
+        # Emit a machine-parseable JSON summary for CI/CD pipeline consumption
+        logger.info(
+            "Structured metrics (JSON): %s",
+            json.dumps(group_summary, indent=2, sort_keys=True),
+        )
 
 
 @events.request.add_listener
