@@ -1,0 +1,4883 @@
+openapi: 3.0.3
+info:
+  title: Synthetic ERP Data Generation Platform API
+  version: 1.0.0
+  description: >
+    Enterprise-grade REST API for the Synthetic ERP Data Generation Platform.
+    Provides endpoints for generating high-fidelity synthetic data that mirrors
+    the structure, relationships, and statistical properties of production ERP
+    systems including SAP, Oracle EBS, Microsoft Dynamics, and legacy systems.
+    Supports AI/ML generation (GANs, VAEs), rules-based generation, statistical
+    synthesis, and intelligent masking across Financial Accounting, HR, Sales &
+    Distribution, and Material Management modules with guaranteed zero PII leakage
+    and regulatory compliance (GDPR, HIPAA, CCPA, SOC 2 Type II).
+  contact:
+    name: Platform Engineering Team
+    email: platform-engineering@synthetic-erp.io
+    url: https://synthetic-erp.io/support
+  license:
+    name: Proprietary
+    url: https://synthetic-erp.io/license
+  termsOfService: https://synthetic-erp.io/terms
+
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+  - url: https://api.staging.synthetic-erp.io
+    description: Staging environment
+  - url: https://api.synthetic-erp.io
+    description: Production environment
+
+tags:
+  - name: Generation
+    description: Generation job lifecycle management — create, monitor, cancel synthetic data generation jobs
+  - name: Profiles
+    description: Statistical profiling — create and manage statistical profiles extracted from ERP source schemas
+  - name: Schemas
+    description: ERP schema discovery — discover, browse, and manage ERP schema definitions and table relationships
+  - name: Templates
+    description: Generation template CRUD — create, browse, clone, and manage reusable generation configuration templates
+  - name: Export
+    description: Data export and provisioning — export generated data to files (SQL, CSV, JSON, Parquet) or provision directly to databases and cloud storage
+  - name: Auth
+    description: Authentication and user profile — Auth0 login/logout, token refresh, and user profile management
+  - name: Admin
+    description: Administration — user management, tenant configuration, system settings, and audit log access (Platform Admin only)
+  - name: Health
+    description: Health probes — Kubernetes liveness and readiness checks (no authentication required)
+  - name: Monitoring
+    description: Observability — Prometheus metrics scrape target, system status, and downstream service health
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------------
+  # GENERATION ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/generation/jobs:
+    post:
+      tags:
+        - Generation
+      operationId: createGenerationJob
+      summary: Create a new generation job
+      description: >
+        Submit a new synthetic data generation job. The job is queued and
+        processed asynchronously by the Generation Engine. Returns immediately
+        with a job_id that can be used to track progress. Supports AI/ML,
+        rules-based, statistical, and masking generation methods.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerationJobRequest'
+      responses:
+        '201':
+          description: Generation job created and queued successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationJobResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      tags:
+        - Generation
+      operationId: listGenerationJobs
+      summary: List generation jobs
+      description: >
+        Retrieve a paginated list of generation jobs for the current tenant.
+        Supports filtering by job status and cursor-based pagination.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - name: status
+          in: query
+          required: false
+          description: Filter jobs by status
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of generation jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationJobListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/generation/jobs/statistics:
+    get:
+      tags:
+        - Generation
+      operationId: getJobStatistics
+      summary: Get generation job statistics
+      description: >
+        Retrieve aggregated statistics about generation jobs for the dashboard,
+        including counts by status, total records generated, average quality
+        scores, and throughput metrics.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Aggregated job statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatistics'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/generation/jobs/{job_id}:
+    get:
+      tags:
+        - Generation
+      operationId: getGenerationJob
+      summary: Get a specific generation job
+      description: >
+        Retrieve full details of a generation job including its current status,
+        configuration, quality scores, compliance certificates, and output
+        location.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Generation job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationJobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Generation
+      operationId: cancelGenerationJob
+      summary: Cancel a generation job
+      description: >
+        Cancel a running or queued generation job. Jobs that are already
+        completed, failed, or cancelled cannot be cancelled again.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationJobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/generation/jobs/{job_id}/progress:
+    get:
+      tags:
+        - Generation
+      operationId: getJobProgress
+      summary: Get real-time job progress
+      description: >
+        Retrieve current progress information for a running generation job
+        including percentage complete, records generated, estimated time
+        remaining, and current batch information.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Current job progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobProgress'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ---------------------------------------------------------------------------
+  # PROFILE ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/profiles:
+    post:
+      tags:
+        - Profiles
+      operationId: createProfile
+      summary: Create a statistical profile
+      description: >
+        Trigger statistical profiling of a source ERP schema. Connects to the
+        source system via JDBC to extract schema metadata and statistical
+        distributions without accessing raw production data. The profiling job
+        runs asynchronously and stores the resulting profile in MongoDB.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileRequest'
+      responses:
+        '201':
+          description: Profile creation initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      tags:
+        - Profiles
+      operationId: listProfiles
+      summary: List statistical profiles
+      description: >
+        Retrieve a paginated list of statistical profiles for the current tenant.
+        Supports filtering by ERP type and ERP module.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - name: erp_type
+          in: query
+          required: false
+          description: Filter by ERP system type
+          schema:
+            $ref: '#/components/schemas/ERPType'
+        - name: erp_module
+          in: query
+          required: false
+          description: Filter by ERP module
+          schema:
+            $ref: '#/components/schemas/ERPModule'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of profiles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/profiles/{profile_id}:
+    get:
+      tags:
+        - Profiles
+      operationId: getProfile
+      summary: Get a specific profile
+      description: >
+        Retrieve full details of a statistical profile including its source
+        schema reference, profiling status, and summary statistics.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Profile details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Profiles
+      operationId: deleteProfile
+      summary: Delete a profile
+      description: >
+        Permanently delete a statistical profile and its associated statistical
+        data from the metadata repository.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '204':
+          description: Profile deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/profiles/{profile_id}/statistics:
+    get:
+      tags:
+        - Profiles
+      operationId: getProfileStatistics
+      summary: Get detailed profile statistics
+      description: >
+        Retrieve detailed statistical summaries for each column in the profiled
+        schema including distribution types, parameters, value ranges, null
+        percentages, cardinality, and pattern analysis results.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Array of per-column statistical summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StatisticalSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ---------------------------------------------------------------------------
+  # SCHEMA ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/schemas/discover:
+    post:
+      tags:
+        - Schemas
+      operationId: discoverSchema
+      summary: Trigger ERP schema discovery
+      description: >
+        Initiate an asynchronous schema discovery process against a source ERP
+        system. The Profiling Service connects to the ERP via the appropriate
+        connector (SAP RFC/BAPI, Oracle OData/JDBC, Dynamics Web API, or generic
+        JDBC) and extracts table definitions, column metadata, relationships,
+        and dependency ordering without accessing raw data.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchemaDiscoveryRequest'
+      responses:
+        '202':
+          description: Schema discovery initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schema_id:
+                    type: string
+                    format: objectid
+                    description: Unique identifier for the discovered schema
+                    example: 665a1b2c3d4e5f6a7b8c9d0e
+                  status:
+                    type: string
+                    enum:
+                      - discovering
+                    description: Current discovery status
+                  message:
+                    type: string
+                    example: Schema discovery initiated successfully
+                  estimated_duration_seconds:
+                    type: integer
+                    description: Estimated time to complete discovery in seconds
+                    example: 120
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/schemas:
+    get:
+      tags:
+        - Schemas
+      operationId: listSchemas
+      summary: List discovered schemas
+      description: >
+        Retrieve a paginated list of discovered ERP schemas for the current
+        tenant. Supports filtering by ERP type and module.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - name: erp_type
+          in: query
+          required: false
+          description: Filter by ERP system type
+          schema:
+            $ref: '#/components/schemas/ERPType'
+        - name: module
+          in: query
+          required: false
+          description: Filter by ERP module
+          schema:
+            $ref: '#/components/schemas/ERPModule'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of schemas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/schemas/{schema_id}:
+    get:
+      tags:
+        - Schemas
+      operationId: getSchema
+      summary: Get a full schema definition
+      description: >
+        Retrieve the complete schema definition including all tables, columns,
+        data types, relationships, and dependency ordering.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SchemaId'
+      responses:
+        '200':
+          description: Full schema definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Schemas
+      operationId: deleteSchema
+      summary: Delete a schema
+      description: >
+        Permanently delete a discovered schema definition and all associated
+        table and relationship metadata.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SchemaId'
+      responses:
+        '204':
+          description: Schema deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/schemas/{schema_id}/tables:
+    get:
+      tags:
+        - Schemas
+      operationId: listSchemaTables
+      summary: List tables in a schema
+      description: >
+        Retrieve the list of all tables discovered within a specific schema,
+        including row count estimates, column counts, and module assignments.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SchemaId'
+      responses:
+        '200':
+          description: Array of table definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TableDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/schemas/{schema_id}/tables/{table_name}:
+    get:
+      tags:
+        - Schemas
+      operationId: getSchemaTable
+      summary: Get table column details
+      description: >
+        Retrieve detailed column definitions for a specific table including
+        data types, constraints, nullable flags, default values, and any
+        associated statistical profile references.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SchemaId'
+        - name: table_name
+          in: path
+          required: true
+          description: Name of the table
+          schema:
+            type: string
+            example: GL_JOURNAL_ENTRIES
+      responses:
+        '200':
+          description: Array of column definitions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  table_name:
+                    type: string
+                    example: GL_JOURNAL_ENTRIES
+                  schema_id:
+                    type: string
+                    format: objectid
+                  columns:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ColumnDefinition'
+                  row_count_estimate:
+                    type: integer
+                    example: 1500000
+                  module:
+                    $ref: '#/components/schemas/ERPModule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/schemas/{schema_id}/relationships:
+    get:
+      tags:
+        - Schemas
+      operationId: getSchemaRelationships
+      summary: Get foreign key relationships
+      description: >
+        Retrieve all discovered foreign key relationships within a schema,
+        including parent-child table mappings, cardinality, and the
+        topologically sorted dependency order for generation.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/SchemaId'
+      responses:
+        '200':
+          description: Array of relationship definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RelationshipDefinition'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ---------------------------------------------------------------------------
+  # TEMPLATE ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/templates:
+    post:
+      tags:
+        - Templates
+      operationId: createTemplate
+      summary: Create a generation template
+      description: >
+        Create a new reusable generation configuration template that captures
+        generation method, schema selections, table configurations, and
+        parameter presets for repeatable data generation.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateRequest'
+      responses:
+        '201':
+          description: Template created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      tags:
+        - Templates
+      operationId: listTemplates
+      summary: List and filter templates
+      description: >
+        Retrieve a paginated and filterable list of generation templates.
+        Supports filtering by category, ERP type, generation method, tags,
+        visibility (public/private), and full-text search.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - name: category
+          in: query
+          required: false
+          description: Filter by template category
+          schema:
+            $ref: '#/components/schemas/TemplateCategory'
+        - name: erp_type
+          in: query
+          required: false
+          description: Filter by target ERP system type
+          schema:
+            $ref: '#/components/schemas/ERPType'
+        - name: generation_method
+          in: query
+          required: false
+          description: Filter by generation method
+          schema:
+            $ref: '#/components/schemas/GenerationMethod'
+        - name: tags
+          in: query
+          required: false
+          description: Comma-separated list of tags to filter by
+          schema:
+            type: string
+            example: financial,monthly-close
+        - name: is_public
+          in: query
+          required: false
+          description: Filter by visibility (true for public, false for private)
+          schema:
+            type: boolean
+        - name: search
+          in: query
+          required: false
+          description: Full-text search across template name and description
+          schema:
+            type: string
+            example: SAP financial
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of templates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/templates/{template_id}:
+    get:
+      tags:
+        - Templates
+      operationId: getTemplate
+      summary: Get a specific template
+      description: >
+        Retrieve full details of a generation template including its
+        configuration, table selections, parameter presets, and usage metadata.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Templates
+      operationId: updateTemplate
+      summary: Update a template
+      description: >
+        Update an existing generation template. Only the template owner or a
+        Platform Admin can modify a template.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateRequest'
+      responses:
+        '200':
+          description: Template updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Templates
+      operationId: deleteTemplate
+      summary: Delete a template
+      description: >
+        Permanently delete a generation template. Only the template owner or
+        a Platform Admin can delete a template.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '204':
+          description: Template deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/templates/{template_id}/clone:
+    post:
+      tags:
+        - Templates
+      operationId: cloneTemplate
+      summary: Clone a template
+      description: >
+        Create a copy of an existing template under the current user's
+        ownership. The cloned template is private by default and can be
+        customized independently of the original.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Optional new name for the cloned template
+                  example: My Cloned SAP FI Template
+      responses:
+        '201':
+          description: Template cloned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ---------------------------------------------------------------------------
+  # EXPORT ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/export:
+    post:
+      tags:
+        - Export
+      operationId: createExport
+      summary: Trigger data export or provisioning
+      description: >
+        Initiate an asynchronous export of generated data to a file format
+        (SQL, CSV, JSON, Parquet) or provision directly to a target database
+        (PostgreSQL, Oracle, SQL Server, SAP HANA) or cloud storage (AWS S3,
+        Azure Blob, GCP Cloud Storage). Data is encrypted with AES-256 at rest.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '202':
+          description: Export initiated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    get:
+      tags:
+        - Export
+      operationId: listExports
+      summary: List exports
+      description: >
+        Retrieve a paginated list of data exports for the current tenant.
+        Supports filtering by source job, export status, and output format.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - name: job_id
+          in: query
+          required: false
+          description: Filter exports by source generation job ID
+          schema:
+            type: string
+            format: objectid
+        - name: status
+          in: query
+          required: false
+          description: Filter by export status
+          schema:
+            type: string
+            enum:
+              - pending
+              - in_progress
+              - completed
+              - failed
+              - cancelled
+        - name: format
+          in: query
+          required: false
+          description: Filter by output format
+          schema:
+            $ref: '#/components/schemas/ExportFormat'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of exports
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/export/{export_id}:
+    get:
+      tags:
+        - Export
+      operationId: getExport
+      summary: Get export status
+      description: >
+        Retrieve full details and current status of a specific data export
+        including progress percentage, output location, and any error messages.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ExportId'
+      responses:
+        '200':
+          description: Export details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Export
+      operationId: cancelExport
+      summary: Cancel an export
+      description: >
+        Cancel a pending or in-progress data export. Completed exports
+        cannot be cancelled.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ExportId'
+      responses:
+        '200':
+          description: Export cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/export/{export_id}/download:
+    get:
+      tags:
+        - Export
+      operationId: getExportDownloadUrl
+      summary: Get signed download URL
+      description: >
+        Retrieve a time-limited signed download URL for a completed file export.
+        The URL expires after the configured TTL (default 1 hour). Only
+        available for file-type exports (not database provisioning).
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ExportId'
+      responses:
+        '200':
+          description: Signed download URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  download_url:
+                    type: string
+                    format: uri
+                    description: Time-limited signed URL for file download
+                    example: https://storage.synthetic-erp.io/exports/job-123/output.csv?token=abc123&expires=1700000000
+                  expires_at:
+                    type: string
+                    format: date-time
+                    description: URL expiration timestamp
+                  file_size_bytes:
+                    type: integer
+                    format: int64
+                    description: Size of the export file in bytes
+                    example: 52428800
+                  content_type:
+                    type: string
+                    description: MIME type of the file
+                    example: text/csv
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Export not in downloadable state (still in progress or is a database provisioning export)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ---------------------------------------------------------------------------
+  # AUTH ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/auth/login:
+    get:
+      tags:
+        - Auth
+      operationId: login
+      summary: Redirect to Auth0 login
+      description: >
+        Initiate the OAuth 2.0 Authorization Code flow by returning the Auth0
+        authorization URL. The frontend redirects the user's browser to Auth0
+        for authentication.
+      security: []
+      parameters:
+        - name: return_url
+          in: query
+          required: false
+          description: URL to redirect to after successful authentication
+          schema:
+            type: string
+            format: uri
+            example: https://console.synthetic-erp.io/dashboard
+      responses:
+        '200':
+          description: Auth0 authorization URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth_url:
+                    type: string
+                    format: uri
+                    description: Auth0 authorization endpoint URL with PKCE parameters
+                    example: https://synthetic-erp.auth0.com/authorize?response_type=code&client_id=abc&redirect_uri=...&scope=openid+profile+email&state=xyz
+                  state:
+                    type: string
+                    description: CSRF protection state parameter
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/callback:
+    get:
+      tags:
+        - Auth
+      operationId: authCallback
+      summary: Auth0 authorization code callback
+      description: >
+        Handle the OAuth 2.0 authorization code callback from Auth0. Exchanges
+        the authorization code for access and refresh tokens, extracts user
+        profile and role information, and returns the authenticated session.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          description: Authorization code from Auth0
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          description: CSRF protection state parameter
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Authorization code invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Auth
+      operationId: logout
+      summary: Logout
+      description: >
+        Invalidate the current session and return the Auth0 logout URL for
+        single sign-out across all applications.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logout_url:
+                    type: string
+                    format: uri
+                    description: Auth0 logout URL for browser redirect
+                    example: https://synthetic-erp.auth0.com/v2/logout?client_id=abc&returnTo=...
+                  message:
+                    type: string
+                    example: Logged out successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Auth
+      operationId: refreshToken
+      summary: Refresh access token
+      description: >
+        Exchange a valid refresh token for a new access token and refresh token
+        pair. Implements token rotation for enhanced security.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+      responses:
+        '200':
+          description: Tokens refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefreshResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Refresh token invalid or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/profile:
+    get:
+      tags:
+        - Auth
+      operationId: getUserProfile
+      summary: Get current user profile
+      description: >
+        Retrieve the authenticated user's profile including name, email, role,
+        permissions, tenant membership, and preferences.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Auth
+      operationId: updateUserProfile
+      summary: Update current user profile
+      description: >
+        Update the authenticated user's profile settings such as display name,
+        notification preferences, and default tenant.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                  description: User display name
+                  example: Jane Doe
+                default_tenant_id:
+                  type: string
+                  format: objectid
+                  description: Default tenant for this user
+                notification_preferences:
+                  type: object
+                  properties:
+                    email_on_job_complete:
+                      type: boolean
+                      default: true
+                    email_on_job_failure:
+                      type: boolean
+                      default: true
+                    email_on_compliance_alert:
+                      type: boolean
+                      default: true
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ---------------------------------------------------------------------------
+  # ADMIN ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/admin/users:
+    get:
+      tags:
+        - Admin
+      operationId: listUsers
+      summary: List users
+      description: >
+        Retrieve a paginated list of all users across all tenants. Requires
+        Platform Admin role. Supports filtering by role, active status, and
+        full-text search.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - name: role
+          in: query
+          required: false
+          description: Filter users by role
+          schema:
+            $ref: '#/components/schemas/UserRole'
+        - name: is_active
+          in: query
+          required: false
+          description: Filter by active status
+          schema:
+            type: boolean
+        - name: search
+          in: query
+          required: false
+          description: Search by name or email
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of users
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Admin
+      operationId: createUser
+      summary: Create a user
+      description: >
+        Create a new user account and assign a role. Provisions the user in
+        Auth0 and creates the corresponding record in the metadata repository.
+        Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: User with this email already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/users/{user_id}:
+    get:
+      tags:
+        - Admin
+      operationId: getUser
+      summary: Get a specific user
+      description: >
+        Retrieve full details of a user account including profile, role,
+        permissions, tenant memberships, and activity history.
+        Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Admin
+      operationId: updateUser
+      summary: Update a user
+      description: >
+        Update user account details such as role assignment, active status,
+        and tenant memberships. Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Admin
+      operationId: deleteUser
+      summary: Delete a user
+      description: >
+        Deactivate and soft-delete a user account. The user's Auth0 account
+        is blocked and the metadata record is marked as deleted.
+        Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: User deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/tenants:
+    get:
+      tags:
+        - Admin
+      operationId: listTenants
+      summary: List tenants
+      description: >
+        Retrieve a list of all tenants in the platform with their configuration,
+        resource quotas, and usage statistics. Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of tenants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Admin
+      operationId: createTenant
+      summary: Create a tenant
+      description: >
+        Provision a new tenant with namespace isolation, resource quotas,
+        and default configuration. Creates the tenant namespace in
+        Kubernetes and the configuration record in MongoDB.
+        Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantRequest'
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Tenant with this namespace already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/tenants/{tenant_id}:
+    put:
+      tags:
+        - Admin
+      operationId: updateTenant
+      summary: Update a tenant
+      description: >
+        Update tenant configuration including resource quotas, feature flags,
+        and allowed ERP connectors. Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: tenant_id
+          in: path
+          required: true
+          description: Unique tenant identifier
+          schema:
+            type: string
+            format: objectid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantRequest'
+      responses:
+        '200':
+          description: Tenant updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/settings:
+    get:
+      tags:
+        - Admin
+      operationId: getSystemSettings
+      summary: Get system settings
+      description: >
+        Retrieve global platform settings including default generation
+        parameters, quality thresholds, compliance configuration, rate
+        limits, and feature flags. Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: System settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Admin
+      operationId: updateSystemSettings
+      summary: Update system settings
+      description: >
+        Update global platform settings. Changes take effect immediately for
+        new operations; in-progress jobs are not affected.
+        Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemSettings'
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/admin/audit-logs:
+    get:
+      tags:
+        - Admin
+      operationId: listAuditLogs
+      summary: List audit logs
+      description: >
+        Retrieve tamper-evident audit log entries with optional filtering by
+        date range, action type, and user. Audit logs have 7-year retention
+        and SHA-256 integrity checksums for SOC 2 Type II compliance.
+        Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: start_date
+          in: query
+          required: false
+          description: Start of date range filter (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          required: false
+          description: End of date range filter (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: action_type
+          in: query
+          required: false
+          description: Filter by audit action type
+          schema:
+            type: string
+            enum:
+              - job_created
+              - job_completed
+              - job_failed
+              - job_cancelled
+              - profile_created
+              - schema_discovered
+              - export_initiated
+              - export_completed
+              - user_login
+              - user_logout
+              - user_created
+              - user_updated
+              - user_deleted
+              - tenant_created
+              - tenant_updated
+              - settings_updated
+              - compliance_certified
+              - compliance_failed
+              - pii_detected
+        - name: user_id
+          in: query
+          required: false
+          description: Filter by the user who performed the action
+          schema:
+            type: string
+            format: objectid
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated list of audit log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ---------------------------------------------------------------------------
+  # HEALTH ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      tags:
+        - Health
+      operationId: healthCheck
+      summary: Liveness probe
+      description: >
+        Kubernetes liveness probe endpoint. Returns 200 if the API Gateway
+        process is alive and responsive. Does not check downstream dependencies.
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags:
+        - Health
+      operationId: readinessCheck
+      summary: Readiness probe
+      description: >
+        Kubernetes readiness probe endpoint. Returns 200 if the API Gateway
+        is ready to accept traffic, verified by checking connectivity to
+        MongoDB and Redis. Returns 503 if any critical dependency is
+        unavailable.
+      security: []
+      responses:
+        '200':
+          description: Service is ready to accept traffic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is not ready — one or more dependencies unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  # ---------------------------------------------------------------------------
+  # MONITORING ENDPOINTS
+  # ---------------------------------------------------------------------------
+  /api/v1/monitoring/metrics:
+    get:
+      tags:
+        - Monitoring
+      operationId: getPrometheusMetrics
+      summary: Prometheus metrics scrape target
+      description: >
+        Expose application metrics in OpenMetrics/Prometheus text format for
+        scraping by the Prometheus server. Includes request latency histograms,
+        error rates, active job counts, generation throughput, and resource
+        utilization gauges.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: OpenMetrics text format
+                example: |
+                  # HELP http_requests_total Total HTTP requests
+                  # TYPE http_requests_total counter
+                  http_requests_total{method="GET",status="200"} 1234
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/monitoring/status:
+    get:
+      tags:
+        - Monitoring
+      operationId: getSystemStatus
+      summary: Get system status
+      description: >
+        Retrieve comprehensive system status including CPU, memory, and disk
+        usage, active job counts, queue depths, database connection pool status,
+        and cache hit rates. Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: System status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/monitoring/services:
+    get:
+      tags:
+        - Monitoring
+      operationId: getServiceHealth
+      summary: Get downstream service health
+      description: >
+        Check connectivity and response times for all downstream microservices
+        (Generation Engine, Profiling Service, Quality Service, Compliance
+        Service, Provisioning Service) and infrastructure dependencies
+        (MongoDB, Redis). Requires Platform Admin role.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Service health status array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+# =============================================================================
+# COMPONENTS
+# =============================================================================
+components:
+  # ---------------------------------------------------------------------------
+  # SECURITY SCHEMES
+  # ---------------------------------------------------------------------------
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Auth0-issued JWT access token using RS256 algorithm. Include in the
+        Authorization header as: Bearer <token>. Tokens are obtained via the
+        /api/v1/auth/callback endpoint after Auth0 login and refreshed via
+        /api/v1/auth/refresh.
+
+    Auth0:
+      type: oauth2
+      description: >
+        OAuth 2.0 Authorization Code flow with PKCE via Auth0 identity provider
+        for interactive user authentication.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://{auth0_domain}/authorize
+          tokenUrl: https://{auth0_domain}/oauth/token
+          scopes:
+            openid: OpenID Connect identity token
+            profile: User profile information (name, picture)
+            email: User email address
+
+  # ---------------------------------------------------------------------------
+  # REUSABLE PARAMETERS
+  # ---------------------------------------------------------------------------
+  parameters:
+    TenantId:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      description: >
+        Multi-tenant context identifier. All data operations are scoped to this
+        tenant namespace. Cross-tenant access is prohibited by design.
+      schema:
+        type: string
+        format: objectid
+        example: 665a1b2c3d4e5f6a7b8c9d01
+
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: >
+        Correlation ID for distributed tracing via OpenTelemetry. If not
+        provided, the API Gateway generates one and returns it in the response.
+      schema:
+        type: string
+        format: uuid
+        example: 550e8400-e29b-41d4-a716-446655440000
+
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Page number for pagination (1-based)
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+        example: 1
+
+    PageSize:
+      name: page_size
+      in: query
+      required: false
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+        example: 20
+
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      description: Unique generation job identifier
+      schema:
+        type: string
+        format: objectid
+        example: 665a1b2c3d4e5f6a7b8c9d0e
+
+    ProfileId:
+      name: profile_id
+      in: path
+      required: true
+      description: Unique statistical profile identifier
+      schema:
+        type: string
+        format: objectid
+        example: 665a1b2c3d4e5f6a7b8c9d0f
+
+    SchemaId:
+      name: schema_id
+      in: path
+      required: true
+      description: Unique schema definition identifier
+      schema:
+        type: string
+        format: objectid
+        example: 665a1b2c3d4e5f6a7b8c9d10
+
+    TemplateId:
+      name: template_id
+      in: path
+      required: true
+      description: Unique generation template identifier
+      schema:
+        type: string
+        format: objectid
+        example: 665a1b2c3d4e5f6a7b8c9d11
+
+    ExportId:
+      name: export_id
+      in: path
+      required: true
+      description: Unique export identifier
+      schema:
+        type: string
+        format: objectid
+        example: 665a1b2c3d4e5f6a7b8c9d12
+
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      description: Unique user identifier
+      schema:
+        type: string
+        format: objectid
+        example: 665a1b2c3d4e5f6a7b8c9d13
+
+  # ---------------------------------------------------------------------------
+  # REUSABLE RESPONSES
+  # ---------------------------------------------------------------------------
+  responses:
+    BadRequest:
+      description: Bad Request — the request body or parameters are malformed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 400
+            error: Bad Request
+            message: Invalid request parameters
+            details:
+              - field: record_count
+                message: Value must be a positive integer
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+    Unauthorized:
+      description: Unauthorized — missing or invalid JWT access token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 401
+            error: Unauthorized
+            message: Access token is missing, expired, or invalid
+            details: []
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+    Forbidden:
+      description: Forbidden — authenticated user lacks the required role or permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 403
+            error: Forbidden
+            message: Insufficient permissions for this operation
+            details:
+              - required_role: platform_admin
+                current_role: developer
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+    NotFound:
+      description: Not Found — the requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 404
+            error: Not Found
+            message: Resource not found
+            details: []
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+    Conflict:
+      description: Conflict — the operation conflicts with the current resource state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 409
+            error: Conflict
+            message: Cannot cancel a job that is already completed
+            details:
+              - current_status: completed
+                allowed_statuses:
+                  - submitted
+                  - generating
+                  - validating
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+    UnprocessableEntity:
+      description: Unprocessable Entity — request body fails Pydantic schema validation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 422
+            error: Unprocessable Entity
+            message: Request validation failed
+            details:
+              - field: generation_method
+                message: "Value 'invalid_method' is not a valid GenerationMethod"
+              - field: tables[0].record_count
+                message: Value must be greater than 0
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+    TooManyRequests:
+      description: Too Many Requests — rate limit exceeded for the current tier
+      headers:
+        Retry-After:
+          description: Number of seconds to wait before retrying
+          schema:
+            type: integer
+            example: 60
+        X-RateLimit-Limit:
+          description: Maximum requests allowed per window
+          schema:
+            type: integer
+            example: 300
+        X-RateLimit-Remaining:
+          description: Remaining requests in the current window
+          schema:
+            type: integer
+            example: 0
+        X-RateLimit-Reset:
+          description: Unix timestamp when the rate limit window resets
+          schema:
+            type: integer
+            example: 1700000060
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 429
+            error: Too Many Requests
+            message: Rate limit exceeded. Retry after 60 seconds.
+            details:
+              - limit: 300
+                window_seconds: 60
+                tier: data_engineer
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+    InternalServerError:
+      description: Internal Server Error — unexpected server-side failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 500
+            error: Internal Server Error
+            message: An unexpected error occurred. Please try again later.
+            details: []
+            request_id: 550e8400-e29b-41d4-a716-446655440000
+            timestamp: '2025-01-15T10:30:00Z'
+
+  # ---------------------------------------------------------------------------
+  # SCHEMAS — Enumerations
+  # ---------------------------------------------------------------------------
+  schemas:
+    # --- Enumerations ---
+    GenerationMethod:
+      type: string
+      description: Synthetic data generation method
+      enum:
+        - ai_ml
+        - rules_based
+        - statistical
+        - masking
+      example: ai_ml
+
+    JobStatus:
+      type: string
+      description: Generation job lifecycle status
+      enum:
+        - submitted
+        - generating
+        - validating
+        - compliance_check
+        - provisioning
+        - completed
+        - failed
+        - cancelled
+      example: generating
+
+    OutputFormat:
+      type: string
+      description: Output file format for generated data
+      enum:
+        - sql
+        - csv
+        - json
+        - parquet
+      example: csv
+
+    ExportFormat:
+      type: string
+      description: Export output format
+      enum:
+        - sql
+        - csv
+        - json
+        - parquet
+      example: parquet
+
+    DestinationType:
+      type: string
+      description: Export destination type
+      enum:
+        - file
+        - database
+        - cloud_storage
+      example: file
+
+    DatabaseType:
+      type: string
+      description: Target database type for direct provisioning
+      enum:
+        - postgresql
+        - oracle
+        - sqlserver
+        - hana
+      example: postgresql
+
+    CloudProvider:
+      type: string
+      description: Cloud storage provider
+      enum:
+        - aws_s3
+        - azure_blob
+        - gcp_gcs
+      example: aws_s3
+
+    ERPType:
+      type: string
+      description: Enterprise Resource Planning system type
+      enum:
+        - sap
+        - oracle_ebs
+        - dynamics_365
+        - legacy
+      example: sap
+
+    ERPModule:
+      type: string
+      description: ERP functional module (initial release scope)
+      enum:
+        - financial_accounting
+        - human_resources
+        - sales_distribution
+        - material_management
+      example: financial_accounting
+
+    DistributionType:
+      type: string
+      description: Statistical distribution type detected during profiling
+      enum:
+        - normal
+        - log_normal
+        - poisson
+        - exponential
+        - uniform
+        - categorical
+        - binomial
+        - gamma
+        - beta
+      example: normal
+
+    UserRole:
+      type: string
+      description: Platform user role with graduated permissions
+      enum:
+        - platform_admin
+        - data_engineer
+        - developer
+        - qa_engineer
+        - data_analyst
+      example: data_engineer
+
+    TemplateCategory:
+      type: string
+      description: Template classification category
+      enum:
+        - financial
+        - hr
+        - sales
+        - material
+        - cross_module
+        - custom
+      example: financial
+
+    # --- Common Schemas ---
+    ErrorResponse:
+      type: object
+      description: Standardized error response body returned by all endpoints on failure
+      required:
+        - status
+        - error
+        - message
+        - request_id
+        - timestamp
+      properties:
+        status:
+          type: integer
+          description: HTTP status code
+          example: 400
+        error:
+          type: string
+          description: HTTP status text
+          example: Bad Request
+        message:
+          type: string
+          description: Human-readable error description
+          example: Invalid request parameters
+        details:
+          type: array
+          description: Detailed validation errors or contextual information
+          items:
+            type: object
+            additionalProperties: true
+          example:
+            - field: record_count
+              message: Value must be a positive integer
+        request_id:
+          type: string
+          format: uuid
+          description: Correlation ID for tracing this request
+          example: 550e8400-e29b-41d4-a716-446655440000
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of the error
+          example: '2025-01-15T10:30:00Z'
+
+    PaginationMeta:
+      type: object
+      description: Pagination metadata included in all list responses
+      required:
+        - total
+        - page
+        - page_size
+        - total_pages
+      properties:
+        total:
+          type: integer
+          description: Total number of items matching the query
+          example: 142
+        page:
+          type: integer
+          description: Current page number (1-based)
+          example: 1
+        page_size:
+          type: integer
+          description: Number of items per page
+          example: 20
+        total_pages:
+          type: integer
+          description: Total number of pages
+          example: 8
+
+    # --- Generation Schemas ---
+    TableConfig:
+      type: object
+      description: Per-table generation configuration within a job
+      required:
+        - table_name
+        - record_count
+      properties:
+        table_name:
+          type: string
+          description: Name of the table to generate data for
+          example: GL_JOURNAL_ENTRIES
+        record_count:
+          type: integer
+          minimum: 1
+          maximum: 10000000
+          description: Number of records to generate for this table
+          example: 100000
+        generation_method_override:
+          $ref: '#/components/schemas/GenerationMethod'
+        column_overrides:
+          type: object
+          description: Per-column generation parameter overrides
+          additionalProperties:
+            type: object
+            properties:
+              method:
+                $ref: '#/components/schemas/GenerationMethod'
+              distribution:
+                $ref: '#/components/schemas/DistributionType'
+              min_value:
+                type: number
+                description: Minimum value constraint
+              max_value:
+                type: number
+                description: Maximum value constraint
+              null_percentage:
+                type: number
+                minimum: 0
+                maximum: 100
+                description: Percentage of null values to generate
+              pattern:
+                type: string
+                description: Regex pattern for string generation
+              enum_values:
+                type: array
+                items:
+                  type: string
+                description: Allowed values for categorical columns
+
+    GenerationJobRequest:
+      type: object
+      description: Request body for creating a new generation job
+      required:
+        - schema_id
+        - generation_method
+        - tables
+        - output_format
+      properties:
+        name:
+          type: string
+          description: Human-readable name for the job
+          maxLength: 255
+          example: Monthly FI Close Test Data
+        description:
+          type: string
+          description: Optional description of the generation purpose
+          maxLength: 1000
+          example: Generate synthetic GL entries for monthly close testing
+        schema_id:
+          type: string
+          format: objectid
+          description: Reference to the source schema definition
+          example: 665a1b2c3d4e5f6a7b8c9d10
+        profile_id:
+          type: string
+          format: objectid
+          description: Reference to a statistical profile for distribution-aware generation
+          example: 665a1b2c3d4e5f6a7b8c9d0f
+        template_id:
+          type: string
+          format: objectid
+          description: Reference to a generation template to use as a base
+          example: 665a1b2c3d4e5f6a7b8c9d11
+        generation_method:
+          $ref: '#/components/schemas/GenerationMethod'
+        tables:
+          type: array
+          description: List of tables and their generation configurations
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TableConfig'
+        output_format:
+          $ref: '#/components/schemas/OutputFormat'
+        batch_size:
+          type: integer
+          minimum: 1000
+          maximum: 100000
+          default: 10000
+          description: Number of records per generation batch
+          example: 10000
+        preserve_referential_integrity:
+          type: boolean
+          default: true
+          description: Maintain foreign key relationships across tables
+        quality_threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.95
+          description: Minimum composite quality score required (0-1 scale)
+          example: 0.95
+        compliance_check:
+          type: boolean
+          default: true
+          description: Run PII detection and regulatory compliance verification
+        seed:
+          type: integer
+          description: Random seed for reproducible generation
+          example: 42
+        priority:
+          type: string
+          enum:
+            - low
+            - normal
+            - high
+          default: normal
+          description: Job scheduling priority
+        webhook_url:
+          type: string
+          format: uri
+          description: URL to receive job completion webhook notification
+          example: https://ci.example.com/webhooks/generation-complete
+        tags:
+          type: array
+          items:
+            type: string
+          description: User-defined tags for organization
+          example:
+            - monthly-close
+            - fi-module
+
+    GenerationJobResponse:
+      type: object
+      description: Full generation job representation
+      required:
+        - id
+        - status
+        - generation_method
+        - created_at
+      properties:
+        id:
+          type: string
+          format: objectid
+          description: Unique job identifier
+          example: 665a1b2c3d4e5f6a7b8c9d0e
+        name:
+          type: string
+          example: Monthly FI Close Test Data
+        description:
+          type: string
+          example: Generate synthetic GL entries for monthly close testing
+        tenant_id:
+          type: string
+          format: objectid
+          description: Tenant that owns this job
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        created_by:
+          type: string
+          format: objectid
+          description: User who created the job
+          example: 665a1b2c3d4e5f6a7b8c9d13
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        generation_method:
+          $ref: '#/components/schemas/GenerationMethod'
+        schema_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d10
+        profile_id:
+          type: string
+          format: objectid
+          nullable: true
+          example: 665a1b2c3d4e5f6a7b8c9d0f
+        template_id:
+          type: string
+          format: objectid
+          nullable: true
+          example: 665a1b2c3d4e5f6a7b8c9d11
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableConfig'
+        output_format:
+          $ref: '#/components/schemas/OutputFormat'
+        batch_size:
+          type: integer
+          example: 10000
+        preserve_referential_integrity:
+          type: boolean
+          example: true
+        quality_threshold:
+          type: number
+          example: 0.95
+        compliance_check:
+          type: boolean
+          example: true
+        seed:
+          type: integer
+          nullable: true
+          example: 42
+        priority:
+          type: string
+          enum:
+            - low
+            - normal
+            - high
+          example: normal
+        total_records_requested:
+          type: integer
+          description: Sum of all table record counts
+          example: 500000
+        total_records_generated:
+          type: integer
+          description: Records generated so far
+          example: 350000
+        quality_score:
+          type: number
+          nullable: true
+          description: Composite quality score (null until validation completes)
+          example: 0.97
+        quality_details:
+          type: object
+          nullable: true
+          description: Breakdown of quality score components
+          properties:
+            statistical_fidelity:
+              type: number
+              description: Statistical fidelity score (40% weight)
+              example: 0.98
+            business_rules:
+              type: number
+              description: Business rules compliance score (30% weight)
+              example: 0.96
+            referential_integrity:
+              type: number
+              description: Referential integrity score (30% weight)
+              example: 0.97
+        compliance_certificate_id:
+          type: string
+          format: objectid
+          nullable: true
+          description: Reference to compliance certification record
+        export_id:
+          type: string
+          format: objectid
+          nullable: true
+          description: Reference to the export created from this job
+        error_message:
+          type: string
+          nullable: true
+          description: Error description if job failed
+        webhook_url:
+          type: string
+          format: uri
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+          example:
+            - monthly-close
+            - fi-module
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:30:00Z'
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-15T10:00:05Z'
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-15T10:25:00Z'
+
+    GenerationJobListResponse:
+      type: object
+      description: Paginated list of generation jobs
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerationJobResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    JobProgress:
+      type: object
+      description: Real-time progress of a running generation job
+      required:
+        - job_id
+        - status
+        - percentage
+      properties:
+        job_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d0e
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        percentage:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Overall completion percentage
+          example: 72.5
+        records_generated:
+          type: integer
+          description: Total records generated across all tables
+          example: 362500
+        records_total:
+          type: integer
+          description: Total records requested
+          example: 500000
+        current_table:
+          type: string
+          description: Table currently being generated
+          example: GL_JOURNAL_ENTRIES
+        current_batch:
+          type: integer
+          description: Current batch number being processed
+          example: 37
+        total_batches:
+          type: integer
+          description: Total number of batches
+          example: 50
+        records_per_second:
+          type: number
+          description: Current generation throughput
+          example: 18500.0
+        estimated_remaining_seconds:
+          type: integer
+          description: Estimated time to completion in seconds
+          example: 45
+        started_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:05Z'
+        elapsed_seconds:
+          type: integer
+          description: Elapsed time since job started
+          example: 1200
+
+    JobStatistics:
+      type: object
+      description: Aggregated job statistics for dashboard display
+      properties:
+        total_jobs:
+          type: integer
+          description: Total number of jobs
+          example: 256
+        active_jobs:
+          type: integer
+          description: Currently running jobs
+          example: 3
+        completed_jobs:
+          type: integer
+          description: Successfully completed jobs
+          example: 230
+        failed_jobs:
+          type: integer
+          description: Failed jobs
+          example: 12
+        cancelled_jobs:
+          type: integer
+          description: Cancelled jobs
+          example: 11
+        total_records_generated:
+          type: integer
+          format: int64
+          description: Total records generated across all jobs
+          example: 125000000
+        average_quality_score:
+          type: number
+          description: Average quality score across completed jobs
+          example: 0.967
+        average_generation_time_seconds:
+          type: number
+          description: Average job duration in seconds
+          example: 1845.5
+        jobs_by_status:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            submitted: 0
+            generating: 2
+            validating: 1
+            completed: 230
+            failed: 12
+            cancelled: 11
+        jobs_by_method:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            ai_ml: 80
+            rules_based: 95
+            statistical: 60
+            masking: 21
+        throughput_trend:
+          type: array
+          description: Records per minute over the last 24 hours (hourly buckets)
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              records_per_minute:
+                type: number
+
+    # --- Profile Schemas ---
+    ConnectionConfig:
+      type: object
+      description: Connection configuration for an ERP source system
+      required:
+        - host
+        - port
+        - database
+      properties:
+        host:
+          type: string
+          description: Database server hostname or IP
+          example: erp-db.internal.example.com
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Database server port
+          example: 5432
+        database:
+          type: string
+          description: Database/schema name
+          example: SAP_FI
+        username:
+          type: string
+          description: Database username (stored securely via Vault)
+          example: readonly_user
+        password:
+          type: string
+          format: password
+          description: Database password (write-only, never returned in responses)
+          writeOnly: true
+        ssl_enabled:
+          type: boolean
+          default: true
+          description: Use TLS for the database connection
+        connection_timeout_seconds:
+          type: integer
+          default: 30
+          description: Connection timeout in seconds
+        additional_properties:
+          type: object
+          description: Driver-specific connection properties
+          additionalProperties:
+            type: string
+
+    ProfileRequest:
+      type: object
+      description: Request body for creating a statistical profile
+      required:
+        - name
+        - erp_type
+        - erp_module
+        - connection
+      properties:
+        name:
+          type: string
+          description: Human-readable name for the profile
+          maxLength: 255
+          example: SAP FI Production Schema Profile
+        description:
+          type: string
+          maxLength: 1000
+          description: Optional description
+          example: Statistical profile of SAP Financial Accounting production tables
+        erp_type:
+          $ref: '#/components/schemas/ERPType'
+        erp_module:
+          $ref: '#/components/schemas/ERPModule'
+        connection:
+          $ref: '#/components/schemas/ConnectionConfig'
+        tables:
+          type: array
+          description: Specific tables to profile (empty = discover all)
+          items:
+            type: string
+          example:
+            - GL_JOURNAL_ENTRIES
+            - AP_INVOICES
+            - AR_RECEIPTS
+        sample_size:
+          type: integer
+          minimum: 100
+          maximum: 1000000
+          default: 10000
+          description: Number of rows to sample for statistical analysis
+          example: 10000
+        include_patterns:
+          type: boolean
+          default: true
+          description: Analyze data patterns (formats, ranges, frequencies)
+
+    ProfileResponse:
+      type: object
+      description: Full statistical profile representation
+      required:
+        - id
+        - name
+        - erp_type
+        - erp_module
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d0f
+        name:
+          type: string
+          example: SAP FI Production Schema Profile
+        description:
+          type: string
+          nullable: true
+          example: Statistical profile of SAP Financial Accounting production tables
+        tenant_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        created_by:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d13
+        erp_type:
+          $ref: '#/components/schemas/ERPType'
+        erp_module:
+          $ref: '#/components/schemas/ERPModule'
+        schema_id:
+          type: string
+          format: objectid
+          nullable: true
+          description: Reference to the discovered schema, if schema discovery was included
+        status:
+          type: string
+          enum:
+            - pending
+            - profiling
+            - completed
+            - failed
+          example: completed
+        tables_profiled:
+          type: integer
+          description: Number of tables profiled
+          example: 15
+        columns_profiled:
+          type: integer
+          description: Total number of columns profiled across all tables
+          example: 245
+        error_message:
+          type: string
+          nullable: true
+          description: Error description if profiling failed
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T09:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T09:15:00Z'
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-15T09:15:00Z'
+
+    ProfileListResponse:
+      type: object
+      description: Paginated list of profiles
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    StatisticalSummary:
+      type: object
+      description: Statistical summary for a single column
+      required:
+        - table_name
+        - column_name
+        - data_type
+      properties:
+        table_name:
+          type: string
+          example: GL_JOURNAL_ENTRIES
+        column_name:
+          type: string
+          example: AMOUNT
+        data_type:
+          type: string
+          description: Source database column data type
+          example: DECIMAL(18,2)
+        nullable:
+          type: boolean
+          description: Whether the column allows nulls
+          example: false
+        null_percentage:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Percentage of null values observed
+          example: 2.5
+        distinct_count:
+          type: integer
+          description: Number of distinct values
+          example: 89500
+        cardinality_ratio:
+          type: number
+          description: Ratio of distinct values to total rows
+          example: 0.895
+        distribution_type:
+          $ref: '#/components/schemas/DistributionType'
+        distribution_parameters:
+          type: object
+          description: Parameters for the fitted distribution
+          additionalProperties:
+            type: number
+          example:
+            mean: 15000.50
+            std_dev: 8500.25
+            skewness: 1.2
+        min_value:
+          type: string
+          description: Minimum observed value (stringified for type-safety)
+          example: '-99999.99'
+        max_value:
+          type: string
+          description: Maximum observed value (stringified for type-safety)
+          example: '999999.99'
+        mean:
+          type: number
+          nullable: true
+          description: Arithmetic mean (numeric columns only)
+          example: 15000.50
+        median:
+          type: number
+          nullable: true
+          description: Median value (numeric columns only)
+          example: 12500.00
+        std_dev:
+          type: number
+          nullable: true
+          description: Standard deviation (numeric columns only)
+          example: 8500.25
+        percentiles:
+          type: object
+          nullable: true
+          description: Key percentile values
+          properties:
+            p25:
+              type: number
+              example: 7500.00
+            p50:
+              type: number
+              example: 12500.00
+            p75:
+              type: number
+              example: 22000.00
+            p90:
+              type: number
+              example: 35000.00
+            p95:
+              type: number
+              example: 42000.00
+            p99:
+              type: number
+              example: 75000.00
+        most_common_values:
+          type: array
+          nullable: true
+          description: Top N most frequent values (categorical columns)
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+              frequency:
+                type: number
+                description: Relative frequency (0-1)
+        pattern:
+          type: string
+          nullable: true
+          description: Detected data pattern (e.g., date format, phone format)
+          example: 'YYYY-MM-DD'
+        pattern_compliance_rate:
+          type: number
+          nullable: true
+          description: Percentage of values matching the detected pattern
+          example: 99.8
+
+    # --- Schema Discovery Schemas ---
+    SchemaDiscoveryRequest:
+      type: object
+      description: Request body for triggering ERP schema discovery
+      required:
+        - name
+        - erp_type
+        - erp_module
+        - connection
+      properties:
+        name:
+          type: string
+          description: Human-readable name for the schema
+          maxLength: 255
+          example: SAP FI Production Schema
+        description:
+          type: string
+          maxLength: 1000
+          example: Schema discovery for SAP Financial Accounting module
+        erp_type:
+          $ref: '#/components/schemas/ERPType'
+        erp_module:
+          $ref: '#/components/schemas/ERPModule'
+        connection:
+          $ref: '#/components/schemas/ConnectionConfig'
+        include_tables:
+          type: array
+          description: Specific table names to discover (empty = discover all)
+          items:
+            type: string
+          example:
+            - GL_JOURNAL_ENTRIES
+            - GL_ACCOUNTS
+        exclude_tables:
+          type: array
+          description: Table name patterns to exclude from discovery
+          items:
+            type: string
+          example:
+            - TEMP_*
+            - _LOG_*
+        discover_relationships:
+          type: boolean
+          default: true
+          description: Discover foreign key relationships between tables
+        max_tables:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 500
+          description: Maximum number of tables to discover
+
+    SchemaDefinition:
+      type: object
+      description: Complete ERP schema definition with tables and relationships
+      required:
+        - id
+        - name
+        - erp_type
+        - erp_module
+        - status
+      properties:
+        id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d10
+        name:
+          type: string
+          example: SAP FI Production Schema
+        description:
+          type: string
+          nullable: true
+        tenant_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        created_by:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d13
+        erp_type:
+          $ref: '#/components/schemas/ERPType'
+        erp_module:
+          $ref: '#/components/schemas/ERPModule'
+        status:
+          type: string
+          enum:
+            - discovering
+            - completed
+            - failed
+          example: completed
+        table_count:
+          type: integer
+          description: Number of tables in the schema
+          example: 45
+        relationship_count:
+          type: integer
+          description: Number of foreign key relationships
+          example: 72
+        tables:
+          type: array
+          description: Table definitions (included in detail view)
+          items:
+            $ref: '#/components/schemas/TableDefinition'
+        relationships:
+          type: array
+          description: Foreign key relationships (included in detail view)
+          items:
+            $ref: '#/components/schemas/RelationshipDefinition'
+        dependency_order:
+          type: array
+          description: Topologically sorted table generation order
+          items:
+            type: string
+          example:
+            - GL_ACCOUNTS
+            - GL_PERIODS
+            - GL_JOURNAL_ENTRIES
+            - GL_JOURNAL_LINES
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T08:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T08:10:00Z'
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-15T08:10:00Z'
+
+    SchemaListResponse:
+      type: object
+      description: Paginated list of schemas
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SchemaDefinition'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    TableDefinition:
+      type: object
+      description: Definition of a single table within a schema
+      required:
+        - table_name
+        - column_count
+      properties:
+        table_name:
+          type: string
+          example: GL_JOURNAL_ENTRIES
+        schema_name:
+          type: string
+          description: Database schema/namespace
+          example: SAP_FI
+        module:
+          $ref: '#/components/schemas/ERPModule'
+        column_count:
+          type: integer
+          description: Number of columns in the table
+          example: 28
+        row_count_estimate:
+          type: integer
+          description: Estimated number of rows
+          example: 1500000
+        primary_key_columns:
+          type: array
+          items:
+            type: string
+          example:
+            - JOURNAL_ENTRY_ID
+        has_foreign_keys:
+          type: boolean
+          example: true
+        columns:
+          type: array
+          description: Column definitions (included in detail views)
+          items:
+            $ref: '#/components/schemas/ColumnDefinition'
+
+    ColumnDefinition:
+      type: object
+      description: Definition of a single column within a table
+      required:
+        - column_name
+        - data_type
+      properties:
+        column_name:
+          type: string
+          example: AMOUNT
+        data_type:
+          type: string
+          description: Source database column type
+          example: DECIMAL(18,2)
+        nullable:
+          type: boolean
+          description: Whether the column accepts null values
+          example: false
+        is_primary_key:
+          type: boolean
+          example: false
+        is_foreign_key:
+          type: boolean
+          example: false
+        foreign_key_reference:
+          type: object
+          nullable: true
+          description: Foreign key target if is_foreign_key is true
+          properties:
+            target_table:
+              type: string
+              example: GL_ACCOUNTS
+            target_column:
+              type: string
+              example: ACCOUNT_ID
+        default_value:
+          type: string
+          nullable: true
+          description: Default value expression
+          example: '0.00'
+        max_length:
+          type: integer
+          nullable: true
+          description: Maximum length for string columns
+          example: 255
+        precision:
+          type: integer
+          nullable: true
+          description: Numeric precision
+          example: 18
+        scale:
+          type: integer
+          nullable: true
+          description: Numeric scale
+          example: 2
+        constraints:
+          type: array
+          description: Check constraints and validation rules
+          items:
+            type: string
+          example:
+            - 'AMOUNT >= -999999999.99'
+            - 'AMOUNT <= 999999999.99'
+
+    RelationshipDefinition:
+      type: object
+      description: Foreign key relationship between two tables
+      required:
+        - source_table
+        - source_column
+        - target_table
+        - target_column
+      properties:
+        relationship_id:
+          type: string
+          format: objectid
+        source_table:
+          type: string
+          description: Child table (contains the foreign key)
+          example: GL_JOURNAL_LINES
+        source_column:
+          type: string
+          description: Foreign key column in the child table
+          example: JOURNAL_ENTRY_ID
+        target_table:
+          type: string
+          description: Parent table (referenced table)
+          example: GL_JOURNAL_ENTRIES
+        target_column:
+          type: string
+          description: Primary key column in the parent table
+          example: JOURNAL_ENTRY_ID
+        cardinality:
+          type: string
+          enum:
+            - one_to_one
+            - one_to_many
+            - many_to_many
+          description: Relationship cardinality
+          example: one_to_many
+        is_mandatory:
+          type: boolean
+          description: Whether the foreign key is non-nullable
+          example: true
+        on_delete_action:
+          type: string
+          enum:
+            - cascade
+            - set_null
+            - restrict
+            - no_action
+          description: Referential action on delete
+          example: cascade
+
+    # --- Template Schemas ---
+    TemplateTableConfig:
+      type: object
+      description: Template-level table generation configuration
+      required:
+        - table_name
+        - default_record_count
+      properties:
+        table_name:
+          type: string
+          example: GL_JOURNAL_ENTRIES
+        default_record_count:
+          type: integer
+          minimum: 1
+          example: 50000
+        generation_method_override:
+          $ref: '#/components/schemas/GenerationMethod'
+        column_overrides:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              method:
+                $ref: '#/components/schemas/GenerationMethod'
+              distribution:
+                $ref: '#/components/schemas/DistributionType'
+              constraints:
+                type: object
+                additionalProperties: true
+
+    TemplateParameters:
+      type: object
+      description: Default parameters for the template
+      properties:
+        batch_size:
+          type: integer
+          default: 10000
+          example: 10000
+        preserve_referential_integrity:
+          type: boolean
+          default: true
+        quality_threshold:
+          type: number
+          default: 0.95
+          example: 0.95
+        compliance_check:
+          type: boolean
+          default: true
+        output_format:
+          $ref: '#/components/schemas/OutputFormat'
+
+    TemplateRequest:
+      type: object
+      description: Request body for creating or updating a generation template
+      required:
+        - name
+        - category
+        - erp_type
+        - generation_method
+        - schema_id
+        - tables
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Template display name
+          example: SAP FI Monthly Close Template
+        description:
+          type: string
+          maxLength: 2000
+          description: Detailed template description
+          example: Template for generating SAP Financial Accounting data matching monthly close scenarios
+        category:
+          $ref: '#/components/schemas/TemplateCategory'
+        erp_type:
+          $ref: '#/components/schemas/ERPType'
+        erp_module:
+          $ref: '#/components/schemas/ERPModule'
+        generation_method:
+          $ref: '#/components/schemas/GenerationMethod'
+        schema_id:
+          type: string
+          format: objectid
+          description: Reference to the target schema definition
+          example: 665a1b2c3d4e5f6a7b8c9d10
+        profile_id:
+          type: string
+          format: objectid
+          nullable: true
+          description: Reference to statistical profile for distribution awareness
+        tables:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TemplateTableConfig'
+        parameters:
+          $ref: '#/components/schemas/TemplateParameters'
+        is_public:
+          type: boolean
+          default: false
+          description: Whether the template is visible to all users in the tenant
+        tags:
+          type: array
+          items:
+            type: string
+          example:
+            - financial
+            - monthly-close
+            - sap
+
+    TemplateResponse:
+      type: object
+      description: Full generation template representation
+      required:
+        - id
+        - name
+        - category
+        - erp_type
+        - generation_method
+        - created_at
+      properties:
+        id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d11
+        name:
+          type: string
+          example: SAP FI Monthly Close Template
+        description:
+          type: string
+          nullable: true
+        tenant_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        created_by:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d13
+        category:
+          $ref: '#/components/schemas/TemplateCategory'
+        erp_type:
+          $ref: '#/components/schemas/ERPType'
+        erp_module:
+          $ref: '#/components/schemas/ERPModule'
+        generation_method:
+          $ref: '#/components/schemas/GenerationMethod'
+        schema_id:
+          type: string
+          format: objectid
+        profile_id:
+          type: string
+          format: objectid
+          nullable: true
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateTableConfig'
+        parameters:
+          $ref: '#/components/schemas/TemplateParameters'
+        is_public:
+          type: boolean
+          example: true
+        tags:
+          type: array
+          items:
+            type: string
+        usage_count:
+          type: integer
+          description: Number of times this template has been used
+          example: 34
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-14T16:00:00Z'
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-01T12:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-01-10T14:30:00Z'
+
+    TemplateListResponse:
+      type: object
+      description: Paginated list of templates
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # --- Export Schemas ---
+    DatabaseConnectionConfig:
+      type: object
+      description: Target database connection configuration for direct provisioning
+      required:
+        - database_type
+        - host
+        - port
+        - database
+        - username
+      properties:
+        database_type:
+          $ref: '#/components/schemas/DatabaseType'
+        host:
+          type: string
+          example: target-db.internal.example.com
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          example: 5432
+        database:
+          type: string
+          example: test_data
+        schema:
+          type: string
+          description: Target database schema/namespace
+          example: public
+        username:
+          type: string
+          example: data_loader
+        password:
+          type: string
+          format: password
+          writeOnly: true
+        ssl_enabled:
+          type: boolean
+          default: true
+        batch_insert_size:
+          type: integer
+          minimum: 100
+          maximum: 50000
+          default: 5000
+          description: Number of rows per INSERT batch
+        create_tables:
+          type: boolean
+          default: true
+          description: Create tables if they do not exist
+        truncate_before_insert:
+          type: boolean
+          default: false
+          description: Truncate target tables before inserting new data
+
+    CloudStorageConfig:
+      type: object
+      description: Cloud storage destination configuration
+      required:
+        - cloud_provider
+        - bucket_name
+      properties:
+        cloud_provider:
+          $ref: '#/components/schemas/CloudProvider'
+        bucket_name:
+          type: string
+          description: Bucket or container name
+          example: synthetic-erp-exports
+        prefix:
+          type: string
+          description: Object key prefix (folder path)
+          example: exports/2025/01/
+        region:
+          type: string
+          description: Cloud region
+          example: us-east-1
+        access_key_id:
+          type: string
+          description: AWS access key or Azure storage account name
+          example: AKIAIOSFODNN7EXAMPLE
+        secret_access_key:
+          type: string
+          format: password
+          description: Secret key (write-only)
+          writeOnly: true
+        role_arn:
+          type: string
+          nullable: true
+          description: AWS IAM role ARN for cross-account access
+          example: arn:aws:iam::123456789012:role/SyntheticERPExportRole
+        service_account_json:
+          type: string
+          format: password
+          nullable: true
+          description: GCP service account JSON key (write-only)
+          writeOnly: true
+        encryption:
+          type: object
+          description: Server-side encryption configuration
+          properties:
+            enabled:
+              type: boolean
+              default: true
+            kms_key_id:
+              type: string
+              nullable: true
+              description: Custom KMS key for encryption
+
+    ProvisioningConfig:
+      type: object
+      description: Combined provisioning configuration (database or cloud)
+      properties:
+        database:
+          $ref: '#/components/schemas/DatabaseConnectionConfig'
+        cloud_storage:
+          $ref: '#/components/schemas/CloudStorageConfig'
+
+    ExportRequest:
+      type: object
+      description: Request body for triggering data export or provisioning
+      required:
+        - job_id
+        - destination_type
+        - format
+      properties:
+        job_id:
+          type: string
+          format: objectid
+          description: Source generation job ID
+          example: 665a1b2c3d4e5f6a7b8c9d0e
+        destination_type:
+          $ref: '#/components/schemas/DestinationType'
+        format:
+          $ref: '#/components/schemas/ExportFormat'
+        file_name_prefix:
+          type: string
+          description: Custom file name prefix for file exports
+          example: sap_fi_monthly_close
+        compression:
+          type: string
+          enum:
+            - none
+            - gzip
+            - zip
+          default: gzip
+          description: File compression type
+        database_config:
+          $ref: '#/components/schemas/DatabaseConnectionConfig'
+        cloud_config:
+          $ref: '#/components/schemas/CloudStorageConfig'
+        include_schema_ddl:
+          type: boolean
+          default: true
+          description: Include CREATE TABLE DDL in SQL exports
+        split_by_table:
+          type: boolean
+          default: true
+          description: Generate separate files per table
+
+    ExportResponse:
+      type: object
+      description: Export status and details
+      required:
+        - id
+        - job_id
+        - destination_type
+        - format
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d12
+        job_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d0e
+        tenant_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        created_by:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d13
+        destination_type:
+          $ref: '#/components/schemas/DestinationType'
+        format:
+          $ref: '#/components/schemas/ExportFormat'
+        status:
+          type: string
+          enum:
+            - pending
+            - in_progress
+            - completed
+            - failed
+            - cancelled
+          example: completed
+        progress_percentage:
+          type: number
+          minimum: 0
+          maximum: 100
+          example: 100
+        total_records_exported:
+          type: integer
+          example: 500000
+        total_file_size_bytes:
+          type: integer
+          format: int64
+          description: Total size of exported files in bytes
+          example: 52428800
+        file_count:
+          type: integer
+          description: Number of files generated
+          example: 5
+        output_location:
+          type: string
+          description: Output location (file path, bucket URL, or database identifier)
+          example: s3://synthetic-erp-exports/exports/2025/01/sap_fi_monthly_close/
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:30:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:35:00Z'
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-15T10:35:00Z'
+
+    ExportListResponse:
+      type: object
+      description: Paginated list of exports
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExportResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # --- Auth Schemas ---
+    LoginResponse:
+      type: object
+      description: Successful authentication response
+      required:
+        - access_token
+        - token_type
+        - expires_in
+        - user
+      properties:
+        access_token:
+          type: string
+          description: JWT access token (RS256 signed by Auth0)
+          example: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: Refresh token for obtaining new access tokens
+          example: v1.MjAyNS0wMS0xNVQxMDowMDowMFo...
+        token_type:
+          type: string
+          enum:
+            - Bearer
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+          example: 3600
+        scope:
+          type: string
+          description: Granted OAuth scopes
+          example: openid profile email
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    TokenRefreshRequest:
+      type: object
+      description: Request body for token refresh
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Valid refresh token from initial login or previous refresh
+          example: v1.MjAyNS0wMS0xNVQxMDowMDowMFo...
+
+    TokenRefreshResponse:
+      type: object
+      description: Refreshed token pair
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: New JWT access token
+          example: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: New refresh token (token rotation)
+          example: v1.MjAyNS0wMS0xNVQxMDowMDowMFo...
+        token_type:
+          type: string
+          enum:
+            - Bearer
+          example: Bearer
+        expires_in:
+          type: integer
+          description: New access token lifetime in seconds
+          example: 3600
+
+    Permission:
+      type: object
+      description: Granular permission definition
+      properties:
+        resource:
+          type: string
+          description: Resource type
+          example: generation_jobs
+        actions:
+          type: array
+          items:
+            type: string
+            enum:
+              - create
+              - read
+              - update
+              - delete
+              - execute
+          example:
+            - create
+            - read
+
+    UserProfile:
+      type: object
+      description: User profile with role and permissions
+      required:
+        - id
+        - email
+        - role
+      properties:
+        id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d13
+        auth0_id:
+          type: string
+          description: Auth0 user identifier
+          example: auth0|507f1f77bcf86cd799439011
+        email:
+          type: string
+          format: email
+          example: jane.doe@example.com
+        display_name:
+          type: string
+          example: Jane Doe
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+          example: https://lh3.googleusercontent.com/a/photo.jpg
+        role:
+          $ref: '#/components/schemas/UserRole'
+        permissions:
+          type: array
+          description: Effective permissions for this user
+          items:
+            $ref: '#/components/schemas/Permission'
+        tenant_ids:
+          type: array
+          description: Tenants the user belongs to
+          items:
+            type: string
+            format: objectid
+          example:
+            - 665a1b2c3d4e5f6a7b8c9d01
+        default_tenant_id:
+          type: string
+          format: objectid
+          nullable: true
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        is_active:
+          type: boolean
+          example: true
+        notification_preferences:
+          type: object
+          properties:
+            email_on_job_complete:
+              type: boolean
+              default: true
+            email_on_job_failure:
+              type: boolean
+              default: true
+            email_on_compliance_alert:
+              type: boolean
+              default: true
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2025-01-15T10:00:00Z'
+        created_at:
+          type: string
+          format: date-time
+          example: '2024-06-01T09:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+
+    UserListResponse:
+      type: object
+      description: Paginated list of users
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserProfile'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    CreateUserRequest:
+      type: object
+      description: Request body for creating a new user
+      required:
+        - email
+        - role
+        - tenant_ids
+      properties:
+        email:
+          type: string
+          format: email
+          example: new.user@example.com
+        display_name:
+          type: string
+          example: New User
+        role:
+          $ref: '#/components/schemas/UserRole'
+        tenant_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: objectid
+          example:
+            - 665a1b2c3d4e5f6a7b8c9d01
+        send_invitation:
+          type: boolean
+          default: true
+          description: Send email invitation to the new user
+
+    UpdateUserRequest:
+      type: object
+      description: Request body for updating a user
+      properties:
+        display_name:
+          type: string
+          example: Updated Name
+        role:
+          $ref: '#/components/schemas/UserRole'
+        tenant_ids:
+          type: array
+          items:
+            type: string
+            format: objectid
+        is_active:
+          type: boolean
+          description: Activate or deactivate the user
+
+    # --- Admin Schemas ---
+    TenantRequest:
+      type: object
+      description: Request body for creating or updating a tenant
+      required:
+        - name
+        - namespace
+      properties:
+        name:
+          type: string
+          description: Human-readable tenant name
+          maxLength: 255
+          example: Acme Corporation
+        namespace:
+          type: string
+          description: Unique Kubernetes namespace identifier
+          pattern: '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'
+          example: acme-corp
+        description:
+          type: string
+          maxLength: 1000
+          example: Acme Corporation development environment
+        resource_quotas:
+          type: object
+          description: Resource limits for the tenant
+          properties:
+            max_concurrent_jobs:
+              type: integer
+              minimum: 1
+              default: 5
+              example: 10
+            max_records_per_job:
+              type: integer
+              minimum: 1000
+              default: 10000000
+              example: 10000000
+            max_storage_gb:
+              type: number
+              minimum: 1
+              default: 100
+              example: 500
+            max_cpu_cores:
+              type: number
+              minimum: 0.5
+              default: 8
+              example: 16
+            max_memory_gb:
+              type: number
+              minimum: 1
+              default: 16
+              example: 32
+        allowed_erp_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/ERPType'
+          example:
+            - sap
+            - oracle_ebs
+        allowed_generation_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerationMethod'
+          example:
+            - ai_ml
+            - rules_based
+            - statistical
+            - masking
+        allowed_export_destinations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DestinationType'
+          example:
+            - file
+            - database
+            - cloud_storage
+        feature_flags:
+          type: object
+          description: Tenant-specific feature toggles
+          additionalProperties:
+            type: boolean
+          example:
+            ai_ml_generation: true
+            cloud_export: true
+            advanced_compliance: true
+        is_active:
+          type: boolean
+          default: true
+
+    TenantResponse:
+      type: object
+      description: Full tenant representation
+      required:
+        - id
+        - name
+        - namespace
+        - is_active
+        - created_at
+      properties:
+        id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        name:
+          type: string
+          example: Acme Corporation
+        namespace:
+          type: string
+          example: acme-corp
+        description:
+          type: string
+          nullable: true
+        resource_quotas:
+          type: object
+          properties:
+            max_concurrent_jobs:
+              type: integer
+              example: 10
+            max_records_per_job:
+              type: integer
+              example: 10000000
+            max_storage_gb:
+              type: number
+              example: 500
+            max_cpu_cores:
+              type: number
+              example: 16
+            max_memory_gb:
+              type: number
+              example: 32
+        resource_usage:
+          type: object
+          description: Current resource utilization
+          properties:
+            active_jobs:
+              type: integer
+              example: 3
+            storage_used_gb:
+              type: number
+              example: 125.5
+            cpu_used_cores:
+              type: number
+              example: 6.2
+            memory_used_gb:
+              type: number
+              example: 12.8
+        allowed_erp_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/ERPType'
+        allowed_generation_methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/GenerationMethod'
+        allowed_export_destinations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DestinationType'
+        feature_flags:
+          type: object
+          additionalProperties:
+            type: boolean
+        user_count:
+          type: integer
+          description: Number of users in this tenant
+          example: 25
+        is_active:
+          type: boolean
+          example: true
+        created_at:
+          type: string
+          format: date-time
+          example: '2024-01-01T00:00:00Z'
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-01-10T14:30:00Z'
+
+    TenantListResponse:
+      type: object
+      description: Paginated list of tenants
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    SystemSettings:
+      type: object
+      description: Global platform system settings
+      properties:
+        generation:
+          type: object
+          description: Default generation settings
+          properties:
+            default_batch_size:
+              type: integer
+              example: 10000
+            max_batch_size:
+              type: integer
+              example: 100000
+            default_quality_threshold:
+              type: number
+              example: 0.95
+            max_concurrent_jobs_global:
+              type: integer
+              example: 50
+            default_generation_method:
+              $ref: '#/components/schemas/GenerationMethod'
+            checkpoint_interval_records:
+              type: integer
+              description: Records between checkpoints for resume support
+              example: 100000
+        quality:
+          type: object
+          description: Quality scoring weights and thresholds
+          properties:
+            statistical_fidelity_weight:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Weight for statistical fidelity (default 0.4)
+              example: 0.4
+            business_rules_weight:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Weight for business rules (default 0.3)
+              example: 0.3
+            referential_integrity_weight:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Weight for referential integrity (default 0.3)
+              example: 0.3
+            minimum_passing_score:
+              type: number
+              minimum: 0
+              maximum: 1
+              example: 0.95
+        compliance:
+          type: object
+          description: Compliance and PII detection settings
+          properties:
+            enabled_frameworks:
+              type: array
+              items:
+                type: string
+                enum:
+                  - gdpr
+                  - hipaa
+                  - ccpa
+              example:
+                - gdpr
+                - hipaa
+                - ccpa
+            pii_detection_sensitivity:
+              type: string
+              enum:
+                - low
+                - medium
+                - high
+              default: high
+              example: high
+            auto_certification:
+              type: boolean
+              default: true
+              description: Automatically certify datasets that pass all checks
+        rate_limiting:
+          type: object
+          description: Rate limiting configuration per role tier
+          properties:
+            platform_admin:
+              type: integer
+              description: Requests per minute for Platform Admin
+              example: 1000
+            data_engineer:
+              type: integer
+              description: Requests per minute for Data Engineer
+              example: 300
+            developer:
+              type: integer
+              description: Requests per minute for Developer
+              example: 300
+            qa_engineer:
+              type: integer
+              description: Requests per minute for QA Engineer
+              example: 300
+            data_analyst:
+              type: integer
+              description: Requests per minute for Data Analyst
+              example: 60
+        security:
+          type: object
+          description: Security configuration
+          properties:
+            jwt_expiry_seconds:
+              type: integer
+              example: 3600
+            refresh_token_expiry_seconds:
+              type: integer
+              example: 604800
+            max_login_attempts:
+              type: integer
+              example: 5
+            lockout_duration_seconds:
+              type: integer
+              example: 900
+            require_mfa:
+              type: boolean
+              default: false
+        audit:
+          type: object
+          description: Audit logging configuration
+          properties:
+            retention_years:
+              type: integer
+              description: Audit log retention period in years
+              example: 7
+            tamper_detection_enabled:
+              type: boolean
+              default: true
+            checksum_algorithm:
+              type: string
+              default: sha256
+
+    AuditLogEntry:
+      type: object
+      description: Single audit log entry with tamper-evident properties
+      required:
+        - id
+        - action_type
+        - timestamp
+        - checksum
+      properties:
+        id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d20
+        tenant_id:
+          type: string
+          format: objectid
+          example: 665a1b2c3d4e5f6a7b8c9d01
+        user_id:
+          type: string
+          format: objectid
+          nullable: true
+          description: User who performed the action (null for system actions)
+          example: 665a1b2c3d4e5f6a7b8c9d13
+        user_email:
+          type: string
+          format: email
+          nullable: true
+          example: jane.doe@example.com
+        action_type:
+          type: string
+          description: Type of audited action
+          example: job_created
+        resource_type:
+          type: string
+          description: Type of resource affected
+          example: generation_job
+        resource_id:
+          type: string
+          format: objectid
+          nullable: true
+          description: ID of the affected resource
+          example: 665a1b2c3d4e5f6a7b8c9d0e
+        details:
+          type: object
+          description: Action-specific detail payload
+          additionalProperties: true
+          example:
+            job_name: Monthly FI Close Test Data
+            generation_method: ai_ml
+            record_count: 500000
+        ip_address:
+          type: string
+          description: Client IP address
+          example: 192.168.1.100
+        user_agent:
+          type: string
+          description: Client user agent string
+          example: Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...
+        request_id:
+          type: string
+          format: uuid
+          description: Correlation ID for the originating request
+          example: 550e8400-e29b-41d4-a716-446655440000
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+        checksum:
+          type: string
+          description: SHA-256 integrity checksum for tamper detection
+          example: a1b2c3d4e5f6789012345678abcdef01234567890abcdef0123456789abcdef0
+        previous_checksum:
+          type: string
+          nullable: true
+          description: Checksum of the preceding audit log entry (chain integrity)
+          example: 0fedcba9876543210fedcba987654321fedcba987654321fedcba9876543210
+
+    AuditLogListResponse:
+      type: object
+      description: Paginated list of audit log entries
+      required:
+        - data
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogEntry'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # --- Health and Monitoring Schemas ---
+    HealthResponse:
+      type: object
+      description: Liveness probe response
+      required:
+        - status
+        - service
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - healthy
+            - unhealthy
+          example: healthy
+        service:
+          type: string
+          description: Service identifier
+          example: api-gateway
+        version:
+          type: string
+          description: Application version
+          example: 1.0.0
+        uptime_seconds:
+          type: integer
+          description: Time since service started in seconds
+          example: 86400
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+
+    DependencyCheck:
+      type: object
+      description: Health status of a single dependency
+      required:
+        - name
+        - status
+      properties:
+        name:
+          type: string
+          description: Dependency name
+          example: mongodb
+        status:
+          type: string
+          enum:
+            - connected
+            - disconnected
+            - degraded
+          example: connected
+        latency_ms:
+          type: number
+          description: Response time in milliseconds
+          example: 5.2
+        details:
+          type: string
+          nullable: true
+          description: Additional status information
+          example: MongoDB 7.0.4 - replica set rs0
+
+    ReadinessResponse:
+      type: object
+      description: Readiness probe response with dependency checks
+      required:
+        - status
+        - service
+        - dependencies
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - ready
+            - not_ready
+          example: ready
+        service:
+          type: string
+          example: api-gateway
+        dependencies:
+          type: array
+          description: Status of each critical dependency
+          items:
+            $ref: '#/components/schemas/DependencyCheck'
+          example:
+            - name: mongodb
+              status: connected
+              latency_ms: 5.2
+              details: MongoDB 7.0.4 - replica set rs0
+            - name: redis
+              status: connected
+              latency_ms: 1.1
+              details: Redis 7.2.4 - standalone
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+
+    SystemStatus:
+      type: object
+      description: Comprehensive system status for monitoring
+      properties:
+        service:
+          type: string
+          example: api-gateway
+        version:
+          type: string
+          example: 1.0.0
+        environment:
+          type: string
+          enum:
+            - development
+            - staging
+            - production
+          example: production
+        uptime_seconds:
+          type: integer
+          example: 86400
+        cpu:
+          type: object
+          properties:
+            usage_percent:
+              type: number
+              example: 45.2
+            cores:
+              type: integer
+              example: 4
+        memory:
+          type: object
+          properties:
+            used_mb:
+              type: number
+              example: 1024.5
+            total_mb:
+              type: number
+              example: 4096.0
+            usage_percent:
+              type: number
+              example: 25.0
+        disk:
+          type: object
+          properties:
+            used_gb:
+              type: number
+              example: 25.0
+            total_gb:
+              type: number
+              example: 100.0
+            usage_percent:
+              type: number
+              example: 25.0
+        active_connections:
+          type: integer
+          description: Number of active HTTP connections
+          example: 42
+        request_stats:
+          type: object
+          description: Request statistics since last restart
+          properties:
+            total_requests:
+              type: integer
+              format: int64
+              example: 1250000
+            requests_per_second:
+              type: number
+              example: 14.5
+            average_latency_ms:
+              type: number
+              example: 85.3
+            error_rate_percent:
+              type: number
+              example: 0.1
+        queue_depths:
+          type: object
+          description: Current processing queue depths
+          properties:
+            generation_queue:
+              type: integer
+              example: 5
+            export_queue:
+              type: integer
+              example: 2
+            profiling_queue:
+              type: integer
+              example: 0
+        database:
+          type: object
+          description: Database connection pool status
+          properties:
+            mongodb_pool_size:
+              type: integer
+              example: 100
+            mongodb_active_connections:
+              type: integer
+              example: 15
+            redis_pool_size:
+              type: integer
+              example: 50
+            redis_active_connections:
+              type: integer
+              example: 8
+        cache:
+          type: object
+          description: Cache performance metrics
+          properties:
+            hit_rate_percent:
+              type: number
+              example: 87.5
+            miss_rate_percent:
+              type: number
+              example: 12.5
+            total_keys:
+              type: integer
+              example: 5432
+            memory_used_mb:
+              type: number
+              example: 256.0
+        timestamp:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+
+    ServiceHealth:
+      type: object
+      description: Health status of a downstream microservice
+      required:
+        - service_name
+        - status
+      properties:
+        service_name:
+          type: string
+          description: Name of the downstream service
+          example: generation-engine
+        status:
+          type: string
+          enum:
+            - healthy
+            - unhealthy
+            - degraded
+            - unknown
+          example: healthy
+        url:
+          type: string
+          format: uri
+          description: Service endpoint URL
+          example: http://generation-engine:5001
+        latency_ms:
+          type: number
+          description: Response time to health check in milliseconds
+          example: 12.5
+        last_checked_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+        version:
+          type: string
+          nullable: true
+          description: Reported service version
+          example: 1.0.0
+        details:
+          type: string
+          nullable: true
+          description: Additional health information from the service
+          example: 3 active generation jobs, GPU available
