@@ -354,7 +354,7 @@ class ColumnProfile(BaseModel):
         """Ensure null_rate is within [0.0, 1.0]."""
         if isinstance(value, (int, float)):
             return max(0.0, min(float(value), 1.0))
-        return value
+        return float(value)
 
     @field_validator("cardinality", mode="before")
     @classmethod
@@ -362,7 +362,7 @@ class ColumnProfile(BaseModel):
         """Ensure cardinality ratio is within [0.0, 1.0]."""
         if isinstance(value, (int, float)):
             return max(0.0, min(float(value), 1.0))
-        return value
+        return float(value)
 
 
 class CorrelationEntry(BaseModel):
