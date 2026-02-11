@@ -1,0 +1,366 @@
+# ==========================================================================
+# Bandit Security Configuration - Synthetic ERP Data Generation Platform
+# ==========================================================================
+#
+# Profile: synthetic_erp (default)
+#
+# Purpose:
+#   Python static security analysis configuration for all backend services
+#   in the Synthetic ERP Data Generation Platform. This file enforces
+#   automated detection of common security vulnerabilities including
+#   hardcoded credentials, insecure function usage, SQL injection patterns,
+#   unsafe deserialization, and cryptographic weaknesses.
+#
+# Compliance:
+#   SOC 2 Type II (C-004) — Ensures no known Python security vulnerabilities
+#   are introduced into the codebase through automated security scanning.
+#   All findings are recorded for audit trail purposes.
+#
+# Target Services:
+#   - src/backend/api_gateway/        (Flask REST API Gateway)
+#   - src/backend/generation_engine/  (Multi-method data generation)
+#   - src/backend/profiling_service/  (ERP schema discovery & profiling)
+#   - src/backend/quality_service/    (Data quality validation)
+#   - src/backend/compliance_service/ (PII detection & regulatory compliance)
+#   - src/backend/provisioning_service/ (Database connectors & cloud export)
+#   - src/backend/shared/             (Shared utilities library)
+#
+# CI/CD Integration:
+#   This configuration is consumed by .github/workflows/security-scan.yml
+#   via the --config flag:
+#
+#   bandit --config tests/security/bandit.yaml \
+#     -r src/backend/ \
+#     -f yaml \
+#     -o bandit-results.yaml \
+#     --severity-level low \
+#     --confidence-level low \
+#     -n 3 \
+#     --aggregate vuln
+#
+# Local Development Usage:
+#   bandit --config tests/security/bandit.yaml -r src/backend/ -f screen
+#
+# Note on Profile:
+#   Modern Bandit (1.7+) manages profiles through config files used with
+#   the -c/--config flag. This file IS the 'synthetic_erp' profile —
+#   applying it via --config activates all rules defined herein. The
+#   combination of enabled checks (all defaults) minus skipped checks
+#   (B101 only) constitutes the complete synthetic_erp security profile.
+#
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# Excluded Paths
+# --------------------------------------------------------------------------
+# Directories and file patterns excluded from security scanning.
+# These paths contain non-production code that commonly triggers false
+# positives (e.g., test files with mock credentials, auto-generated code).
+#
+# IMPORTANT: Target scan paths are specified via CLI (-r src/backend/),
+# not in this config file. The exclude_dirs below filter OUT paths from
+# within the scanned directories.
+# --------------------------------------------------------------------------
+exclude_dirs:
+  # Test files frequently use assert statements, mock credentials,
+  # hardcoded test tokens, and intentionally insecure patterns for
+  # testing purposes. Scanning these produces excessive false positives.
+  - tests
+
+  # Auto-generated database migration files may contain SQL patterns
+  # that trigger false positives for hardcoded SQL expressions (B608).
+  - "**/migrations"
+
+  # Compiled Python bytecode cache directories contain no source code
+  # and should never be scanned.
+  - "**/__pycache__"
+
+  # Python virtual environments contain third-party package code that
+  # is not maintained by this project and would produce irrelevant
+  # findings. Security of dependencies is handled by separate tooling
+  # (pip-audit, safety, Trivy).
+  - .venv
+  - venv
+
+  # Frontend Node.js dependencies are not Python code. Any Python files
+  # accidentally present in node_modules are not part of our codebase.
+  - node_modules
+
+  # Version control metadata directories.
+  - .git
+
+  # Tox testing environments contain isolated copies of packages.
+  - .tox
+
+  # Python egg build artifacts.
+  - .eggs
+  - "*.egg"
+
+  # Build and distribution directories.
+  - build
+  - dist
+  - "*.egg-info"
+
+# --------------------------------------------------------------------------
+# Skipped Security Checks
+# --------------------------------------------------------------------------
+# Tests explicitly skipped across all scanned code. Each skip MUST have
+# a documented rationale. Skips should be reviewed quarterly as part of
+# the SOC 2 Type II audit cycle.
+# --------------------------------------------------------------------------
+skips:
+  # B101 (assert_used):
+  # Assert statements are used throughout the codebase for configuration
+  # validation, type narrowing, and defensive programming patterns.
+  # Python's assert statements are removed when running with optimization
+  # flags (-O/-OO), so they must NEVER be used for security enforcement.
+  # Our security checks use explicit if/raise patterns instead.
+  # Assert usage in non-security contexts (config validation, type hints)
+  # is acceptable and does not pose a security risk.
+  #
+  # Review date: Quarterly (next review with SOC 2 Type II audit cycle)
+  - B101
+
+# --------------------------------------------------------------------------
+# Plugin-Specific Configuration
+# --------------------------------------------------------------------------
+# Fine-grained configuration for individual Bandit security checks.
+# These settings customize check behavior for the platform's specific
+# security requirements.
+# --------------------------------------------------------------------------
+
+# B110 (try_except_pass): Detect silent exception swallowing.
+# We enforce checking even for typed exceptions because silently
+# swallowing specific exceptions (e.g., except ValueError: pass) in
+# our service layer can mask security-relevant errors such as input
+# validation failures, authentication errors, or data integrity issues.
+try_except_pass:
+  check_typed_exception: true
+
+# B112 (try_except_continue): Detect exception continuation in loops.
+# Same rationale as try_except_pass — continuing past typed exceptions
+# in batch processing loops (Generation Engine, Provisioning Service)
+# could silently skip corrupted or malicious data records.
+try_except_continue:
+  check_typed_exception: true
+
+# B108 (hardcoded_tmp_directory): Detect insecure temporary file usage.
+# All services must use Python's tempfile module for secure temporary
+# file creation (with proper permissions and unpredictable names) rather
+# than hardcoded paths that may be world-writable or predictable.
+hardcoded_tmp_directory:
+  tmp_dirs:
+    - /tmp
+    - /var/tmp
+    - /dev/shm
+
+# --------------------------------------------------------------------------
+# Enforced Security Checks — synthetic_erp Profile
+# --------------------------------------------------------------------------
+# All Bandit default checks are ENABLED (no 'tests' key means all run).
+# The following documents the critical checks most relevant to the
+# Synthetic ERP Data Generation Platform, organized by category.
+#
+# ===== CRITICAL PRIORITY =====
+#
+# B201 (flask_debug_true):
+#   Detects Flask debug mode enabled in production code. CRITICAL for
+#   all six Flask-based microservices. Debug mode exposes the Werkzeug
+#   debugger which allows arbitrary code execution on the server.
+#   Impact: API Gateway, Generation Engine, Profiling, Quality,
+#           Compliance, Provisioning services.
+#
+# B608 (hardcoded_sql_expressions):
+#   Detects SQL injection patterns from string concatenation or
+#   f-string formatting in SQL queries. CRITICAL for the Profiling
+#   Service (JDBC connectors) and Provisioning Service (database
+#   connectors for PostgreSQL, Oracle, SQL Server, SAP HANA).
+#   All SQL must use parameterized queries.
+#
+# ===== CREDENTIAL & SECRET DETECTION =====
+#
+# B105 (hardcoded_password_string):
+#   Detects hardcoded password strings in variable assignments.
+#   Essential for 12-factor app compliance — all credentials must
+#   come from environment variables or secrets management (Vault).
+#
+# B106 (hardcoded_password_funcarg):
+#   Detects passwords passed as function keyword arguments.
+#   Catches patterns like connect(password="secret").
+#
+# B107 (hardcoded_password_default):
+#   Detects default parameter values that appear to be passwords.
+#   Catches patterns like def connect(password="default").
+#
+# ===== INJECTION & COMMAND EXECUTION =====
+#
+# B102 (exec_used):
+#   Detects use of exec() which can execute arbitrary Python code.
+#   No service in the platform should use exec().
+#
+# B609 (linux_commands_wildcard_injection):
+#   Detects wildcard injection in shell commands that could be
+#   exploited for command injection attacks.
+#
+# B701 (jinja2_autoescape_false):
+#   Detects Jinja2 templates with autoescape disabled, enabling
+#   cross-site scripting (XSS) in rendered HTML. Relevant for any
+#   Flask service rendering templates.
+#
+# B702 (use_of_mako_templates):
+#   Detects use of Mako templates which have known security issues
+#   with template injection.
+#
+# B703 (django_mark_safe):
+#   Detects Django mark_safe usage (included for completeness though
+#   this platform uses Flask, not Django).
+#
+# ===== CRYPTOGRAPHIC SECURITY =====
+#
+# B301 (pickle):
+#   Detects use of pickle deserialization which can execute arbitrary
+#   code. Critical for the Generation Engine which handles model
+#   serialization — must use safe alternatives (safetensors, JSON).
+#
+# B302 (marshal):
+#   Detects use of marshal module for deserialization.
+#   Same risks as pickle.
+#
+# B303 (md5/sha1):
+#   Detects use of MD5 or SHA-1 for hashing. The platform requires
+#   SHA-256 minimum for audit log checksums (SOC 2 Type II) and
+#   AES-256-GCM for data encryption.
+#
+# B311 (random):
+#   Detects use of the pseudo-random number generator (random module)
+#   in security-sensitive contexts. Security operations must use
+#   secrets module or os.urandom() instead.
+#
+# B324 (hashlib):
+#   Detects use of insecure hash functions via hashlib (MD5, SHA-1).
+#   Complements B303 for hashlib-specific usage.
+#
+# ===== SSL/TLS SECURITY =====
+#
+# B501 (request_with_no_cert_validation):
+#   Detects HTTP requests with certificate validation disabled
+#   (verify=False). All inter-service and external communication
+#   must use TLS 1.3 with proper certificate validation.
+#
+# B502 (ssl_with_bad_version):
+#   Detects use of deprecated SSL/TLS protocol versions (SSLv2,
+#   SSLv3, TLS 1.0, TLS 1.1). Platform requires TLS 1.3 minimum.
+#
+# B503 (ssl_with_bad_defaults):
+#   Detects SSL context creation with insecure default settings.
+#
+# ===== FILE & NETWORK SECURITY =====
+#
+# B103 (set_bad_file_permissions):
+#   Detects overly permissive file permissions (e.g., 0o777).
+#   Generated data exports and temporary files must have restricted
+#   permissions.
+#
+# B104 (hardcoded_bind_all_interfaces):
+#   Detects services binding to 0.0.0.0 which exposes them on all
+#   network interfaces. In Kubernetes, services should bind to
+#   specific interfaces or use the pod network.
+#
+# ===== DATA PARSING SECURITY =====
+#
+# B320 (xml):
+#   Detects XML parsing vulnerabilities including XXE (XML External
+#   Entity) attacks. Relevant for ERP connector responses that may
+#   include XML payloads (SAP RFC/BAPI, OData).
+#
+# B506 (yaml_load):
+#   Detects use of yaml.load() without SafeLoader. All YAML parsing
+#   must use yaml.safe_load() to prevent arbitrary code execution.
+#   Critical for configuration file loading across all services.
+#
+# ===== ERROR HANDLING =====
+#
+# B110 (try_except_pass):
+#   Detects empty except blocks that silently swallow exceptions.
+#   Configured above to also check typed exceptions.
+#
+# B112 (try_except_continue):
+#   Detects except blocks that only continue loop iteration.
+#   Configured above to also check typed exceptions.
+#
+# ===== SQL SAFETY (ADDITIONAL) =====
+#
+# B610 (django_extra_used):
+#   Detects Django QuerySet.extra() usage with raw SQL.
+#
+# B611 (django_rawsql_used):
+#   Detects Django RawSQL() usage.
+#   (B610/B611 included for comprehensive coverage; platform uses
+#   PyMongo/JDBC rather than Django ORM.)
+#
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Recommended CI/CD Invocation
+# --------------------------------------------------------------------------
+# The following command demonstrates the complete invocation used in
+# .github/workflows/security-scan.yml:
+#
+#   bandit \
+#     --config tests/security/bandit.yaml \
+#     -r src/backend/api_gateway \
+#        src/backend/generation_engine \
+#        src/backend/profiling_service \
+#        src/backend/quality_service \
+#        src/backend/compliance_service \
+#        src/backend/provisioning_service \
+#        src/backend/shared \
+#     --severity-level low \
+#     --confidence-level low \
+#     -f yaml \
+#     -o bandit-results.yaml \
+#     -n 3 \
+#     --aggregate vuln
+#
+# Arguments explained:
+#   --config             : Use this configuration file (synthetic_erp profile)
+#   -r                   : Recursively scan all backend service directories
+#   --severity-level low : Report findings of LOW severity and above (all)
+#   --confidence-level low : Report findings of LOW confidence and above (all)
+#   -f yaml              : Output in YAML format for CI pipeline parsing
+#   -o bandit-results.yaml : Write results to file for audit archival
+#   -n 3                 : Include 3 lines of code context around findings
+#   --aggregate vuln     : Aggregate results by vulnerability type
+#
+# Alternative output formats for different use cases:
+#   -f json -o bandit-results.json   : JSON for programmatic processing
+#   -f sarif -o bandit-results.sarif : SARIF for GitHub Security tab
+#   -f screen                        : Human-readable terminal output
+#   -f html -o bandit-report.html    : HTML report for stakeholders
+#
+# Exit code behavior:
+#   Exit code 0: No findings (clean scan)
+#   Exit code 1: Findings detected (pipeline should fail)
+#   Use --exit-zero to override (NOT recommended for CI gates)
+#
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Air-Gapped Deployment Notes (C-003)
+# --------------------------------------------------------------------------
+# For air-gapped environments where PyPI access is unavailable:
+#
+# 1. Pre-install Bandit from a private PyPI mirror:
+#    pip install --index-url https://private-pypi.internal/simple bandit
+#
+# 2. Or install from a local wheel:
+#    pip install bandit-1.7.x-py3-none-any.whl
+#
+# 3. Configuration file requires no external network access.
+#    All checks are built into the Bandit package itself.
+#
+# 4. Results can be stored locally for offline audit review:
+#    bandit --config tests/security/bandit.yaml \
+#      -r src/backend/ -f json -o /audit/bandit-$(date +%Y%m%d).json
+#
+# --------------------------------------------------------------------------
