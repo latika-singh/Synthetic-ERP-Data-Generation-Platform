@@ -94,8 +94,12 @@ class Config(BaseConfig):
     """
 
     # -- JWT / Auth0 (extends base with timedelta and API audience) ----------
+    # NOTE: JWT_ACCESS_TOKEN_EXPIRES is intentionally NOT declared at class
+    # level here because BaseConfig defines it as ``int`` (seconds).  The
+    # API Gateway's ``__init__`` converts the integer value into a
+    # ``datetime.timedelta`` as Flask-JWT-Extended expects.  Declaring it
+    # here with ``timedelta`` would create an incompatible override.
 
-    JWT_ACCESS_TOKEN_EXPIRES: timedelta = timedelta(hours=1)
     JWT_REFRESH_TOKEN_EXPIRES: timedelta = timedelta(days=30)
     AUTH0_API_AUDIENCE: str = os.environ.get("AUTH0_API_AUDIENCE", "")
 
@@ -160,7 +164,9 @@ class Config(BaseConfig):
         access_token_seconds: int = self._get_int_env(
             "JWT_ACCESS_TOKEN_EXPIRES", 3600
         )
-        self.JWT_ACCESS_TOKEN_EXPIRES: timedelta = timedelta(
+        # Intentional type override: BaseConfig stores seconds as int,
+        # but Flask-JWT-Extended requires a timedelta object.
+        self.JWT_ACCESS_TOKEN_EXPIRES: timedelta = timedelta(  # type: ignore[assignment]
             seconds=access_token_seconds
         )
 
