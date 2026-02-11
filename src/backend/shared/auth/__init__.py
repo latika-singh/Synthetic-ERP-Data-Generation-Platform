@@ -36,20 +36,22 @@ try:
         validate_token,
     )
 
-    __all__.extend([
-        "AuthenticationError",
-        "InsufficientScopeError",
-        "InvalidTokenError",
-        "TokenExpiredError",
-        "decode_token_unverified",
-        "extract_token_from_request",
-        "fetch_jwks",
-        "get_current_user",
-        "get_signing_key",
-        "jwt_required",
-        "refresh_access_token",
-        "validate_token",
-    ])
+    __all__.extend(
+        [
+            "AuthenticationError",
+            "InsufficientScopeError",
+            "InvalidTokenError",
+            "TokenExpiredError",
+            "decode_token_unverified",
+            "extract_token_from_request",
+            "fetch_jwks",
+            "get_current_user",
+            "get_signing_key",
+            "jwt_required",
+            "refresh_access_token",
+            "validate_token",
+        ]
+    )
 except ImportError:
     pass
 
