@@ -33,8 +33,8 @@
  * @version 1.0.0
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
-import type { SortDirection, PaginationParams } from '@/types/api';
+import React, { useCallback, useMemo } from 'react';
+import type { SortDirection } from '@/types/api';
 import LoadingSpinner from './LoadingSpinner';
 
 // ============================================================================
