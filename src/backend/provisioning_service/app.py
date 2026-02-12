@@ -73,14 +73,14 @@ from shared.observability.tracing import init_tracing
 try:
     from provisioning_service.exporters.file_exporter import FileExporter
 except ImportError:  # pragma: no cover
-    FileExporter = None  # type: ignore[assignment,misc]
+    FileExporter = None
 
 try:
     from provisioning_service.exporters.database_exporter import (
         DatabaseExporter,
     )
 except ImportError:  # pragma: no cover
-    DatabaseExporter = None  # type: ignore[assignment,misc]
+    DatabaseExporter = None
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +676,7 @@ def _register_request_hooks(app: Flask) -> None:
         )
 
     @app.after_request
-    def after_request_hook(response):
+    def after_request_hook(response):  # type: ignore[no-untyped-def]
         """Log response details and clear logging context."""
         logger.info(
             "request_completed",
@@ -745,7 +745,8 @@ def _extract_tenant_from_token() -> str | None:
 
         payload_bytes = base64.urlsafe_b64decode(payload_b64)
         payload = json.loads(payload_bytes)
-        return payload.get("tenant_id") or payload.get("https://synth-erp/tenant_id")
+        tenant: str | None = payload.get("tenant_id") or payload.get("https://synth-erp/tenant_id")
+        return tenant
     except (ValueError, KeyError, json.JSONDecodeError):
         return None
 
@@ -803,7 +804,7 @@ def create_app(config_override: object | None = None) -> Flask:
         try:
             config = ProvisioningServiceConfig()
         except Exception:
-            config = get_config()
+            config = get_config()  # type: ignore[assignment]
         app.config.from_object(config)
 
     # Ensure SERVICE_NAME is available in config for health checks and

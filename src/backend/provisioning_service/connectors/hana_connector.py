@@ -40,16 +40,17 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import csv as _csv_module
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jaydebeapi
 
 from provisioning_service.connectors.base import BaseConnector
-from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Fallback logger for environments where structlog is not configured.
@@ -168,7 +169,7 @@ class HANAConnector(BaseConnector):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialise the SAP HANA connector from *config*.
 
         Computes the JDBC port from ``instance_number`` when an explicit
@@ -275,17 +276,15 @@ class HANAConnector(BaseConnector):
                     self._jar_path,
                 )
 
-            self._connection = self._execute_with_retry(_establish)
+            connection = self._execute_with_retry(_establish)
+            self._connection = connection
 
             # Disable auto-commit for explicit transaction control.
-            try:
-                self._connection.jconn.setAutoCommit(False)
-            except AttributeError:
-                # Some jaydebeapi versions expose autocommit differently.
-                pass
+            with contextlib.suppress(AttributeError):
+                connection.jconn.setAutoCommit(False)
 
             # Set current schema for tenant isolation.
-            cursor = self._connection.cursor()
+            cursor = connection.cursor()
             try:
                 cursor.execute(f'SET SCHEMA "{self._schema}"')
             finally:
@@ -428,10 +427,11 @@ class HANAConnector(BaseConnector):
             f")"
         )
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             cursor.execute(create_sql)
-            self._connection.commit()
+            conn.commit()
 
             self._logger.info(
                 "hana_table_created",
@@ -450,16 +450,12 @@ class HANAConnector(BaseConnector):
                     table_name=table_name,
                     schema=self._schema,
                 )
-                try:
-                    self._connection.rollback()
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    conn.rollback()
                 return
 
-            try:
-                self._connection.rollback()
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                conn.rollback()
 
             self._logger.error(
                 "hana_create_table_failed",
@@ -525,13 +521,14 @@ class HANAConnector(BaseConnector):
         placeholders: str = ", ".join("?" for _ in columns)
         qualified: str = f'"{self._schema}"."{table_name}"'
         insert_sql: str = (
-            f"INSERT INTO {qualified} ({quoted_cols}) VALUES ({placeholders})"
+            f"INSERT INTO {qualified} ({quoted_cols}) VALUES ({placeholders})"  # noqa: S608
         )
 
         total_inserted: int = 0
         total_rows: int = len(data)
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             for offset in range(0, total_rows, effective_batch):
                 batch = data[offset : offset + effective_batch]
@@ -539,7 +536,7 @@ class HANAConnector(BaseConnector):
 
                 try:
                     cursor.executemany(insert_sql, batch)
-                    self._connection.commit()
+                    conn.commit()
                     total_inserted += len(batch)
 
                     self._logger.debug(
@@ -554,10 +551,8 @@ class HANAConnector(BaseConnector):
                         ),
                     )
                 except Exception as exc:
-                    try:
-                        self._connection.rollback()
-                    except Exception:
-                        pass
+                    with contextlib.suppress(Exception):
+                        conn.rollback()
                     error_code = self._extract_hana_error_code(exc)
                     self._logger.error(
                         "hana_batch_insert_failed",
@@ -593,7 +588,7 @@ class HANAConnector(BaseConnector):
         self,
         table_name: str,
         csv_path: str,
-        columns: Optional[List[str]] = None,
+        columns: list[str] | None = None,
     ) -> int:
         """Bulk-load a CSV file into a HANA table via ``IMPORT FROM CSV FILE``.
 
@@ -623,7 +618,8 @@ class HANAConnector(BaseConnector):
 
         qualified: str = f'"{self._schema}"."{table_name}"'
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             # Attempt HANA native CSV import.
             col_clause: str = ""
@@ -643,13 +639,13 @@ class HANAConnector(BaseConnector):
             )
 
             cursor.execute(import_sql)
-            self._connection.commit()
+            conn.commit()
 
             # Retrieve the count of imported rows.
-            count_cursor = self._connection.cursor()
+            count_cursor = conn.cursor()
             try:
                 count_cursor.execute(
-                    f"SELECT COUNT(*) FROM {qualified}"
+                    f"SELECT COUNT(*) FROM {qualified}"  # noqa: S608
                 )
                 row = count_cursor.fetchone()
                 row_count: int = int(row[0]) if row else 0
@@ -674,10 +670,8 @@ class HANAConnector(BaseConnector):
                 csv_path=csv_path,
                 error=str(exc),
             )
-            try:
-                self._connection.rollback()
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                conn.rollback()
 
             return self._csv_fallback_insert(table_name, csv_path, columns)
         finally:
@@ -711,15 +705,17 @@ class HANAConnector(BaseConnector):
         """
         self.ensure_connected()
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
-            def _run() -> list | None:
+            def _run() -> list[Any] | None:
                 if params:
                     cursor.execute(query, params)
                 else:
                     cursor.execute(query)
                 if cursor.description is not None:
-                    return cursor.fetchall()
+                    rows: list[Any] = cursor.fetchall()
+                    return rows
                 return None
 
             result, latency_ms = self._measure_latency(_run)
@@ -727,10 +723,8 @@ class HANAConnector(BaseConnector):
 
             if result is None:
                 # Non-SELECT (DML / DDL) — commit and return empty.
-                try:
-                    self._connection.commit()
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    conn.commit()
                 self._logger.debug(
                     "hana_query_executed",
                     query_type="DML/DDL",
@@ -743,12 +737,11 @@ class HANAConnector(BaseConnector):
             rows: list[dict[str, Any]] = []
             for row_tuple in result:
                 row_dict: dict[str, Any] = {}
-                for idx, value in enumerate(row_tuple):
+                for idx, cell in enumerate(row_tuple):
                     # NCLOB values may be returned as LOB handles —
                     # materialise the full text content.
-                    if hasattr(value, "read"):
-                        value = value.read()
-                    row_dict[col_names[idx]] = value
+                    resolved = cell.read() if hasattr(cell, "read") else cell
+                    row_dict[col_names[idx]] = resolved
                 rows.append(row_dict)
 
             self._logger.debug(
@@ -810,8 +803,10 @@ class HANAConnector(BaseConnector):
             self.ensure_connected()
 
             # Connectivity probe with latency measurement.
+            conn = self._require_connection()
+
             def _ping() -> None:
-                cur = self._connection.cursor()
+                cur = conn.cursor()
                 try:
                     cur.execute("SELECT 1 FROM DUMMY")
                     cur.fetchone()
@@ -919,10 +914,11 @@ class HANAConnector(BaseConnector):
         """
         self.ensure_connected()
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             cursor.execute(f'CREATE SCHEMA "{schema_name}"')
-            self._connection.commit()
+            conn.commit()
 
             self._logger.info(
                 "hana_schema_created",
@@ -936,15 +932,11 @@ class HANAConnector(BaseConnector):
                     "hana_schema_already_exists",
                     schema_name=schema_name,
                 )
-                try:
-                    self._connection.rollback()
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    conn.rollback()
             else:
-                try:
-                    self._connection.rollback()
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    conn.rollback()
                 self._logger.error(
                     "hana_schema_creation_failed",
                     schema_name=schema_name,
@@ -954,6 +946,25 @@ class HANAConnector(BaseConnector):
                 raise
         finally:
             cursor.close()
+
+    def _require_connection(self) -> Any:
+        """Return the active JDBC connection or raise :class:`ConnectionError`.
+
+        This helper narrows ``self._connection`` from ``Any | None`` to
+        ``Any``, preventing repeated ``is None`` checks in every method.
+
+        Returns:
+            The active JDBC connection object.
+
+        Raises:
+            ConnectionError: If the connector is not connected.
+        """
+        conn = self._connection
+        if conn is None:
+            raise ConnectionError(
+                "HANAConnector is not connected. Call connect() first."
+            )
+        return conn
 
     def _get_jdbc_url(self) -> str:
         """Build the SAP HANA JDBC connection URL.
@@ -1006,7 +1017,8 @@ class HANAConnector(BaseConnector):
         """
         info: dict[str, str] = {"version": "unknown", "sps_level": "unknown"}
         try:
-            cursor = self._connection.cursor()
+            conn = self._require_connection()
+            cursor = conn.cursor()
             try:
                 cursor.execute("SELECT VERSION FROM M_DATABASE")
                 row = cursor.fetchone()
@@ -1024,7 +1036,7 @@ class HANAConnector(BaseConnector):
             finally:
                 cursor.close()
         except Exception:
-            pass
+            self._logger.debug("Failed to query HANA version info")
         return info
 
     def _query_active_connections(self) -> int:
@@ -1034,7 +1046,8 @@ class HANAConnector(BaseConnector):
             Active connection count, or ``0`` on error.
         """
         try:
-            cursor = self._connection.cursor()
+            conn = self._require_connection()
+            cursor = conn.cursor()
             try:
                 cursor.execute(
                     "SELECT COUNT(*) FROM M_CONNECTIONS "
@@ -1051,10 +1064,11 @@ class HANAConnector(BaseConnector):
         """Query M_HOST_RESOURCE_UTILIZATION for memory utilisation %.
 
         Returns:
-            Memory usage percentage (0.0–100.0), or ``0.0`` on error.
+            Memory usage percentage (0.0-100.0), or ``0.0`` on error.
         """
         try:
-            cursor = self._connection.cursor()
+            conn = self._require_connection()
+            cursor = conn.cursor()
             try:
                 cursor.execute(
                     "SELECT USED_PHYSICAL_MEMORY, FREE_PHYSICAL_MEMORY "
@@ -1070,14 +1084,14 @@ class HANAConnector(BaseConnector):
             finally:
                 cursor.close()
         except Exception:
-            pass
+            self._logger.debug("Failed to query HANA memory usage")
         return 0.0
 
     def _csv_fallback_insert(
         self,
         table_name: str,
         csv_path: str,
-        columns: Optional[List[str]] = None,
+        columns: list[str] | None = None,
     ) -> int:
         """Fall back to batch INSERT when native CSV import fails.
 
@@ -1107,7 +1121,7 @@ class HANAConnector(BaseConnector):
             csv_path=csv_path,
         )
 
-        with open(csv_path, "r", encoding="utf-8") as fh:
+        with open(csv_path, encoding="utf-8") as fh:
             reader = _csv_module.reader(fh)
             header: list[str] = next(reader, [])
             effective_columns: list[str] = columns if columns else header
