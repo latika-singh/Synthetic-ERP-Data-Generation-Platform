@@ -55,14 +55,16 @@ import functools
 import logging
 import os
 import time
-from typing import Any, Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import requests
 import requests.exceptions
-from flask import abort, g, jsonify, request
+from flask import g, jsonify, request
 
-from shared.auth.jwt_handler import get_current_user, validate_token
+from shared.auth.jwt_handler import get_current_user
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -81,13 +83,13 @@ F = TypeVar("F", bound=Callable[..., Any])
 # ============================================================================
 
 
-class Role(str, enum.Enum):
+class Role(enum.StrEnum):
     """Enumeration of the five graduated user roles.
 
     Each role maps to a fixed set of :class:`Permission` values defined in
-    :data:`ROLE_PERMISSIONS`.  The string mixin (``str``) ensures that enum
-    members compare naturally with plain strings, which simplifies JWT claim
-    matching (Auth0 delivers roles as string arrays).
+    :data:`ROLE_PERMISSIONS`.  ``StrEnum`` ensures that enum members compare
+    naturally with plain strings, which simplifies JWT claim matching (Auth0
+    delivers roles as string arrays).
 
     Attributes:
         PLATFORM_ADMIN: Full system access including user/tenant management.
@@ -113,7 +115,7 @@ class Role(str, enum.Enum):
 # ============================================================================
 
 
-class Permission(str, enum.Enum):
+class Permission(enum.StrEnum):
     """Enumeration of the nineteen fine-grained permissions.
 
     Permission strings follow the ``<resource>:<action>`` convention (e.g.
@@ -402,7 +404,7 @@ class OPAClient:
             fallback active).
     """
 
-    def __init__(self, opa_url: Optional[str] = None) -> None:
+    def __init__(self, opa_url: str | None = None) -> None:
         """Initialise the OPA client.
 
         Args:
@@ -764,24 +766,27 @@ def require_role(*roles: str) -> Callable[[F], F]:
             tenant_header: str | None = request.headers.get("X-Tenant-ID")
             user_tenant_id: str = current_user.get("tenant_id", "")
 
-            if tenant_header and user_tenant_id:
-                if not validate_tenant_access(user_tenant_id, tenant_header):
-                    logger.warning(
-                        "tenant_isolation_violation",
-                        user_id=user_id,
-                        user_tenant_id=user_tenant_id,
-                        requested_tenant_id=tenant_header,
-                        endpoint=request.endpoint,
-                    )
-                    return (
-                        jsonify(
-                            {
-                                "error": "insufficient_permissions",
-                                "message": "Cross-tenant access denied",
-                            }
-                        ),
-                        403,
-                    )
+            if (
+                tenant_header
+                and user_tenant_id
+                and not validate_tenant_access(user_tenant_id, tenant_header)
+            ):
+                logger.warning(
+                    "tenant_isolation_violation",
+                    user_id=user_id,
+                    user_tenant_id=user_tenant_id,
+                    requested_tenant_id=tenant_header,
+                    endpoint=request.endpoint,
+                )
+                return (
+                    jsonify(
+                        {
+                            "error": "insufficient_permissions",
+                            "message": "Cross-tenant access denied",
+                        }
+                    ),
+                    403,
+                )
 
             logger.debug(
                 "role_check_granted",
@@ -882,24 +887,27 @@ def require_permission(permission: str) -> Callable[[F], F]:
             tenant_header: str | None = request.headers.get("X-Tenant-ID")
             user_tenant_id: str = current_user.get("tenant_id", "")
 
-            if tenant_header and user_tenant_id:
-                if not validate_tenant_access(user_tenant_id, tenant_header):
-                    logger.warning(
-                        "tenant_isolation_violation",
-                        user_id=user_id,
-                        user_tenant_id=user_tenant_id,
-                        requested_tenant_id=tenant_header,
-                        endpoint=request.endpoint,
-                    )
-                    return (
-                        jsonify(
-                            {
-                                "error": "insufficient_permissions",
-                                "message": "Cross-tenant access denied",
-                            }
-                        ),
-                        403,
-                    )
+            if (
+                tenant_header
+                and user_tenant_id
+                and not validate_tenant_access(user_tenant_id, tenant_header)
+            ):
+                logger.warning(
+                    "tenant_isolation_violation",
+                    user_id=user_id,
+                    user_tenant_id=user_tenant_id,
+                    requested_tenant_id=tenant_header,
+                    endpoint=request.endpoint,
+                )
+                return (
+                    jsonify(
+                        {
+                            "error": "insufficient_permissions",
+                            "message": "Cross-tenant access denied",
+                        }
+                    ),
+                    403,
+                )
 
             logger.debug(
                 "permission_check_granted",

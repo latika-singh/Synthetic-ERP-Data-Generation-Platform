@@ -49,13 +49,18 @@ from __future__ import annotations
 import time
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Any, Callable, Dict, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any
 
-import structlog
 from circuitbreaker import CircuitBreakerError, circuit
 from flask import Flask, Response, current_app, g, jsonify, request
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import structlog
 from werkzeug.exceptions import (
     BadGateway,
     BadRequest,
@@ -73,6 +78,7 @@ from werkzeug.exceptions import (
 
 from shared.logging.structured_logger import get_logger
 
+
 # ---------------------------------------------------------------------------
 # Module-level structured logger instance.
 # Initialised at import time; actual configuration (JSON vs. console output)
@@ -84,7 +90,7 @@ logger: structlog.stdlib.BoundLogger = get_logger(__name__)
 # Error Code and Default Message Constants
 # ---------------------------------------------------------------------------
 
-_ERROR_CODE_MAP: Dict[int, str] = {
+_ERROR_CODE_MAP: dict[int, str] = {
     400: "BAD_REQUEST",
     401: "UNAUTHORIZED",
     403: "FORBIDDEN",
@@ -99,7 +105,7 @@ _ERROR_CODE_MAP: Dict[int, str] = {
 }
 """Maps HTTP status codes to machine-readable error code strings."""
 
-_DEFAULT_MESSAGES: Dict[int, str] = {
+_DEFAULT_MESSAGES: dict[int, str] = {
     400: "The request was invalid or malformed.",
     401: "Authentication is required to access this resource.",
     403: "You do not have permission to access this resource.",
@@ -138,7 +144,7 @@ _DEFAULT_BASE_DELAY: float = 1.0
 # Downstream Service Identifiers
 # ---------------------------------------------------------------------------
 
-_DOWNSTREAM_SERVICES: Tuple[str, ...] = (
+_DOWNSTREAM_SERVICES: tuple[str, ...] = (
     "generation_engine",
     "profiling_service",
     "quality_service",
@@ -164,7 +170,7 @@ def _get_request_id() -> str:
         A UUID string uniquely identifying the current request.
     """
     try:
-        existing_id: Optional[str] = getattr(g, "request_id", None)
+        existing_id: str | None = getattr(g, "request_id", None)
         if existing_id is not None:
             return str(existing_id)
     except RuntimeError:
@@ -220,8 +226,8 @@ def _create_error_response(
     error_code: str,
     message: str,
     status_code: int,
-    details: Optional[Dict[str, Any]] = None,
-) -> Tuple[Response, int]:
+    details: dict[str, Any] | None = None,
+) -> tuple[Response, int]:
     """Build a structured JSON error response.
 
     Every error returned by the API Gateway follows a consistent format
@@ -253,12 +259,12 @@ def _create_error_response(
         directly from a Flask error handler or route function.
     """
     request_id = _get_request_id()
-    response_body: Dict[str, Any] = {
+    response_body: dict[str, Any] = {
         "error": {
             "code": error_code,
             "message": message,
             "request_id": request_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "path": _get_request_path(),
             "details": details if details is not None else {},
         }
@@ -273,7 +279,7 @@ def _create_error_response(
 # =========================================================================
 
 
-def _handle_400(error: BadRequest) -> Tuple[Response, int]:
+def _handle_400(error: BadRequest) -> tuple[Response, int]:
     """Handle 400 Bad Request errors.
 
     Returned when the client sends a request with invalid syntax, missing
@@ -300,7 +306,7 @@ def _handle_400(error: BadRequest) -> Tuple[Response, int]:
     return _create_error_response("BAD_REQUEST", message, 400)
 
 
-def _handle_401(error: Unauthorized) -> Tuple[Response, int]:
+def _handle_401(error: Unauthorized) -> tuple[Response, int]:
     """Handle 401 Unauthorized errors.
 
     Returned when the request lacks valid authentication credentials
@@ -327,7 +333,7 @@ def _handle_401(error: Unauthorized) -> Tuple[Response, int]:
     return _create_error_response("UNAUTHORIZED", message, 401)
 
 
-def _handle_403(error: Forbidden) -> Tuple[Response, int]:
+def _handle_403(error: Forbidden) -> tuple[Response, int]:
     """Handle 403 Forbidden errors.
 
     Returned when the authenticated user does not have the required role
@@ -353,7 +359,7 @@ def _handle_403(error: Forbidden) -> Tuple[Response, int]:
     return _create_error_response("FORBIDDEN", message, 403)
 
 
-def _handle_404(error: NotFound) -> Tuple[Response, int]:
+def _handle_404(error: NotFound) -> tuple[Response, int]:
     """Handle 404 Not Found errors.
 
     Returned when the requested route does not exist or the specified
@@ -380,7 +386,7 @@ def _handle_404(error: NotFound) -> Tuple[Response, int]:
     return _create_error_response("NOT_FOUND", message, 404)
 
 
-def _handle_405(error: MethodNotAllowed) -> Tuple[Response, int]:
+def _handle_405(error: MethodNotAllowed) -> tuple[Response, int]:
     """Handle 405 Method Not Allowed errors.
 
     Returned when the HTTP method used is not supported for the requested
@@ -396,7 +402,7 @@ def _handle_405(error: MethodNotAllowed) -> Tuple[Response, int]:
     description = str(error.description) if error.description else ""
     message = description if _is_debug_mode() else _DEFAULT_MESSAGES[405]
     valid_methods = list(error.valid_methods) if error.valid_methods else []
-    details: Dict[str, Any] = {}
+    details: dict[str, Any] = {}
     if valid_methods:
         details["allowed_methods"] = valid_methods
     logger.warning(
@@ -411,7 +417,7 @@ def _handle_405(error: MethodNotAllowed) -> Tuple[Response, int]:
     return _create_error_response("METHOD_NOT_ALLOWED", message, 405, details)
 
 
-def _handle_409(error: Conflict) -> Tuple[Response, int]:
+def _handle_409(error: Conflict) -> tuple[Response, int]:
     """Handle 409 Conflict errors.
 
     Returned when the request cannot be completed because it conflicts
@@ -438,7 +444,7 @@ def _handle_409(error: Conflict) -> Tuple[Response, int]:
     return _create_error_response("CONFLICT", message, 409)
 
 
-def _handle_422(error: UnprocessableEntity) -> Tuple[Response, int]:
+def _handle_422(error: UnprocessableEntity) -> tuple[Response, int]:
     """Handle 422 Unprocessable Entity errors.
 
     Returned when the request body is syntactically valid but semantically
@@ -466,7 +472,7 @@ def _handle_422(error: UnprocessableEntity) -> Tuple[Response, int]:
     return _create_error_response("UNPROCESSABLE_ENTITY", message, 422)
 
 
-def _handle_429(error: TooManyRequests) -> Tuple[Response, int]:
+def _handle_429(error: TooManyRequests) -> tuple[Response, int]:
     """Handle 429 Too Many Requests errors from rate limiting.
 
     Returned when a client exceeds the configured rate limit tier
@@ -480,8 +486,8 @@ def _handle_429(error: TooManyRequests) -> Tuple[Response, int]:
         Structured JSON error response with HTTP 429 and optional
         ``retry_after_seconds`` hint.
     """
-    retry_after: Optional[int] = getattr(error, "retry_after", None)
-    details: Dict[str, Any] = {}
+    retry_after: int | None = getattr(error, "retry_after", None)
+    details: dict[str, Any] = {}
     if retry_after is not None:
         details["retry_after_seconds"] = retry_after
     logger.warning(
@@ -498,7 +504,7 @@ def _handle_429(error: TooManyRequests) -> Tuple[Response, int]:
     )
 
 
-def _handle_500(error: InternalServerError) -> Tuple[Response, int]:
+def _handle_500(error: InternalServerError) -> tuple[Response, int]:
     """Handle 500 Internal Server Error.
 
     In development mode (``DEBUG=True``), the response includes the full
@@ -514,7 +520,7 @@ def _handle_500(error: InternalServerError) -> Tuple[Response, int]:
     Returns:
         Structured JSON error response with HTTP 500.
     """
-    details: Optional[Dict[str, Any]] = None
+    details: dict[str, Any] | None = None
     if _is_debug_mode():
         original = getattr(error, "original_exception", None)
         tb = traceback.format_exc()
@@ -540,7 +546,7 @@ def _handle_500(error: InternalServerError) -> Tuple[Response, int]:
     )
 
 
-def _handle_502(error: BadGateway) -> Tuple[Response, int]:
+def _handle_502(error: BadGateway) -> tuple[Response, int]:
     """Handle 502 Bad Gateway errors from upstream services.
 
     Returned when an upstream microservice (Generation Engine, Profiling
@@ -553,7 +559,7 @@ def _handle_502(error: BadGateway) -> Tuple[Response, int]:
         Structured JSON error response with HTTP 502.
     """
     description = str(error.description) if error.description else ""
-    details: Optional[Dict[str, Any]] = None
+    details: dict[str, Any] | None = None
     if _is_debug_mode():
         details = {"upstream_error": description}
     logger.error(
@@ -568,7 +574,7 @@ def _handle_502(error: BadGateway) -> Tuple[Response, int]:
     return _create_error_response("BAD_GATEWAY", _DEFAULT_MESSAGES[502], 502, details)
 
 
-def _handle_503(error: ServiceUnavailable) -> Tuple[Response, int]:
+def _handle_503(error: ServiceUnavailable) -> tuple[Response, int]:
     """Handle 503 Service Unavailable errors.
 
     Returned when a downstream service is unreachable, a circuit breaker
@@ -581,8 +587,8 @@ def _handle_503(error: ServiceUnavailable) -> Tuple[Response, int]:
         Structured JSON error response with HTTP 503 and optional
         ``retry_after_seconds`` hint.
     """
-    retry_after: Optional[int] = getattr(error, "retry_after", None)
-    details: Dict[str, Any] = {}
+    retry_after: int | None = getattr(error, "retry_after", None)
+    details: dict[str, Any] = {}
     if retry_after is not None:
         details["retry_after_seconds"] = retry_after
     logger.error(
@@ -604,7 +610,7 @@ def _handle_503(error: ServiceUnavailable) -> Tuple[Response, int]:
 # =========================================================================
 
 
-def _handle_generic_exception(error: Exception) -> Tuple[Response, int]:
+def _handle_generic_exception(error: Exception) -> tuple[Response, int]:
     """Handle any unhandled exception not covered by specific handlers.
 
     Catches both ``HTTPException`` subclasses (for status codes without
@@ -626,7 +632,7 @@ def _handle_generic_exception(error: Exception) -> Tuple[Response, int]:
         )
         description = str(error.description) if error.description else ""
         message = description if _is_debug_mode() else default_message
-        details: Optional[Dict[str, Any]] = None
+        details: dict[str, Any] | None = None
     else:
         status_code = 500
         error_code = "INTERNAL_SERVER_ERROR"
@@ -657,7 +663,7 @@ def _handle_generic_exception(error: Exception) -> Tuple[Response, int]:
 
 def _handle_circuit_breaker_error(
     error: CircuitBreakerError,
-) -> Tuple[Response, int]:
+) -> tuple[Response, int]:
     """Handle ``CircuitBreakerError`` when a circuit is in open state.
 
     When a downstream service's circuit breaker is open (too many
@@ -678,7 +684,7 @@ def _handle_circuit_breaker_error(
         # CircuitBreakerError.__str__ accesses internal circuit breaker
         # attributes that may not always be available.
         breaker_name = "unknown_service"
-    details: Dict[str, Any] = {
+    details: dict[str, Any] = {
         "circuit_breaker": breaker_name,
         "reason": "Circuit breaker is open due to repeated downstream failures.",
     }
@@ -742,7 +748,7 @@ class ServiceCircuitBreaker:
         self,
         failure_threshold: int = _DEFAULT_FAILURE_THRESHOLD,
         recovery_timeout: int = _DEFAULT_RECOVERY_TIMEOUT,
-        expected_exception: Type[Exception] = Exception,
+        expected_exception: type[Exception] = Exception,
     ) -> None:
         """Initialise circuit breakers for all downstream services.
 
@@ -761,12 +767,12 @@ class ServiceCircuitBreaker:
         """
         self._failure_threshold: int = failure_threshold
         self._recovery_timeout: int = recovery_timeout
-        self._expected_exception: Type[Exception] = expected_exception
+        self._expected_exception: type[Exception] = expected_exception
 
         # Build per-service circuit-breaker-protected proxy functions.
         # Each proxy wraps a provided callable with its own independent
         # circuit breaker state.
-        self._service_proxies: Dict[str, Callable[..., Any]] = {}
+        self._service_proxies: dict[str, Callable[..., Any]] = {}
 
         for service_name in _DOWNSTREAM_SERVICES:
             proxy = self._create_service_proxy(service_name)
@@ -899,7 +905,7 @@ class ServiceCircuitBreaker:
 def with_retry(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     base_delay: float = _DEFAULT_BASE_DELAY,
-    retryable_exceptions: Optional[Tuple[Type[Exception], ...]] = None,
+    retryable_exceptions: tuple[type[Exception], ...] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator factory implementing exponential backoff retry logic.
 
@@ -949,7 +955,7 @@ def with_retry(
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception: Optional[Exception] = None
+            last_exception: Exception | None = None
 
             for attempt in range(max_retries + 1):
                 try:

@@ -1320,7 +1320,7 @@ class TestRateLimiting:
         api_client: httpx.Client,
         admin_jwt_headers: dict[str, str],
         redis_client,
-        clean_redis,  # noqa: ARG002 — Explicitly request Redis cleanup
+        clean_redis,  # Explicitly request Redis cleanup
     ) -> None:
         """Verify that API requests increment a rate-limit counter in Redis.
 

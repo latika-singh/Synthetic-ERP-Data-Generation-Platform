@@ -41,10 +41,11 @@ Example::
 
 from __future__ import annotations
 
+import base64
+import json
 import uuid
-from typing import Optional
 
-from flask import Flask, Blueprint, jsonify, request, g
+from flask import Blueprint, Flask, current_app, g, jsonify, request
 from flask_cors import CORS
 
 from provisioning_service.config import ProvisioningServiceConfig
@@ -52,14 +53,35 @@ from shared.config.base import get_config
 from shared.database.mongodb import init_mongodb
 from shared.database.redis_client import init_redis
 from shared.logging.structured_logger import (
-    configure_logging,
-    get_logger,
     bind_context,
     clear_context,
+    configure_logging,
+    get_logger,
 )
-from shared.middleware.health_check import health_blueprint, init_health_checks
+from shared.middleware.health_check import init_health_checks
 from shared.observability.metrics import setup_metrics
 from shared.observability.tracing import init_tracing
+
+
+# ---------------------------------------------------------------------------
+# Optional exporter imports — resolved eagerly at module load so that
+# ``PLC0415`` (import not at top level) is not triggered.  A ``None``
+# sentinel signals that the dependency is not installed or not yet
+# available.
+# ---------------------------------------------------------------------------
+
+try:
+    from provisioning_service.exporters.file_exporter import FileExporter
+except ImportError:  # pragma: no cover
+    FileExporter = None  # type: ignore[assignment,misc]
+
+try:
+    from provisioning_service.exporters.database_exporter import (
+        DatabaseExporter,
+    )
+except ImportError:  # pragma: no cover
+    DatabaseExporter = None  # type: ignore[assignment,misc]
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -141,46 +163,7 @@ def _create_provisioning_blueprint() -> Blueprint:
             tenant_id=getattr(g, "tenant_id", None),
         )
 
-        try:
-            from provisioning_service.exporters.file_exporter import FileExporter
-
-            exporter = FileExporter(config=payload.get("config", {}))
-            exporter.export(
-                job_id=job_id,
-                output_format=output_format,
-                provision_id=provision_id,
-                options=payload.get("options", {}),
-            )
-        except ImportError:
-            logger.warning(
-                "file_exporter_unavailable",
-                provision_id=provision_id,
-                detail="FileExporter module not yet available",
-            )
-            return jsonify({
-                "error": "File export module is not available",
-                "code": 503,
-                "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-            }), 503
-        except Exception as exc:
-            logger.error(
-                "file_export_failed",
-                provision_id=provision_id,
-                error=str(exc),
-            )
-            return jsonify({
-                "error": f"File export failed: {exc}",
-                "code": 500,
-                "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-            }), 500
-
-        return jsonify({
-            "provision_id": provision_id,
-            "job_id": job_id,
-            "format": output_format,
-            "status": "accepted",
-            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-        }), 202
+        return _handle_file_export(provision_id, job_id, output_format, payload)
 
     @bp.route("/export/database", methods=["POST"])
     def provision_database() -> tuple:
@@ -231,60 +214,7 @@ def _create_provisioning_blueprint() -> Blueprint:
             tenant_id=getattr(g, "tenant_id", None),
         )
 
-        try:
-            from provisioning_service.exporters.database_exporter import (
-                DatabaseExporter,
-            )
-
-            exporter = DatabaseExporter(config=payload.get("connection", {}))
-            exporter.provision(
-                job_id=job_id,
-                db_type=db_type,
-                provision_id=provision_id,
-                options=payload.get("options", {}),
-            )
-        except ImportError:
-            logger.warning(
-                "database_exporter_unavailable",
-                provision_id=provision_id,
-                detail="DatabaseExporter module not yet available",
-            )
-            return jsonify({
-                "error": "Database export module is not available",
-                "code": 503,
-                "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-            }), 503
-        except ConnectionError as exc:
-            logger.error(
-                "database_connection_failed",
-                provision_id=provision_id,
-                db_type=db_type,
-                error=str(exc),
-            )
-            return jsonify({
-                "error": f"Target database unreachable: {exc}",
-                "code": 502,
-                "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-            }), 502
-        except Exception as exc:
-            logger.error(
-                "database_provision_failed",
-                provision_id=provision_id,
-                error=str(exc),
-            )
-            return jsonify({
-                "error": f"Database provisioning failed: {exc}",
-                "code": 500,
-                "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-            }), 500
-
-        return jsonify({
-            "provision_id": provision_id,
-            "job_id": job_id,
-            "db_type": db_type,
-            "status": "accepted",
-            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-        }), 202
+        return _handle_database_provision(provision_id, job_id, db_type, payload)
 
     @bp.route("/export/cloud", methods=["POST"])
     def export_cloud() -> tuple:
@@ -332,47 +262,7 @@ def _create_provisioning_blueprint() -> Blueprint:
             tenant_id=getattr(g, "tenant_id", None),
         )
 
-        try:
-            from provisioning_service.exporters.file_exporter import FileExporter
-
-            exporter = FileExporter(config=payload.get("config", {}))
-            exporter.export_to_cloud(
-                job_id=job_id,
-                provider=provider,
-                provision_id=provision_id,
-                cloud_config=payload.get("cloud_config", {}),
-                options=payload.get("options", {}),
-            )
-        except ImportError:
-            logger.warning(
-                "cloud_exporter_unavailable",
-                provision_id=provision_id,
-                detail="Cloud export module not yet available",
-            )
-            return jsonify({
-                "error": "Cloud export module is not available",
-                "code": 503,
-                "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-            }), 503
-        except Exception as exc:
-            logger.error(
-                "cloud_export_failed",
-                provision_id=provision_id,
-                error=str(exc),
-            )
-            return jsonify({
-                "error": f"Cloud export failed: {exc}",
-                "code": 500,
-                "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-            }), 500
-
-        return jsonify({
-            "provision_id": provision_id,
-            "job_id": job_id,
-            "provider": provider,
-            "status": "accepted",
-            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
-        }), 202
+        return _handle_cloud_export(provision_id, job_id, provider, payload)
 
     @bp.route("/status/<provision_id>", methods=["GET"])
     def get_provision_status(provision_id: str) -> tuple:
@@ -391,8 +281,6 @@ def _create_provisioning_blueprint() -> Blueprint:
         )
 
         try:
-            from flask import current_app
-
             mongo = current_app.extensions.get("pymongo_client")
             if mongo is not None:
                 db_name = current_app.config.get("MONGODB_DATABASE", "synthetic_erp")
@@ -423,6 +311,203 @@ def _create_provisioning_blueprint() -> Blueprint:
         }), 404
 
     return bp
+
+
+# ============================================================================
+# Provisioning Operation Helpers
+# ============================================================================
+
+def _handle_file_export(
+    provision_id: str,
+    job_id: str,
+    output_format: str,
+    payload: dict,
+) -> tuple:
+    """Execute a file export operation via :class:`FileExporter`.
+
+    The function delegates to the eagerly-imported ``FileExporter`` class.
+    If the exporter module is unavailable (``FileExporter is None``), a
+    *503 Service Unavailable* response is returned.
+
+    Args:
+        provision_id: Unique provisioning operation identifier.
+        job_id: The generation job ID whose output is being exported.
+        output_format: Target format (``csv``, ``json``, ``jsonl``,
+            ``parquet``, ``sql``).
+        payload: Full request JSON body with config and options.
+
+    Returns:
+        Tuple of (JSON response, HTTP status code).
+    """
+    if FileExporter is None:
+        logger.warning(
+            "file_exporter_unavailable",
+            provision_id=provision_id,
+            detail="FileExporter module not yet available",
+        )
+        return jsonify({
+            "error": "File export module is not available",
+            "code": 503,
+            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        }), 503
+
+    try:
+        exporter = FileExporter(config=payload.get("config", {}))
+        exporter.export(
+            job_id=job_id,
+            output_format=output_format,
+            provision_id=provision_id,
+            options=payload.get("options", {}),
+        )
+    except Exception as exc:
+        logger.error(
+            "file_export_failed",
+            provision_id=provision_id,
+            error=str(exc),
+        )
+        return jsonify({
+            "error": f"File export failed: {exc}",
+            "code": 500,
+            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        }), 500
+
+    return jsonify({
+        "provision_id": provision_id,
+        "job_id": job_id,
+        "format": output_format,
+        "status": "accepted",
+        "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+    }), 202
+
+
+def _handle_database_provision(
+    provision_id: str,
+    job_id: str,
+    db_type: str,
+    payload: dict,
+) -> tuple:
+    """Execute a database provisioning operation via :class:`DatabaseExporter`.
+
+    Args:
+        provision_id: Unique provisioning operation identifier.
+        job_id: The generation job ID whose output is being provisioned.
+        db_type: Target database type (``postgresql``, ``oracle``,
+            ``sqlserver``, ``hana``).
+        payload: Full request JSON body with connection and options.
+
+    Returns:
+        Tuple of (JSON response, HTTP status code).
+    """
+    if DatabaseExporter is None:
+        logger.warning(
+            "database_exporter_unavailable",
+            provision_id=provision_id,
+            detail="DatabaseExporter module not yet available",
+        )
+        return jsonify({
+            "error": "Database export module is not available",
+            "code": 503,
+            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        }), 503
+
+    try:
+        exporter = DatabaseExporter(config=payload.get("connection", {}))
+        exporter.provision(
+            job_id=job_id,
+            db_type=db_type,
+            provision_id=provision_id,
+            options=payload.get("options", {}),
+        )
+    except ConnectionError as exc:
+        logger.error(
+            "database_connection_failed",
+            provision_id=provision_id,
+            db_type=db_type,
+            error=str(exc),
+        )
+        return jsonify({
+            "error": f"Target database unreachable: {exc}",
+            "code": 502,
+            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        }), 502
+    except Exception as exc:
+        logger.error(
+            "database_provision_failed",
+            provision_id=provision_id,
+            error=str(exc),
+        )
+        return jsonify({
+            "error": f"Database provisioning failed: {exc}",
+            "code": 500,
+            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        }), 500
+
+    return jsonify({
+        "provision_id": provision_id,
+        "job_id": job_id,
+        "db_type": db_type,
+        "status": "accepted",
+        "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+    }), 202
+
+
+def _handle_cloud_export(
+    provision_id: str,
+    job_id: str,
+    provider: str,
+    payload: dict,
+) -> tuple:
+    """Execute a cloud storage export operation via :class:`FileExporter`.
+
+    Args:
+        provision_id: Unique provisioning operation identifier.
+        job_id: The generation job ID whose output is being uploaded.
+        provider: Cloud provider (``s3``, ``azure_blob``, ``gcs``).
+        payload: Full request JSON body with cloud_config and options.
+
+    Returns:
+        Tuple of (JSON response, HTTP status code).
+    """
+    if FileExporter is None:
+        logger.warning(
+            "cloud_exporter_unavailable",
+            provision_id=provision_id,
+            detail="Cloud export module not yet available",
+        )
+        return jsonify({
+            "error": "Cloud export module is not available",
+            "code": 503,
+            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        }), 503
+
+    try:
+        exporter = FileExporter(config=payload.get("config", {}))
+        exporter.export_to_cloud(
+            job_id=job_id,
+            provider=provider,
+            provision_id=provision_id,
+            cloud_config=payload.get("cloud_config", {}),
+            options=payload.get("options", {}),
+        )
+    except Exception as exc:
+        logger.error(
+            "cloud_export_failed",
+            provision_id=provision_id,
+            error=str(exc),
+        )
+        return jsonify({
+            "error": f"Cloud export failed: {exc}",
+            "code": 500,
+            "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+        }), 500
+
+    return jsonify({
+        "provision_id": provision_id,
+        "job_id": job_id,
+        "provider": provider,
+        "status": "accepted",
+        "request_id": getattr(g, "request_id", str(uuid.uuid4())),
+    }), 202
 
 
 # ============================================================================
@@ -651,9 +736,6 @@ def _extract_tenant_from_token() -> str | None:
         return None
 
     try:
-        import base64
-        import json
-
         # Decode the payload section (index 1) with padding fix.
         payload_b64 = parts[1]
         # Add padding if necessary (JWT tokens strip trailing '=').
@@ -672,7 +754,7 @@ def _extract_tenant_from_token() -> str | None:
 # Application Factory
 # ============================================================================
 
-def create_app(config_override: Optional[object] = None) -> Flask:
+def create_app(config_override: object | None = None) -> Flask:
     """Create and configure the Provisioning Service Flask application.
 
     This is the central Flask Application Factory implementing the standard

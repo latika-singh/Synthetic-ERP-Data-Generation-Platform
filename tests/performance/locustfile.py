@@ -37,15 +37,16 @@ Execution Examples:
         --spawn-rate=20 --run-time=30m --csv=results/load_test
 """
 
-from locust import HttpUser, TaskSet, task, between, events, tag
-from locust.runners import MasterRunner, WorkerRunner
-
 import json
-import random
-import uuid
-import time
 import logging
 import os
+import random
+import time
+import uuid
+
+from locust import HttpUser, TaskSet, between, events, tag, task
+from locust.runners import MasterRunner, WorkerRunner
+
 
 # ---------------------------------------------------------------------------
 # Logging Configuration
@@ -644,12 +645,11 @@ class SchemaTaskSet(TaskSet, AuthMixin):
     @tag("schema", "read")
     @task(3)
     def get_schema_details(self) -> None:
-        """GET /api/v1/schemas/{schema_id} — Retrieve full schema definition."""
-        if not self.user.schema_ids:
-            # Use a synthetic UUID when no real IDs have been collected yet
-            schema_id = str(uuid.uuid4())
-        else:
-            schema_id = random.choice(self.user.schema_ids)
+        """GET /api/v1/schemas/{schema_id} - Retrieve full schema definition."""
+        schema_id = (
+            str(uuid.uuid4()) if not self.user.schema_ids
+            else random.choice(self.user.schema_ids)
+        )
 
         with self.client.get(
             f"{API_PREFIX}/schemas/{schema_id}",
@@ -755,11 +755,11 @@ class ProfileTaskSet(TaskSet, AuthMixin):
     @tag("profile", "read")
     @task(5)
     def get_profile_details(self) -> None:
-        """GET /api/v1/profiles/{profile_id} — Retrieve a statistical profile."""
-        if not self.user.profile_ids:
-            profile_id = str(uuid.uuid4())
-        else:
-            profile_id = random.choice(self.user.profile_ids)
+        """GET /api/v1/profiles/{profile_id} - Retrieve a statistical profile."""
+        profile_id = (
+            str(uuid.uuid4()) if not self.user.profile_ids
+            else random.choice(self.user.profile_ids)
+        )
 
         with self.client.get(
             f"{API_PREFIX}/profiles/{profile_id}",
@@ -865,11 +865,11 @@ class TemplateTaskSet(TaskSet, AuthMixin):
     @tag("template", "read")
     @task(3)
     def get_template_details(self) -> None:
-        """GET /api/v1/templates/{template_id} — Retrieve template details."""
-        if not self.user.template_ids:
-            template_id = str(uuid.uuid4())
-        else:
-            template_id = random.choice(self.user.template_ids)
+        """GET /api/v1/templates/{template_id} - Retrieve template details."""
+        template_id = (
+            str(uuid.uuid4()) if not self.user.template_ids
+            else random.choice(self.user.template_ids)
+        )
 
         with self.client.get(
             f"{API_PREFIX}/templates/{template_id}",
@@ -948,11 +948,11 @@ class ExportTaskSet(TaskSet, AuthMixin):
     @tag("export", "read")
     @task(2)
     def get_export_status(self) -> None:
-        """GET /api/v1/export/{export_id} — Check the status of an export job."""
-        if not self.user.export_ids:
-            export_id = str(uuid.uuid4())
-        else:
-            export_id = random.choice(self.user.export_ids)
+        """GET /api/v1/export/{export_id} - Check the status of an export job."""
+        export_id = (
+            str(uuid.uuid4()) if not self.user.export_ids
+            else random.choice(self.user.export_ids)
+        )
 
         with self.client.get(
             f"{API_PREFIX}/export/{export_id}",

@@ -52,15 +52,20 @@ import json
 import time
 import urllib.request
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any
 
-import structlog
 from flask import Flask, Response, current_app, g, jsonify, request
-from jose import ExpiredSignatureError, JWTError
-from jose import jwt as jose_jwt
+from jose import ExpiredSignatureError, JWTError, jwt as jose_jwt
 from jose.jwt import JWTClaimsError
 
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import structlog
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -72,7 +77,7 @@ logger: structlog.stdlib.BoundLogger = get_logger(__name__)
 # Module-level constants (exported)
 # ---------------------------------------------------------------------------
 
-EXEMPT_PATHS: Set[str] = {
+EXEMPT_PATHS: set[str] = {
     "/health",
     "/ready",
     "/api/v1/auth/login",
@@ -96,7 +101,7 @@ endpoint on every request.  Keys rotate infrequently, so 1 hour is safe.
 # Private module state — JWKS cache
 # ---------------------------------------------------------------------------
 
-_jwks_cache: Dict[str, Any] = {
+_jwks_cache: dict[str, Any] = {
     "keys": {},
     "fetched_at": 0.0,
 }
@@ -118,7 +123,7 @@ _TENANT_ID_CLAIM: str = f"{_CUSTOM_CLAIM_PREFIX}tenant_id"
 # Valid platform roles for documentation and optional strict validation.
 # ---------------------------------------------------------------------------
 
-VALID_ROLES: Set[str] = {
+VALID_ROLES: set[str] = {
     "Platform Admin",
     "Data Engineer",
     "Developer",
@@ -132,7 +137,7 @@ VALID_ROLES: Set[str] = {
 # ---------------------------------------------------------------------------
 
 
-def _fetch_jwks(auth0_domain: str) -> Dict[str, Any]:
+def _fetch_jwks(auth0_domain: str) -> dict[str, Any]:
     """Fetch the JSON Web Key Set from Auth0's well-known endpoint.
 
     Results are cached in-memory for :data:`JWKS_CACHE_TTL` seconds.  If
@@ -150,8 +155,6 @@ def _fetch_jwks(auth0_domain: str) -> Dict[str, Any]:
         RuntimeError: If the JWKS endpoint cannot be reached **and** no
             previously cached response is available.
     """
-    global _jwks_cache  # noqa: PLW0603
-
     now: float = time.time()
 
     # Return cached data if still within TTL.
@@ -161,13 +164,13 @@ def _fetch_jwks(auth0_domain: str) -> Dict[str, Any]:
     jwks_url: str = f"https://{auth0_domain}/.well-known/jwks.json"
 
     try:
-        req = urllib.request.Request(
+        req = urllib.request.Request(  # noqa: S310
             jwks_url,
             headers={"Accept": "application/json", "User-Agent": "SyntheticERP-APIGateway/1.0"},
         )
         with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310
             body: str = response.read().decode("utf-8")
-            jwks_data: Dict[str, Any] = json.loads(body)
+            jwks_data: dict[str, Any] = json.loads(body)
 
         _jwks_cache["keys"] = jwks_data
         _jwks_cache["fetched_at"] = now
@@ -201,7 +204,7 @@ def _fetch_jwks(auth0_domain: str) -> Dict[str, Any]:
         ) from exc
 
 
-def _get_rsa_key(token: str, auth0_domain: str) -> Optional[Dict[str, str]]:
+def _get_rsa_key(token: str, auth0_domain: str) -> dict[str, str] | None:
     """Extract the RSA public key matching the token's ``kid`` header claim.
 
     Decodes the JWT header (without verifying the signature) to read the
@@ -217,22 +220,22 @@ def _get_rsa_key(token: str, auth0_domain: str) -> Optional[Dict[str, str]]:
         ``jwt.decode()`` — or ``None`` if no matching key is found.
     """
     try:
-        unverified_header: Dict[str, Any] = jose_jwt.get_unverified_header(token)
+        unverified_header: dict[str, Any] = jose_jwt.get_unverified_header(token)
     except JWTError as exc:
         logger.warning("jwt_header_decode_failed", error=str(exc))
         return None
 
-    token_kid: Optional[str] = unverified_header.get("kid")
+    token_kid: str | None = unverified_header.get("kid")
     if not token_kid:
         logger.warning("jwt_missing_kid", header_keys=list(unverified_header.keys()))
         return None
 
-    jwks: Dict[str, Any] = _fetch_jwks(auth0_domain)
-    keys: List[Dict[str, Any]] = jwks.get("keys", [])
+    jwks: dict[str, Any] = _fetch_jwks(auth0_domain)
+    keys: list[dict[str, Any]] = jwks.get("keys", [])
 
     for key in keys:
         if key.get("kid") == token_kid:
-            rsa_key: Dict[str, str] = {
+            rsa_key: dict[str, str] = {
                 "kty": key["kty"],
                 "kid": key["kid"],
                 "use": key.get("use", "sig"),
@@ -255,7 +258,7 @@ def _get_rsa_key(token: str, auth0_domain: str) -> Optional[Dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-def validate_jwt_token(token: str) -> Dict[str, Any]:
+def validate_jwt_token(token: str) -> dict[str, Any]:
     """Decode, verify, and validate a JWT issued by Auth0.
 
     Performs full RS256 signature verification using the public key fetched
@@ -295,14 +298,14 @@ def validate_jwt_token(token: str) -> Dict[str, Any]:
         raise JWTError("AUTH0_API_AUDIENCE is not configured")
 
     # Resolve the RSA public key matching this token's kid.
-    rsa_key: Optional[Dict[str, str]] = _get_rsa_key(token, auth0_domain)
+    rsa_key: dict[str, str] | None = _get_rsa_key(token, auth0_domain)
     if rsa_key is None:
         raise JWTError(
             "Unable to find appropriate RSA key for token verification"
         )
 
     # Decode and verify the token.
-    payload: Dict[str, Any] = jose_jwt.decode(
+    payload: dict[str, Any] = jose_jwt.decode(
         token,
         rsa_key,
         algorithms=[algorithm],
@@ -327,7 +330,7 @@ def validate_jwt_token(token: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def jwt_auth_middleware() -> Optional[Tuple[Response, int]]:
+def jwt_auth_middleware() -> tuple[Response, int] | None:
     """Flask ``before_request`` hook that enforces JWT authentication.
 
     Execution flow:
@@ -366,7 +369,7 @@ def jwt_auth_middleware() -> Optional[Tuple[Response, int]]:
     # ------------------------------------------------------------------
     # Extract Bearer token from Authorization header
     # ------------------------------------------------------------------
-    auth_header: Optional[str] = request.headers.get("Authorization")
+    auth_header: str | None = request.headers.get("Authorization")
 
     if not auth_header:
         logger.warning(
@@ -384,7 +387,7 @@ def jwt_auth_middleware() -> Optional[Tuple[Response, int]]:
         )
 
     # Validate Bearer scheme.
-    parts: List[str] = auth_header.split()
+    parts: list[str] = auth_header.split()
 
     if len(parts) != 2 or parts[0].lower() != "bearer":
         logger.warning(
@@ -406,7 +409,7 @@ def jwt_auth_middleware() -> Optional[Tuple[Response, int]]:
     # Validate the JWT
     # ------------------------------------------------------------------
     try:
-        payload: Dict[str, Any] = validate_jwt_token(token)
+        payload: dict[str, Any] = validate_jwt_token(token)
 
         # Store decoded claims on Flask's g object for downstream use.
         g.user_id = payload["sub"]
@@ -502,7 +505,7 @@ def jwt_auth_middleware() -> Optional[Tuple[Response, int]]:
             503,
         )
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # Catch-all for unexpected errors — must never leak stack traces.
         logger.error(
             "auth_unexpected_error",
@@ -557,7 +560,7 @@ def require_roles(*roles: str) -> Callable:
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            user_roles: List[str] = getattr(g, "user_roles", [])
+            user_roles: list[str] = getattr(g, "user_roles", [])
 
             # Check if user has at least one of the required roles.
             if not any(role in user_roles for role in roles):
@@ -617,10 +620,10 @@ def require_permissions(*permissions: str) -> Callable:
     def decorator(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            user_permissions: List[str] = getattr(g, "user_permissions", [])
+            user_permissions: list[str] = getattr(g, "user_permissions", [])
 
             # Check that user has ALL required permissions (AND logic).
-            missing: List[str] = [
+            missing: list[str] = [
                 perm for perm in permissions if perm not in user_permissions
             ]
 

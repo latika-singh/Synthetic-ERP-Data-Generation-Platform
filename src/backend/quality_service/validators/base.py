@@ -12,7 +12,7 @@ quality criteria.  It provides:
 
 The weighted scoring model aggregates results from three validators::
 
-    Q = 0.4 × S_statistical + 0.3 × S_business_rules + 0.3 × S_referential_integrity
+    Q = 0.4 * S_statistical + 0.3 * S_business_rules + 0.3 * S_referential_integrity
 
 Each validator produces a :class:`ValidationResult` with a score normalised to
 [0.0, 1.0].  The :class:`QualityScorer` (in the scoring package) computes the
@@ -43,12 +43,15 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +63,7 @@ class ValidationResult(BaseModel):
     """Standardised output produced by every quality validator.
 
     Encapsulates the complete result of a single validation pass, including
-    the normalised score (0.0–1.0), pass/fail determination against a
+    the normalised score (0.0-1.0), pass/fail determination against a
     configurable threshold, detailed per-column or per-rule metric
     breakdowns, error / warning lists, and execution metadata.
 
@@ -74,7 +77,7 @@ class ValidationResult(BaseModel):
         score: Normalised quality score in [0.0, 1.0] where 1.0 is perfect.
         weight: This validator's weight in the composite quality score
             (e.g. 0.4 for statistical, 0.3 for business rules).
-        weighted_score: Pre-computed ``score × weight`` for aggregation.
+        weighted_score: Pre-computed ``score * weight`` for aggregation.
         passed: ``True`` when ``score >= threshold``.
         threshold: Minimum acceptable score (default 0.95 per the platform
             quality requirement).
@@ -131,7 +134,7 @@ class ValidationResult(BaseModel):
     )
     weighted_score: float = Field(
         default=0.0,
-        description="Computed as score × weight.",
+        description="Computed as score * weight.",
     )
     passed: bool = Field(
         default=False,
@@ -293,7 +296,7 @@ class BaseValidator(ABC):
             considered failed.  Defaults to ``0.95``.
     """
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config: dict[str, Any] = config if config is not None else {}
         self.logger = get_logger(self.__class__.__name__)
         self.minimum_threshold: float = float(
@@ -307,7 +310,7 @@ class BaseValidator(ABC):
     @abstractmethod
     def validate(
         self,
-        generated_data: Union[pd.DataFrame, dict[str, pd.DataFrame]],
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
         profile: dict[str, Any],
     ) -> ValidationResult:
         """Run all validation checks against generated data.
@@ -368,8 +371,8 @@ class BaseValidator(ABC):
         self,
         score: float,
         details: dict[str, Any],
-        errors: Optional[list[str]] = None,
-        warnings: Optional[list[str]] = None,
+        errors: list[str] | None = None,
+        warnings: list[str] | None = None,
         records_validated: int = 0,
         records_passed: int = 0,
         execution_time_ms: float = 0.0,
@@ -419,7 +422,7 @@ class BaseValidator(ABC):
 
     def validate_with_timing(
         self,
-        generated_data: Union[pd.DataFrame, dict[str, pd.DataFrame]],
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
         profile: dict[str, Any],
     ) -> ValidationResult:
         """Execute :meth:`validate` and automatically measure execution time.

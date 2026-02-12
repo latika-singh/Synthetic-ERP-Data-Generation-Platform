@@ -22,12 +22,13 @@ import hashlib
 import json
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import redis as redis_lib
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,7 +36,7 @@ from pymongo.errors import DuplicateKeyError
 
 def _utcnow() -> datetime:
     """Return current UTC datetime with timezone info."""
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _make_generation_profile(tenant_id: str, **overrides) -> dict:
@@ -220,7 +221,7 @@ def _make_tenant_configuration(tenant_id: str, **overrides) -> dict:
     return doc
 
 
-@pytest.fixture()
+@pytest.fixture
 def unique_job_id() -> str:
     """Generate a unique job_id for tests that need a guaranteed-unique identifier."""
     return f"job-{uuid.uuid4()}"
@@ -954,7 +955,7 @@ class TestAuditLogsCollection:
     def test_audit_logs_ttl_index(self, audit_logs_collection):
         """The ``idx_ttl_7yr`` TTL index exists with correct expiration.
 
-        7 years = 7 × 365 × 24 × 3600 = 220,752,000 seconds.
+        7 years = 7 * 365 * 24 * 3600 = 220,752,000 seconds.
         """
         indexes = audit_logs_collection.index_information()
         assert "idx_ttl_7yr" in indexes
@@ -1876,7 +1877,7 @@ class TestDataSerialization:
         try:
             test_uuid = str(uuid.uuid4())
             doc = {"entity_id": test_uuid, "name": "UUID Test Entity"}
-            result = coll.insert_one(doc)
+            _result = coll.insert_one(doc)
 
             # Retrieve by UUID string
             stored = coll.find_one({"entity_id": test_uuid})

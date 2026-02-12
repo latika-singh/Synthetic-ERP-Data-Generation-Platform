@@ -45,15 +45,18 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Dict, Optional, Set, Tuple
+from typing import TYPE_CHECKING
 
-import structlog
 from flask import Flask, Response, current_app, g, jsonify, request
-from redis import Redis
-from redis.exceptions import ConnectionError as RedisConnectionError
-from redis.exceptions import RedisError
+from redis.exceptions import ConnectionError as RedisConnectionError, RedisError
 
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    import structlog
+    from redis import Redis
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — initialised once via the shared factory function.
@@ -67,7 +70,7 @@ logger: structlog.stdlib.BoundLogger = get_logger(__name__)
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-RATE_LIMIT_EXEMPT_PATHS: Set[str] = {"/health", "/ready"}
+RATE_LIMIT_EXEMPT_PATHS: set[str] = {"/health", "/ready"}
 """URL paths that are exempt from rate limiting.
 
 Health check and readiness probe endpoints must always remain accessible
@@ -91,7 +94,7 @@ the authenticated user's ``sub`` claim from the JWT or the client IP address
 for unauthenticated requests.
 """
 
-ROLE_RATE_LIMITS: Dict[str, int] = {
+ROLE_RATE_LIMITS: dict[str, int] = {
     "Platform Admin": 1000,
     "Data Engineer": 300,
     "Developer": 60,
@@ -142,8 +145,7 @@ def _get_rate_limit_for_user() -> int:
     max_limit: int = 0
     for role in user_roles:
         limit = ROLE_RATE_LIMITS.get(role, 0)
-        if limit > max_limit:
-            max_limit = limit
+        max_limit = max(max_limit, limit)
 
     # If none of the user's roles matched a known tier, fall back to default.
     if max_limit == 0:
@@ -152,7 +154,7 @@ def _get_rate_limit_for_user() -> int:
     return max_limit
 
 
-def _get_redis_client() -> Optional[Redis]:
+def _get_redis_client() -> Redis | None:
     """Retrieve the shared Redis client from the Flask application context.
 
     The Redis client instance is expected to be initialised by the
@@ -168,7 +170,7 @@ def _get_redis_client() -> Optional[Redis]:
         client is unavailable.
     """
     try:
-        redis_client: Optional[Redis] = current_app.extensions.get("redis")
+        redis_client: Redis | None = current_app.extensions.get("redis")
         if redis_client is None:
             logger.warning(
                 "redis_client_unavailable",
@@ -189,7 +191,7 @@ def _get_redis_client() -> Optional[Redis]:
 def _check_rate_limit(
     user_id: str,
     rate_limit: int,
-) -> Tuple[bool, int, int]:
+) -> tuple[bool, int, int]:
     """Check and record a request against the sliding window rate limiter.
 
     Implements the **sliding window counter** algorithm using a Redis sorted
@@ -222,7 +224,7 @@ def _check_rate_limit(
         - **reset_time** (``int``): Unix timestamp (seconds) at which the
           current window expires and the counter resets.
     """
-    redis_client: Optional[Redis] = _get_redis_client()
+    redis_client: Redis | None = _get_redis_client()
 
     # Fail-open: if Redis is unavailable, allow the request.
     if redis_client is None:
@@ -283,7 +285,7 @@ def _check_rate_limit(
 # ---------------------------------------------------------------------------
 
 
-def rate_limit_middleware() -> Optional[Tuple]:
+def rate_limit_middleware() -> tuple | None:
     """Flask ``before_request`` hook enforcing tiered rate limiting.
 
     Executed before every incoming request.  Determines the user's rate
@@ -444,10 +446,10 @@ def register_rate_limiter(app: Flask) -> None:
     # Apply configuration overrides from the Flask app config.  These
     # values may originate from environment variables loaded via the
     # service's config.py module, satisfying the 12-Factor methodology.
-    config_default: Optional[int] = app.config.get("RATE_LIMIT_DEFAULT")
-    config_elevated: Optional[int] = app.config.get("RATE_LIMIT_ELEVATED")
-    config_admin: Optional[int] = app.config.get("RATE_LIMIT_ADMIN")
-    config_window: Optional[int] = app.config.get("RATE_LIMIT_WINDOW_SIZE")
+    config_default: int | None = app.config.get("RATE_LIMIT_DEFAULT")
+    config_elevated: int | None = app.config.get("RATE_LIMIT_ELEVATED")
+    config_admin: int | None = app.config.get("RATE_LIMIT_ADMIN")
+    config_window: int | None = app.config.get("RATE_LIMIT_WINDOW_SIZE")
 
     if config_default is not None:
         override_val = int(config_default)

@@ -51,6 +51,7 @@ import uuid
 import httpx
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # Module-Level Service URL Constants
 # ---------------------------------------------------------------------------
@@ -219,7 +220,7 @@ def _submit_generation_job(
         AssertionError: If the service rejects the request.
     """
     payload: dict = {
-        "name": name or f"Integration Test – {method} – {output_format}",
+        "name": name or f"Integration Test - {method} - {output_format}",
         "schema_id": schema_id,
         "generation_method": method,
         "record_count": record_count,
@@ -1538,7 +1539,7 @@ class TestCrossServiceIntegration:
         )
 
     @pytest.mark.timeout(30)
-    @pytest.mark.parametrize("service_name,service_url", [
+    @pytest.mark.parametrize(("service_name", "service_url"), [
         ("api_gateway", API_GATEWAY_URL),
         ("generation_engine", GENERATION_ENGINE_URL),
         ("quality_service", QUALITY_SERVICE_URL),
@@ -1574,7 +1575,7 @@ class TestCrossServiceIntegration:
                 pass  # Plain-text "OK" responses are acceptable
 
     @pytest.mark.timeout(30)
-    @pytest.mark.parametrize("service_name,service_url", [
+    @pytest.mark.parametrize(("service_name", "service_url"), [
         ("api_gateway", API_GATEWAY_URL),
         ("generation_engine", GENERATION_ENGINE_URL),
         ("quality_service", QUALITY_SERVICE_URL),
@@ -1634,7 +1635,7 @@ class TestQualityIntegration:
         """Verify generated data achieves quality score ≥ 0.95 (R-009).
 
         The quality scoring model uses a weighted formula:
-        Q = 0.4 × statistical + 0.3 × business_rules + 0.3 × referential_integrity
+        Q = 0.4 * statistical + 0.3 * business_rules + 0.3 * referential_integrity
         """
         schema_id = seed_schema_definition["schema_id"]
         job_id = _submit_generation_job(
@@ -2734,7 +2735,7 @@ class TestErrorRecovery:
             avg_early = sum(fast_failures[:2]) / 2
             avg_late = sum(fast_failures[-2:]) / 2
             # Later responses should not be dramatically slower (CB should
-            # short-circuit).  We use a generous 3× multiplier.
+            # short-circuit).  We use a generous 3x multiplier.
             assert avg_late <= avg_early * 3 + 5.0, (
                 f"Late failures ({avg_late:.2f}s avg) much slower than "
                 f"early ({avg_early:.2f}s avg) — circuit breaker may not be engaged"
