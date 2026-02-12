@@ -442,7 +442,7 @@ const DistributionChart: React.FC<DistributionChartProps> = ({
   className = '',
 }) => {
   // Derive distribution metadata
-  const distributionType: string = columnStats.distribution.type as string;
+  const distributionType: DistributionType = columnStats.distribution.type;
   const color = colorProp ?? DISTRIBUTION_COLORS[distributionType] ?? DISTRIBUTION_COLORS.unknown;
   const isCategorical = distributionType === 'categorical';
 
