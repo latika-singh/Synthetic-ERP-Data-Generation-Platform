@@ -32,7 +32,7 @@ Supported Masking Strategies:
 
 Usage::
 
-    from generators.masking_generator import MaskingGenerator, MaskingStrategy
+    from generation_engine.generators.masking_generator import MaskingGenerator, MaskingStrategy
 
     config = {
         "field_rules": [
@@ -73,7 +73,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from pydantic import BaseModel, Field
 
-from generators.base import (
+from generation_engine.generators.base import (
     BaseGenerator,
     ColumnSpec,
     GenerationConfig,
@@ -1659,6 +1659,9 @@ class MaskingGenerator(BaseGenerator):
         if config.round_to is not None:
             perturbed_vals = np.round(perturbed_vals, config.round_to)
 
+        # Cast the Series to float64 to avoid dtype incompatibility when
+        # assigning float noise values into an integer-typed column.
+        perturbed = perturbed.astype("float64")
         perturbed.loc[non_null_mask] = perturbed_vals
 
         return perturbed
