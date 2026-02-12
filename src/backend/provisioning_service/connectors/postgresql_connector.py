@@ -60,12 +60,12 @@ import io
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jaydebeapi
 
 from provisioning_service.connectors.base import BaseConnector
-from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level Constants
@@ -77,7 +77,7 @@ _fallback_logger: logging.Logger = logging.getLogger(__name__)
 
 # PostgreSQL-native SQL type mapping from the generic column type vocabulary
 # defined in :data:`~provisioning_service.connectors.base.GENERIC_COLUMN_TYPES`.
-_PG_TYPE_MAP: Dict[str, str] = {
+_PG_TYPE_MAP: dict[str, str] = {
     "STRING": "VARCHAR",
     "INTEGER": "INTEGER",
     "BIGINT": "BIGINT",
@@ -181,7 +181,7 @@ class PostgreSQLConnector(BaseConnector):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialise the PostgreSQL connector with connection settings.
 
         Validates configuration, resolves the JDBC driver JAR path, builds
@@ -213,10 +213,10 @@ class PostgreSQLConnector(BaseConnector):
         # SSL connection parameters for AES-256 / TLS 1.3 data-in-transit
         # encryption.  These are appended as JDBC URL query parameters in
         # _get_jdbc_url().
-        self._ssl_mode: Optional[str] = config.get("sslmode")
-        self._ssl_root_cert: Optional[str] = config.get("sslrootcert")
-        self._ssl_cert: Optional[str] = config.get("sslcert")
-        self._ssl_key: Optional[str] = config.get("sslkey")
+        self._ssl_mode: str | None = config.get("sslmode")
+        self._ssl_root_cert: str | None = config.get("sslrootcert")
+        self._ssl_cert: str | None = config.get("sslcert")
+        self._ssl_key: str | None = config.get("sslkey")
 
         # Resolve the JDBC driver JAR path from config, environment
         # variables, or the default filesystem location.
@@ -370,7 +370,7 @@ class PostgreSQLConnector(BaseConnector):
     def create_table(
         self,
         table_name: str,
-        columns: List[Dict[str, Any]],
+        columns: list[dict[str, Any]],
         if_not_exists: bool = True,
     ) -> None:
         """Create a table in the PostgreSQL database.
@@ -400,6 +400,7 @@ class PostgreSQLConnector(BaseConnector):
             Exception: Propagates PostgreSQL DDL errors (after rollback).
         """
         self.ensure_connected()
+        assert self._connection is not None  # guaranteed by ensure_connected
 
         # Build column definitions using the base-class helper which
         # delegates to our _map_column_type() for PostgreSQL types.
@@ -452,8 +453,8 @@ class PostgreSQLConnector(BaseConnector):
     def batch_insert(
         self,
         table_name: str,
-        columns: List[str],
-        data: List[Tuple],
+        columns: list[str],
+        data: list[tuple],
         batch_size: int = 10000,
     ) -> int:
         """Insert rows into a PostgreSQL table using batched transactions.
@@ -486,6 +487,7 @@ class PostgreSQLConnector(BaseConnector):
                 of the failing batch).
         """
         self.ensure_connected()
+        assert self._connection is not None  # guaranteed by ensure_connected
 
         if not data:
             return 0
@@ -503,7 +505,7 @@ class PostgreSQLConnector(BaseConnector):
             conflict_clause = " ON CONFLICT DO NOTHING"
 
         insert_sql = (
-            f"INSERT INTO {qualified_name} ({col_list}) "
+            f"INSERT INTO {qualified_name} ({col_list}) "  # noqa: S608
             f"VALUES ({placeholders}){conflict_clause}"
         )
 
@@ -581,8 +583,8 @@ class PostgreSQLConnector(BaseConnector):
     def copy_insert(
         self,
         table_name: str,
-        columns: List[str],
-        data: List[Tuple],
+        columns: list[str],
+        data: list[tuple],
     ) -> int:
         """Bulk-load rows into PostgreSQL using the optimised COPY command.
 
@@ -613,6 +615,7 @@ class PostgreSQLConnector(BaseConnector):
             batch INSERT).
         """
         self.ensure_connected()
+        assert self._connection is not None  # guaranteed by ensure_connected
 
         if not data:
             return 0
@@ -658,10 +661,12 @@ class PostgreSQLConnector(BaseConnector):
 
             # Import JPype to access the PostgreSQL PGConnection interface
             # and its CopyManager API for streaming COPY FROM STDIN data.
-            import jpype  # noqa: E402 — conditional import for COPY support
+            import jpype  # noqa: PLC0415 — conditional import for COPY support
 
-            PGConnection = jpype.JClass("org.postgresql.PGConnection")
-            pg_conn = java_conn.unwrap(PGConnection)
+            pg_connection_class = jpype.JClass(
+                "org.postgresql.PGConnection"
+            )
+            pg_conn = java_conn.unwrap(pg_connection_class)
             copy_manager = pg_conn.getCopyAPI()
 
             # Stream the tab-delimited data to the server via CopyManager.
@@ -696,10 +701,14 @@ class PostgreSQLConnector(BaseConnector):
             # Attempt to rollback any partial COPY state before falling back.
             try:
                 self._connection.rollback()
-            except Exception:
+            except Exception as rollback_exc:
                 # Connection may be in an error state after a COPY failure;
-                # suppress the rollback error to allow fallback to proceed.
-                pass
+                # log the rollback error and allow fallback to proceed.
+                self._logger.debug(
+                    "postgresql_copy_rollback_suppressed",
+                    error=str(rollback_exc),
+                    table_name=qualified_name,
+                )
 
             self._logger.warning(
                 "postgresql_copy_insert_fallback",
@@ -714,8 +723,8 @@ class PostgreSQLConnector(BaseConnector):
     def execute_query(
         self,
         query: str,
-        params: Optional[Tuple] = None,
-    ) -> List[Dict[str, Any]]:
+        params: tuple | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute an arbitrary SQL query against the PostgreSQL database.
 
         For ``SELECT`` statements the method fetches all rows and returns
@@ -740,6 +749,7 @@ class PostgreSQLConnector(BaseConnector):
             Exception: Propagates PostgreSQL query errors (after rollback).
         """
         self.ensure_connected()
+        assert self._connection is not None  # guaranteed by ensure_connected
 
         start_time = time.time()
         cursor = self._connection.cursor()
@@ -758,8 +768,8 @@ class PostgreSQLConnector(BaseConnector):
             if is_select:
                 column_names = [desc[0] for desc in cursor.description]
                 rows = cursor.fetchall()
-                results: List[Dict[str, Any]] = [
-                    dict(zip(column_names, row)) for row in rows
+                results: list[dict[str, Any]] = [
+                    dict(zip(column_names, row, strict=False)) for row in rows
                 ]
             else:
                 # DML/DDL — commit the transaction and return empty.
@@ -799,7 +809,7 @@ class PostgreSQLConnector(BaseConnector):
         finally:
             cursor.close()
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Verify PostgreSQL connectivity and return a health status dict.
 
         Performs the following diagnostic queries:
@@ -823,7 +833,7 @@ class PostgreSQLConnector(BaseConnector):
             * ``latency_ms`` (float) — Round-trip latency in milliseconds
               for the ``SELECT 1`` probe.
         """
-        health: Dict[str, Any] = {
+        health: dict[str, Any] = {
             "status": "unhealthy",
             "version": "unknown",
             "active_connections": 0,
@@ -840,12 +850,16 @@ class PostgreSQLConnector(BaseConnector):
             )
             return health
 
+        # Local reference for type narrowing — mypy cannot track
+        # self._connection through nested closures.
+        conn = self._connection
+
         try:
             # Measure SELECT 1 round-trip latency using the base-class
             # _measure_latency helper for consistent timing.
             def _ping() -> bool:
                 """Execute SELECT 1 as a connectivity probe."""
-                cursor = self._connection.cursor()
+                cursor = conn.cursor()
                 try:
                     cursor.execute("SELECT 1")
                     cursor.fetchone()
@@ -857,7 +871,7 @@ class PostgreSQLConnector(BaseConnector):
             health["latency_ms"] = round(latency_ms, 2)
 
             # Retrieve the PostgreSQL server version string.
-            cursor = self._connection.cursor()
+            cursor = conn.cursor()
             try:
                 cursor.execute("SELECT version()")
                 version_row = cursor.fetchone()
@@ -867,7 +881,7 @@ class PostgreSQLConnector(BaseConnector):
                 cursor.close()
 
             # Query active connection count from pg_stat_activity.
-            cursor = self._connection.cursor()
+            cursor = conn.cursor()
             try:
                 cursor.execute(
                     "SELECT count(*) FROM pg_stat_activity "
@@ -997,7 +1011,7 @@ class PostgreSQLConnector(BaseConnector):
         return pg_type
 
     @staticmethod
-    def _resolve_jar_path(config: Dict[str, Any]) -> str:
+    def _resolve_jar_path(config: dict[str, Any]) -> str:
         """Resolve the absolute filesystem path to the PostgreSQL JDBC JAR.
 
         Resolution order:
@@ -1016,7 +1030,7 @@ class PostgreSQLConnector(BaseConnector):
             filesystem (to support containerised environments where the
             JAR is mounted at runtime).
         """
-        jar_path: Optional[str] = config.get("jar_path")
+        jar_path: str | None = config.get("jar_path")
 
         if not jar_path:
             jar_path = os.environ.get("POSTGRES_JDBC_JAR_PATH")
