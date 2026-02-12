@@ -1115,6 +1115,9 @@ class GCSProvider(BaseCloudProvider):
                     "error": Optional[str],
                 }
         """
+        # Collect operational metrics from the base-class tracker.
+        metrics = self.get_metrics()
+
         base_result: Dict[str, Any] = {
             "status": "unhealthy",
             "provider": self.PROVIDER_NAME,
@@ -1122,6 +1125,7 @@ class GCSProvider(BaseCloudProvider):
             "project": self._project_id,
             "latency_ms": 0.0,
             "encryption_enabled": self._encryption_enabled,
+            "metrics": metrics,
             "error": None,
         }
 
