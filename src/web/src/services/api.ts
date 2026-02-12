@@ -30,12 +30,11 @@
 import axios from 'axios';
 import type {
   AxiosInstance,
-  AxiosRequestConfig,
   AxiosResponse,
   AxiosError,
   InternalAxiosRequestConfig,
 } from 'axios';
-import type { ApiError, ApiResponse } from '@/types/api';
+import type { ApiError } from '@/types/api';
 
 // ============================================================================
 // Constants
@@ -365,7 +364,8 @@ apiClient.interceptors.response.use(
    *   // Instead of: const result = response.data.data
    *   // Consumers get: const result = response.data
    */
-  (response: AxiosResponse): ApiResponse<unknown> => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (response: AxiosResponse): any => {
     // Development-mode response logging
     if (import.meta.env.DEV) {
       const status = response.status;
@@ -373,7 +373,11 @@ apiClient.interceptors.response.use(
       console.log(`[API Response] ${status} ${url}`);
     }
 
-    // Unwrap AxiosResponse to return the payload directly
+    // Unwrap AxiosResponse to return the payload directly.
+    // Returns response.data (typically ApiResponse<T>) instead of the full
+    // AxiosResponse wrapper. The `any` return type is intentional because
+    // Axios interceptor typings require AxiosResponse, but we are transforming
+    // the response shape for all downstream consumers.
     return response.data;
   },
 
