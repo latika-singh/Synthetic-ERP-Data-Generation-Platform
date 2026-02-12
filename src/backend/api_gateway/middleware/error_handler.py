@@ -672,7 +672,12 @@ def _handle_circuit_breaker_error(
         Structured JSON error response with HTTP 503 and circuit breaker
         context in the ``details`` field.
     """
-    breaker_name = str(error) if str(error) else "unknown_service"
+    try:
+        breaker_name = str(error) if str(error) else "unknown_service"
+    except Exception:
+        # CircuitBreakerError.__str__ accesses internal circuit breaker
+        # attributes that may not always be available.
+        breaker_name = "unknown_service"
     details: Dict[str, Any] = {
         "circuit_breaker": breaker_name,
         "reason": "Circuit breaker is open due to repeated downstream failures.",
