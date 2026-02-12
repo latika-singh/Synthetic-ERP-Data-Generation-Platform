@@ -860,7 +860,7 @@ class RelationshipManager:
             return [None] * count
 
         pool_array = np.array(mapping.generated_keys)
-        selected = np.random.choice(pool_array, size=count, replace=True).tolist()
+        selected: list[Any] = list(np.random.choice(pool_array, size=count, replace=True))
 
         # Track the cross-module reference for audit.
         ref_key = f"{target_table}.{target_column}"
@@ -1469,12 +1469,12 @@ class RelationshipManager:
         if strategy == "weighted":
             weights = np.arange(1, len(pool) + 1, dtype=float)
             weights = weights / weights.sum()
-            return np.random.choice(
+            return list(np.random.choice(
                 pool_array,
                 size=count,
                 replace=True,
                 p=weights,
-            ).tolist()
+            ))
 
         if strategy == "uniform":
             base_per_parent = count // len(pool)
@@ -1493,7 +1493,7 @@ class RelationshipManager:
                 relationship_id=relationship_id,
             )
 
-        return np.random.choice(pool_array, size=count, replace=True).tolist()
+        return list(np.random.choice(pool_array, size=count, replace=True))
 
     def _get_relationships_for_table(
         self,
