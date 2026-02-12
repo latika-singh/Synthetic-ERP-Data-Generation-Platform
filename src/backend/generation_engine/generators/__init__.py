@@ -26,72 +26,210 @@ Each generator implements the common interface defined by :class:`BaseGenerator`
 
 Usage::
 
-    from generation_engine.generators.base import BaseGenerator, GenerationResult
-    from generation_engine.generators.masking_generator import MaskingGenerator
+    from generation_engine.generators import get_generator
 
-    generator = MaskingGenerator(config=masking_config)
-    result = generator.generate(schema=schema, profile=profile, num_records=1000)
+    gen = get_generator("rules", erp_module="financial_accounting")
+    result = gen.generate(schema=schema, profile=profile, num_records=1000)
 """
 
 from __future__ import annotations
 
+from typing import Any
+
+
 __version__: str = "1.0.0"
 
 __all__: list[str] = [
+    "GENERATOR_REGISTRY",
+    "AIMLGenerator",
     "BaseGenerator",
     "ColumnSpec",
     "GenerationConfig",
     "GenerationError",
     "GenerationResult",
+    "MaskingConfig",
     "MaskingGenerator",
     "MaskingStrategy",
-    "MaskingConfig",
+    "RulesGenerator",
+    "StatisticalGenerator",
+    "get_available_methods",
+    "get_generator",
 ]
 
 
-def __getattr__(name: str):  # noqa: ANN001, ANN204
-    """Lazy-import public symbols to avoid eagerly pulling in heavy deps."""
-    _BASE_SYMBOLS = {
-        "BaseGenerator",
-        "ColumnSpec",
-        "GenerationConfig",
-        "GenerationError",
-        "GenerationResult",
-    }
-    _MASKING_SYMBOLS = {
-        "MaskingGenerator",
-        "MaskingStrategy",
-        "MaskingConfig",
-    }
+# ---------------------------------------------------------------------------
+# Lazy-import helpers
+# ---------------------------------------------------------------------------
 
-    if name in _BASE_SYMBOLS:
-        from generation_engine.generators.base import (  # noqa: PLC0415
-            BaseGenerator,
-            ColumnSpec,
-            GenerationConfig,
-            GenerationError,
-            GenerationResult,
+def _import_base(name: str) -> Any:
+    """Resolve a symbol from :mod:`generation_engine.generators.base`."""
+    from generation_engine.generators.base import (  # noqa: PLC0415
+        BaseGenerator,
+        ColumnSpec,
+        GenerationConfig,
+        GenerationError,
+        GenerationResult,
+    )
+    _map: dict[str, Any] = {
+        "BaseGenerator": BaseGenerator,
+        "ColumnSpec": ColumnSpec,
+        "GenerationConfig": GenerationConfig,
+        "GenerationError": GenerationError,
+        "GenerationResult": GenerationResult,
+    }
+    return _map.get(name)
+
+
+def _import_masking(name: str) -> Any:
+    """Resolve a symbol from :mod:`generation_engine.generators.masking_generator`."""
+    from generation_engine.generators.masking_generator import (  # noqa: PLC0415
+        MaskingConfig,
+        MaskingGenerator,
+        MaskingStrategy,
+    )
+    _map: dict[str, Any] = {
+        "MaskingGenerator": MaskingGenerator,
+        "MaskingStrategy": MaskingStrategy,
+        "MaskingConfig": MaskingConfig,
+    }
+    return _map.get(name)
+
+
+# ---------------------------------------------------------------------------
+# Registry — maps method name strings to generator classes.
+# Uses lazy loading so heavy deps (torch/tensorflow) aren't imported at
+# package-init time.
+# ---------------------------------------------------------------------------
+
+def _build_registry() -> dict[str, type]:
+    """Build the live GENERATOR_REGISTRY, skipping unavailable generators."""
+    registry: dict[str, type] = {}
+    # Rules generator
+    try:
+        from generation_engine.generators.rules_generator import (  # noqa: PLC0415
+            RulesGenerator,
         )
-        _map = {
-            "BaseGenerator": BaseGenerator,
-            "ColumnSpec": ColumnSpec,
-            "GenerationConfig": GenerationConfig,
-            "GenerationError": GenerationError,
-            "GenerationResult": GenerationResult,
-        }
-        return _map[name]
+        registry["rules"] = RulesGenerator
+    except ImportError:
+        pass
+    # Statistical generator
+    try:
+        from generation_engine.generators.statistical_generator import (  # noqa: PLC0415
+            StatisticalGenerator,
+        )
+        registry["statistical"] = StatisticalGenerator
+    except ImportError:
+        pass
+    # Masking generator
+    try:
+        from generation_engine.generators.masking_generator import (  # noqa: PLC0415
+            MaskingGenerator,
+        )
+        registry["masking"] = MaskingGenerator
+    except ImportError:
+        pass
+    # AI/ML generator (may not be available if torch/tensorflow not installed)
+    try:
+        from generation_engine.generators.ai_ml_generator import (  # noqa: PLC0415
+            AIMLGenerator,
+        )
+        registry["ai_ml"] = AIMLGenerator
+    except ImportError:
+        pass
+    return registry
+
+
+# Module-level singleton; built on first access via __getattr__.
+_REGISTRY: dict[str, type] | None = None
+
+
+def _get_registry() -> dict[str, type]:
+    """Return (and lazily construct) the global GENERATOR_REGISTRY."""
+    global _REGISTRY  # noqa: PLW0603
+    if _REGISTRY is None:
+        _REGISTRY = _build_registry()
+    return _REGISTRY
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def get_generator(method_name: str, **kwargs: Any) -> Any:
+    """Instantiate a generator by method name.
+
+    Args:
+        method_name: One of ``'ai_ml'``, ``'rules'``, ``'statistical'``,
+            or ``'masking'``.
+        **kwargs: Forwarded to the generator constructor.
+
+    Returns:
+        An instance of the requested :class:`BaseGenerator` subclass.
+
+    Raises:
+        ValueError: If *method_name* is not a registered generation method.
+    """
+    registry = _get_registry()
+    cls = registry.get(method_name)
+    if cls is None:
+        available = sorted(registry.keys())
+        msg = (
+            f"Unknown generation method {method_name!r}. "
+            f"Available methods: {available}"
+        )
+        raise ValueError(msg)
+    return cls(**kwargs)
+
+
+def get_available_methods() -> list[str]:
+    """Return a sorted list of registered generation method names."""
+    return sorted(_get_registry().keys())
+
+
+# ---------------------------------------------------------------------------
+# Lazy attribute resolution
+# ---------------------------------------------------------------------------
+
+_BASE_SYMBOLS = frozenset({
+    "BaseGenerator", "ColumnSpec", "GenerationConfig",
+    "GenerationError", "GenerationResult",
+})
+_MASKING_SYMBOLS = frozenset({
+    "MaskingGenerator", "MaskingStrategy", "MaskingConfig",
+})
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy-import public symbols to avoid eagerly pulling in heavy deps."""
+    if name in _BASE_SYMBOLS:
+        result = _import_base(name)
+        if result is not None:
+            return result
 
     if name in _MASKING_SYMBOLS:
-        from generation_engine.generators.masking_generator import (  # noqa: PLC0415
-            MaskingConfig,
-            MaskingGenerator,
-            MaskingStrategy,
+        result = _import_masking(name)
+        if result is not None:
+            return result
+
+    if name == "RulesGenerator":
+        from generation_engine.generators.rules_generator import (  # noqa: PLC0415
+            RulesGenerator,
         )
-        _map = {
-            "MaskingGenerator": MaskingGenerator,
-            "MaskingStrategy": MaskingStrategy,
-            "MaskingConfig": MaskingConfig,
-        }
-        return _map[name]
+        return RulesGenerator
+
+    if name == "StatisticalGenerator":
+        from generation_engine.generators.statistical_generator import (  # noqa: PLC0415
+            StatisticalGenerator,
+        )
+        return StatisticalGenerator
+
+    if name == "AIMLGenerator":
+        from generation_engine.generators.ai_ml_generator import (  # noqa: PLC0415
+            AIMLGenerator,
+        )
+        return AIMLGenerator
+
+    if name == "GENERATOR_REGISTRY":
+        return _get_registry()
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

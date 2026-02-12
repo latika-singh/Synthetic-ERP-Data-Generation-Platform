@@ -20,7 +20,7 @@ Core Components:
 
 Usage::
 
-    from generators.rules_generator import RulesGenerator
+    from generation_engine.generators.rules_generator import RulesGenerator
 
     gen = RulesGenerator(config={"erp_module": "financial_accounting", "seed": 42})
     result = gen.generate(schema=my_schema, profile={}, num_records=10000)
@@ -32,21 +32,24 @@ import random
 import re
 import string
 from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, Literal
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, model_validator
 
-from generators.base import (
+from generation_engine.generators.base import (
     BaseGenerator,
-    ColumnSpec,
-    GenerationConfig,
     GenerationError,
     GenerationResult,
 )
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Pre-compiled regex for format pattern placeholder extraction.
@@ -55,7 +58,7 @@ from shared.logging.structured_logger import get_logger
 _PLACEHOLDER_RE: re.Pattern[str] = re.compile(r"\{(\w+)(?::(\d+))?\}")
 
 # Whitelist of safe names for cross-field formula evaluation.
-_SAFE_FORMULA_NAMES: Dict[str, Any] = {
+_SAFE_FORMULA_NAMES: dict[str, Any] = {
     "round": round,
     "abs": abs,
     "max": max,
@@ -91,7 +94,7 @@ class RangeRule(BaseModel):
         default="uniform",
         description="Sampling distribution.",
     )
-    step: Optional[float] = Field(default=None, description="Rounding step.")
+    step: float | None = Field(default=None, description="Rounding step.")
 
 
 class FormatRule(BaseModel):
@@ -111,9 +114,9 @@ class FormatRule(BaseModel):
     """
 
     pattern: str = Field(..., description="Format pattern with placeholder tokens.")
-    prefix: Optional[str] = Field(default=None, description="Prefix.")
-    suffix: Optional[str] = Field(default=None, description="Suffix.")
-    length: Optional[int] = Field(default=None, ge=1, description="Fixed total length.")
+    prefix: str | None = Field(default=None, description="Prefix.")
+    suffix: str | None = Field(default=None, description="Suffix.")
+    length: int | None = Field(default=None, ge=1, description="Fixed total length.")
     char_set: Literal["alphanumeric", "numeric", "alpha", "hex"] = Field(
         default="alphanumeric",
         description="Character set for random segments.",
@@ -130,13 +133,13 @@ class LookupRule(BaseModel):
         null_probability: Per-record probability of ``None``.
     """
 
-    values: List[Any] = Field(..., min_length=1, description="Allowed values.")
-    weights: Optional[List[float]] = Field(default=None, description="Selection probabilities.")
+    values: list[Any] = Field(..., min_length=1, description="Allowed values.")
+    weights: list[float] | None = Field(default=None, description="Selection probabilities.")
     allow_null: bool = Field(default=False, description="Allow NULL.")
     null_probability: float = Field(default=0.0, ge=0.0, le=1.0, description="NULL probability.")
 
     @model_validator(mode="after")
-    def _validate_weights_length(self) -> "LookupRule":
+    def _validate_weights_length(self) -> LookupRule:
         """Ensure weights length matches values length when provided."""
         if self.weights is not None and len(self.weights) != len(self.values):
             raise ValueError(
@@ -156,8 +159,8 @@ class ConditionalRule(BaseModel):
     """
 
     depends_on: str = Field(..., description="Parent field name.")
-    conditions: Dict[str, Any] = Field(..., description="Parent value → child rule config.")
-    default_rule: Optional[Any] = Field(default=None, description="Default rule.")
+    conditions: dict[str, Any] = Field(..., description="Parent value → child rule config.")
+    default_rule: Any | None = Field(default=None, description="Default rule.")
 
 
 class CrossFieldRule(BaseModel):
@@ -169,9 +172,9 @@ class CrossFieldRule(BaseModel):
         validation_expression: Optional boolean validation expression.
     """
 
-    source_fields: List[str] = Field(..., min_length=1, description="Input columns.")
+    source_fields: list[str] = Field(..., min_length=1, description="Input columns.")
     formula: str = Field(..., min_length=1, description="Arithmetic formula.")
-    validation_expression: Optional[str] = Field(default=None, description="Validation expr.")
+    validation_expression: str | None = Field(default=None, description="Validation expr.")
 
 
 class DateRule(BaseModel):
@@ -207,13 +210,13 @@ class FieldRule(BaseModel):
     rule_type: Literal["range", "format", "lookup", "conditional", "cross_field", "date"] = Field(
         ..., description="Rule type discriminator."
     )
-    rule_config: Union[RangeRule, FormatRule, LookupRule, ConditionalRule, CrossFieldRule, DateRule] = Field(
+    rule_config: RangeRule | FormatRule | LookupRule | ConditionalRule | CrossFieldRule | DateRule = Field(
         ..., description="Rule configuration object."
     )
     nullable: bool = Field(default=False, description="Allow NULL.")
     null_probability: float = Field(default=0.0, ge=0.0, le=1.0, description="NULL probability.")
 
-    _RULE_TYPE_MAP: Dict[str, type] = {
+    _RULE_TYPE_MAP: dict[str, type] = {
         "range": RangeRule,
         "format": FormatRule,
         "lookup": LookupRule,
@@ -253,13 +256,11 @@ class RulesConfig(BaseModel):
         custom_validators: Custom validation expressions by field name.
     """
 
-    rules: List[FieldRule] = Field(default_factory=list, description="Field-level rules.")
-    erp_module: Optional[
-        Literal["financial_accounting", "hr", "sales_distribution", "material_management"]
-    ] = Field(default=None, description="ERP module context.")
+    rules: list[FieldRule] = Field(default_factory=list, description="Field-level rules.")
+    erp_module: Literal["financial_accounting", "hr", "sales_distribution", "material_management"] | None = Field(default=None, description="ERP module context.")
     enforce_cross_field: bool = Field(default=True, description="Enforce cross-field rules.")
-    seed: Optional[int] = Field(default=None, description="Random seed.")
-    custom_validators: Optional[Dict[str, str]] = Field(
+    seed: int | None = Field(default=None, description="Random seed.")
+    custom_validators: dict[str, str] | None = Field(
         default=None, description="Custom validation expressions."
     )
 
@@ -268,7 +269,7 @@ class RulesConfig(BaseModel):
 # ERP Module Pre-Built Rule Sets
 # ---------------------------------------------------------------------------
 
-ERP_MODULE_RULES: Dict[str, List[FieldRule]] = {
+ERP_MODULE_RULES: dict[str, list[FieldRule]] = {
     # ------------------------------------------------------------------
     # Financial Accounting Module
     # ------------------------------------------------------------------
@@ -480,34 +481,37 @@ def _get_us_holidays(year: int) -> set[datetime]:
     Covers: New Year, MLK Day (3rd Mon Jan), Presidents Day (3rd Mon Feb),
     Memorial Day (last Mon May), Independence Day, Labor Day (1st Mon Sep),
     Veterans Day, Thanksgiving (4th Thu Nov), Christmas.
+
+    All returned datetimes are UTC-aware to satisfy strict linting rules.
     """
+    _utc = UTC
     holidays: set[datetime] = set()
-    holidays.add(datetime(year, 1, 1))   # New Year
-    holidays.add(datetime(year, 7, 4))   # Independence Day
-    holidays.add(datetime(year, 11, 11)) # Veterans Day
-    holidays.add(datetime(year, 12, 25)) # Christmas
+    holidays.add(datetime(year, 1, 1, tzinfo=_utc))   # New Year
+    holidays.add(datetime(year, 7, 4, tzinfo=_utc))   # Independence Day
+    holidays.add(datetime(year, 11, 11, tzinfo=_utc))  # Veterans Day
+    holidays.add(datetime(year, 12, 25, tzinfo=_utc))  # Christmas
 
     # MLK Day — 3rd Monday in January
-    jan1 = datetime(year, 1, 1)
+    jan1 = datetime(year, 1, 1, tzinfo=_utc)
     first_monday = jan1 + timedelta(days=(7 - jan1.weekday()) % 7)
     holidays.add(first_monday + timedelta(weeks=2))
 
     # Presidents Day — 3rd Monday in February
-    feb1 = datetime(year, 2, 1)
+    feb1 = datetime(year, 2, 1, tzinfo=_utc)
     first_monday = feb1 + timedelta(days=(7 - feb1.weekday()) % 7)
     holidays.add(first_monday + timedelta(weeks=2))
 
     # Memorial Day — last Monday in May
-    may31 = datetime(year, 5, 31)
+    may31 = datetime(year, 5, 31, tzinfo=_utc)
     holidays.add(may31 - timedelta(days=may31.weekday()))
 
     # Labor Day — 1st Monday in September
-    sep1 = datetime(year, 9, 1)
+    sep1 = datetime(year, 9, 1, tzinfo=_utc)
     first_monday = sep1 + timedelta(days=(7 - sep1.weekday()) % 7)
     holidays.add(first_monday)
 
     # Thanksgiving — 4th Thursday in November
-    nov1 = datetime(year, 11, 1)
+    nov1 = datetime(year, 11, 1, tzinfo=_utc)
     first_thursday = nov1 + timedelta(days=(3 - nov1.weekday()) % 7)
     holidays.add(first_thursday + timedelta(weeks=3))
 
@@ -536,14 +540,14 @@ class RulesGenerator(BaseGenerator):
             ``seed``, and ``enforce_cross_field`` keys.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.logger = get_logger(__name__)
 
         # Parse config into RulesConfig (tolerant of missing/empty config).
-        self._rules_config: Optional[RulesConfig] = None
-        self._effective_rules: List[FieldRule] = []
-        self._seq_counters: Dict[str, int] = {}
+        self._rules_config: RulesConfig | None = None
+        self._effective_rules: list[FieldRule] = []
+        self._seq_counters: dict[str, int] = {}
 
         if config:
             try:
@@ -575,7 +579,7 @@ class RulesGenerator(BaseGenerator):
         Custom rules override module defaults on a per-field basis (matched
         by ``field_name``).
         """
-        module_rules: List[FieldRule] = []
+        module_rules: list[FieldRule] = []
 
         if self._rules_config and self._rules_config.erp_module:
             module_name = self._rules_config.erp_module
@@ -589,13 +593,13 @@ class RulesGenerator(BaseGenerator):
             else:
                 self.logger.warning("unknown_erp_module", module=module_name)
 
-        custom_rules: List[FieldRule] = (
+        custom_rules: list[FieldRule] = (
             self._rules_config.rules if self._rules_config else []
         )
         custom_field_names: set[str] = {r.field_name for r in custom_rules}
 
         # Module defaults for fields not overridden by custom rules.
-        merged: List[FieldRule] = [
+        merged: list[FieldRule] = [
             r for r in module_rules if r.field_name not in custom_field_names
         ]
         merged.extend(custom_rules)
@@ -609,13 +613,100 @@ class RulesGenerator(BaseGenerator):
         )
 
     # ------------------------------------------------------------------
+    # Generation Preparation Helpers
+    # ------------------------------------------------------------------
+
+    def _reseed_rngs(self) -> None:
+        """Re-seed RNGs so that repeated ``generate()`` calls with the same
+        seed always produce identical output, regardless of intervening random
+        consumption by other code."""
+        if self._rules_config and self._rules_config.seed is not None:
+            random.seed(self._rules_config.seed)
+            np.random.seed(self._rules_config.seed)
+
+    def _resolve_effective_rules(self, kwargs: dict[str, Any]) -> list[FieldRule]:
+        """Return the effective rule list, optionally overridden at runtime.
+
+        If ``kwargs["rules_config"]`` is a *dict*, it is parsed as a
+        :class:`RulesConfig` and merged with the appropriate ERP module
+        defaults.  Otherwise the pre-computed ``_effective_rules`` are used.
+
+        Raises:
+            GenerationError: If the runtime config is malformed.
+        """
+        runtime_config = kwargs.get("rules_config")
+        if runtime_config and isinstance(runtime_config, dict):
+            try:
+                rt_cfg = RulesConfig(**runtime_config)
+                return self._merge_rules_lists(
+                    ERP_MODULE_RULES.get(rt_cfg.erp_module, [])
+                    if rt_cfg.erp_module
+                    else [],
+                    rt_cfg.rules,
+                )
+            except Exception as exc:
+                raise GenerationError(
+                    message=f"Invalid runtime rules_config: {exc}",
+                    method="rules",
+                    details={"error": str(exc)},
+                ) from exc
+        return self._effective_rules
+
+    def _generate_empty_fallback(
+        self,
+        schema: dict[str, Any],
+        num_records: int,
+    ) -> GenerationResult:
+        """Produce an all-*None* DataFrame when no rules are configured."""
+        self.logger.warning("no_rules_configured")
+        columns = [
+            c.get("name", f"col_{i}")
+            if isinstance(c, dict)
+            else getattr(c, "name", f"col_{i}")
+            for i, c in enumerate(schema.get("columns", []))
+        ]
+        empty_df = pd.DataFrame(
+            {col: [None] * num_records for col in columns}
+        )
+        return self._build_result(
+            empty_df, metadata={"method": "rules", "warning": "no_rules"},
+        )
+
+    def _prepare_generation_plan(
+        self,
+        effective: list[FieldRule],
+    ) -> list[list[FieldRule]]:
+        """Validate the config and resolve the topological generation order.
+
+        Raises:
+            GenerationError: On invalid configuration or circular dependencies.
+        """
+        try:
+            self.validate_config(self.config)
+        except ValueError as exc:
+            raise GenerationError(
+                message=f"Rules configuration invalid: {exc}",
+                method="rules",
+                details={"error": str(exc)},
+            ) from exc
+
+        try:
+            return self._build_generation_order(effective)
+        except ValueError as exc:
+            raise GenerationError(
+                message=f"Dependency resolution failed: {exc}",
+                method="rules",
+                details={"error": str(exc)},
+            ) from exc
+
+    # ------------------------------------------------------------------
     # Core Generation Method
     # ------------------------------------------------------------------
 
     def generate(
         self,
-        schema: Dict[str, Any],
-        profile: Dict[str, Any],
+        schema: dict[str, Any],
+        profile: dict[str, Any],
         num_records: int,
         **kwargs: Any,
     ) -> GenerationResult:
@@ -638,7 +729,14 @@ class RulesGenerator(BaseGenerator):
             GenerationError: On circular dependencies, invalid rules, or
                 fatal generation failures.
         """
+        # ``profile`` is part of the BaseGenerator interface; rules-based
+        # generation may optionally consult it but does not require it.
+        _ = profile
+
         self._start_timer()
+
+        self._reseed_rngs()
+
         self.logger.info(
             "rules_generation_started",
             num_records=num_records,
@@ -647,57 +745,14 @@ class RulesGenerator(BaseGenerator):
             ),
         )
 
-        # Allow runtime config override via kwargs.
-        runtime_config = kwargs.get("rules_config")
-        if runtime_config and isinstance(runtime_config, dict):
-            try:
-                rt_cfg = RulesConfig(**runtime_config)
-                effective = self._merge_rules_lists(
-                    ERP_MODULE_RULES.get(rt_cfg.erp_module, [])
-                    if rt_cfg.erp_module
-                    else [],
-                    rt_cfg.rules,
-                )
-            except Exception as exc:
-                raise GenerationError(
-                    message=f"Invalid runtime rules_config: {exc}",
-                    method="rules",
-                    details={"error": str(exc)},
-                ) from exc
-        else:
-            effective = self._effective_rules
+        # Resolve the effective rule list (allows runtime override via kwargs).
+        effective = self._resolve_effective_rules(kwargs)
 
         if not effective:
-            self.logger.warning("no_rules_configured")
-            # Fall back: generate empty DataFrame with schema columns.
-            columns = [
-                c.get("name", f"col_{i}") if isinstance(c, dict) else getattr(c, "name", f"col_{i}")
-                for i, c in enumerate(schema.get("columns", []))
-            ]
-            empty_df = pd.DataFrame(
-                {col: [None] * num_records for col in columns}
-            )
-            return self._build_result(empty_df, metadata={"method": "rules", "warning": "no_rules"})
+            return self._generate_empty_fallback(schema, num_records)
 
-        # Validate configuration.
-        try:
-            self.validate_config(self.config)
-        except ValueError as exc:
-            raise GenerationError(
-                message=f"Rules configuration invalid: {exc}",
-                method="rules",
-                details={"error": str(exc)},
-            ) from exc
-
-        # Build ordered generation plan (topological sort).
-        try:
-            generation_batches = self._build_generation_order(effective)
-        except ValueError as exc:
-            raise GenerationError(
-                message=f"Dependency resolution failed: {exc}",
-                method="rules",
-                details={"error": str(exc)},
-            ) from exc
+        # Validate, resolve dependencies, and build the generation plan.
+        generation_batches = self._prepare_generation_plan(effective)
 
         # Reset sequence counters for this generation run.
         self._seq_counters = {}
@@ -745,12 +800,12 @@ class RulesGenerator(BaseGenerator):
         df = self._apply_nulls(df, schema)
 
         # Build result metadata.
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "method": "rules",
             "erp_module": self._rules_config.erp_module if self._rules_config else None,
             "num_rules": len(effective),
             "num_fields_generated": len(df.columns),
-            "generation_timestamp": datetime.now().isoformat(),
+            "generation_timestamp": datetime.now(tz=UTC).isoformat(),
         }
 
         result = self._build_result(df, metadata=metadata)
@@ -873,6 +928,48 @@ class RulesGenerator(BaseGenerator):
     # Format Field Generation
     # ------------------------------------------------------------------
 
+    def _resolve_format_token(
+        self,
+        token_upper: str,
+        width: int,
+        char_pool: str,
+        current_year: str,
+        seq_num: int,
+    ) -> str:
+        """Resolve a single format placeholder token to its replacement string.
+
+        This helper is separated from :meth:`_generate_format_field` to keep
+        the branch count within linting limits.
+
+        Args:
+            token_upper: Upper-cased token name (``YYYY``, ``SEQ``, etc.).
+            width: Desired output width for the token.
+            char_pool: Fallback character pool derived from the rule's char_set.
+            current_year: Pre-computed 4-digit year string.
+            seq_num: Current sequence number (used only for ``SEQ`` tokens).
+
+        Returns:
+            Replacement string for the token.
+        """
+        # Map well-known random-char tokens to their character sets.  Using
+        # ``random.choices`` is intentional for synthetic data generation
+        # (non-cryptographic), hence the S311 suppressions.
+        _random_token_pools: dict[str, str] = {
+            "NUM": string.digits,
+            "ALPHA": string.ascii_uppercase,
+            "HEX": string.hexdigits[:16].upper(),
+        }
+
+        if token_upper == "YYYY":
+            return current_year
+        if token_upper == "SEQ":
+            return str(seq_num).zfill(width)
+        pool = _random_token_pools.get(token_upper)
+        if pool is not None:
+            return "".join(random.choices(pool, k=width))  # noqa: S311
+        # Fallback: use the configured char_set pool.
+        return "".join(random.choices(char_pool, k=width))  # noqa: S311
+
     def _generate_format_field(self, rule: FormatRule, size: int) -> np.ndarray:
         """Generate formatted string values by expanding placeholder tokens.
 
@@ -887,10 +984,10 @@ class RulesGenerator(BaseGenerator):
             NumPy array of formatted strings.
         """
         pattern = rule.pattern
-        results: List[str] = []
+        results: list[str] = []
 
         # Determine character set for any random segments.
-        charset_map: Dict[str, str] = {
+        charset_map: dict[str, str] = {
             "alphanumeric": string.ascii_uppercase + string.digits,
             "numeric": string.digits,
             "alpha": string.ascii_uppercase,
@@ -907,47 +1004,24 @@ class RulesGenerator(BaseGenerator):
             self._seq_counters[seq_key] = 1
         seq_start = self._seq_counters[seq_key]
 
-        current_year = str(datetime.now().year)
+        current_year = str(datetime.now(tz=UTC).year)
 
         for i in range(size):
             value = pattern
-            seq_offset = 0
-
             for token, width_str in placeholders:
                 width = int(width_str) if width_str else 4
-                token_upper = token.upper()
-
-                if token_upper == "YYYY":
-                    replacement = current_year
-                elif token_upper == "SEQ":
-                    seq_num = seq_start + i + seq_offset
-                    replacement = str(seq_num).zfill(width)
-                    seq_offset += 0  # Only one SEQ per pattern typically
-                elif token_upper == "NUM":
-                    replacement = "".join(random.choices(string.digits, k=width))
-                elif token_upper == "ALPHA":
-                    replacement = "".join(random.choices(string.ascii_uppercase, k=width))
-                elif token_upper == "HEX":
-                    replacement = "".join(
-                        random.choices(string.hexdigits[:16].upper(), k=width)
-                    )
-                else:
-                    # Fallback: use configured char_set.
-                    replacement = "".join(random.choices(char_pool, k=width))
-
+                replacement = self._resolve_format_token(
+                    token.upper(), width, char_pool, current_year, seq_start + i,
+                )
                 # Replace first occurrence of this token placeholder.
-                if width_str:
-                    value = value.replace(f"{{{token}:{width_str}}}", replacement, 1)
-                else:
-                    value = value.replace(f"{{{token}}}", replacement, 1)
+                placeholder_str = f"{{{token}:{width_str}}}" if width_str else f"{{{token}}}"
+                value = value.replace(placeholder_str, replacement, 1)
 
-            # Apply optional prefix/suffix.
+            # Apply optional prefix/suffix and enforce fixed length.
             if rule.prefix is not None:
                 value = rule.prefix + value
             if rule.suffix is not None:
                 value = value + rule.suffix
-
-            # Enforce fixed length if configured.
             if rule.length is not None:
                 value = value[:rule.length].ljust(rule.length)
 
@@ -978,10 +1052,7 @@ class RulesGenerator(BaseGenerator):
             # Normalise weights to ensure they sum to 1.0.
             weights = np.array(rule.weights, dtype=np.float64)
             weight_sum = weights.sum()
-            if weight_sum > 0:
-                weights = weights / weight_sum
-            else:
-                weights = np.ones(len(rule.values)) / len(rule.values)
+            weights = weights / weight_sum if weight_sum > 0 else np.ones(len(rule.values)) / len(rule.values)
             sampled = np.random.choice(values_array, size=size, replace=True, p=weights)
         else:
             sampled = np.random.choice(values_array, size=size, replace=True)
@@ -989,7 +1060,8 @@ class RulesGenerator(BaseGenerator):
         # Apply null injection from lookup rule settings.
         if rule.allow_null and rule.null_probability > 0:
             null_mask = np.random.random(size) < rule.null_probability
-            sampled = np.where(null_mask, None, sampled)
+            sampled = sampled.astype(object)
+            sampled[null_mask] = None
 
         return sampled
 
@@ -1072,7 +1144,7 @@ class RulesGenerator(BaseGenerator):
             method="rules",
         )
 
-    def _dispatch_child_rule_from_dict(self, cfg: Dict[str, Any], size: int) -> np.ndarray:
+    def _dispatch_child_rule_from_dict(self, cfg: dict[str, Any], size: int) -> np.ndarray:
         """Parse a raw dict into a rule model and generate values.
 
         Detection heuristic based on distinguishing keys:
@@ -1088,7 +1160,7 @@ class RulesGenerator(BaseGenerator):
         Returns:
             NumPy array of generated values.
         """
-        type_attempts: List[tuple[type, Callable[..., np.ndarray]]] = [
+        type_attempts: list[tuple[type, Callable[..., np.ndarray]]] = [
             (LookupRule, self._generate_lookup_field),
             (RangeRule, self._generate_range_field),
             (FormatRule, self._generate_format_field),
@@ -1114,6 +1186,11 @@ class RulesGenerator(BaseGenerator):
                 rule_obj = rule_cls(**cfg)
                 return gen_method(rule_obj, size)
             except Exception:
+                self.logger.debug(
+                    "conditional_child_rule_parse_skip",
+                    attempted_type=rule_cls.__name__,
+                    config_keys=list(cfg.keys()),
+                )
                 continue
 
         # Last resort: return the value directly if it is a scalar.
@@ -1158,7 +1235,7 @@ class RulesGenerator(BaseGenerator):
             )
 
         # Build evaluation namespace with source field values.
-        namespace: Dict[str, Any] = dict(_SAFE_FORMULA_NAMES)
+        namespace: dict[str, Any] = dict(_SAFE_FORMULA_NAMES)
         for field_name in rule.source_fields:
             if field_name in df.columns:
                 namespace[field_name] = df[field_name].values.astype(np.float64)
@@ -1170,7 +1247,7 @@ class RulesGenerator(BaseGenerator):
                 )
 
         # Prevent access to built-ins.
-        safe_globals: Dict[str, Any] = {"__builtins__": {}}
+        safe_globals: dict[str, Any] = {"__builtins__": {}}
         safe_globals.update(namespace)
 
         try:
@@ -1192,7 +1269,7 @@ class RulesGenerator(BaseGenerator):
                     method="rules",
                 )
             try:
-                validation_ns: Dict[str, Any] = {"__builtins__": {}}
+                validation_ns: dict[str, Any] = {"__builtins__": {}}
                 validation_ns.update(namespace)
                 validation_ns["result"] = result_array
                 valid = eval(rule.validation_expression, validation_ns, validation_ns)  # noqa: S307
@@ -1228,8 +1305,8 @@ class RulesGenerator(BaseGenerator):
         Returns:
             NumPy array of formatted date strings.
         """
-        start_dt = datetime.strptime(rule.start_date, "%Y-%m-%d")
-        end_dt = datetime.strptime(rule.end_date, "%Y-%m-%d")
+        start_dt = datetime.strptime(rule.start_date, "%Y-%m-%d").replace(tzinfo=UTC)
+        end_dt = datetime.strptime(rule.end_date, "%Y-%m-%d").replace(tzinfo=UTC)
 
         if end_dt <= start_dt:
             raise GenerationError(
@@ -1246,7 +1323,7 @@ class RulesGenerator(BaseGenerator):
                 for year in range(start_dt.year, end_dt.year + 1):
                     holiday_set.update(_get_us_holidays(year))
 
-            eligible_dates: List[datetime] = []
+            eligible_dates: list[datetime] = []
             for day_offset in range(total_days + 1):
                 candidate = start_dt + timedelta(days=day_offset)
                 if rule.business_days_only and candidate.weekday() >= 5:
@@ -1285,8 +1362,8 @@ class RulesGenerator(BaseGenerator):
 
     def _build_generation_order(
         self,
-        rules: List[FieldRule],
-    ) -> List[List[FieldRule]]:
+        rules: list[FieldRule],
+    ) -> list[list[FieldRule]]:
         """Topological sort of field rules based on cross-field dependencies.
 
         Returns a list of *batches*: each batch contains rules whose
@@ -1306,11 +1383,11 @@ class RulesGenerator(BaseGenerator):
         if not rules:
             return []
 
-        field_map: Dict[str, FieldRule] = {r.field_name: r for r in rules}
+        field_map: dict[str, FieldRule] = {r.field_name: r for r in rules}
         rule_field_names: set[str] = set(field_map.keys())
 
         # Build dependency graph considering only intra-rule-set edges.
-        deps: Dict[str, set[str]] = {}
+        deps: dict[str, set[str]] = {}
         for rule in rules:
             field_deps: set[str] = set()
             cfg = rule.rule_config
@@ -1319,23 +1396,22 @@ class RulesGenerator(BaseGenerator):
                 field_deps.update(
                     f for f in cfg.source_fields if f in rule_field_names
                 )
-            elif isinstance(cfg, ConditionalRule):
-                if cfg.depends_on in rule_field_names:
-                    field_deps.add(cfg.depends_on)
+            elif isinstance(cfg, ConditionalRule) and cfg.depends_on in rule_field_names:
+                field_deps.add(cfg.depends_on)
 
             deps[rule.field_name] = field_deps
 
         # Compute in-degrees.
-        in_degree: Dict[str, int] = {name: len(d) for name, d in deps.items()}
+        in_degree: dict[str, int] = {name: len(d) for name, d in deps.items()}
 
         # Build reverse adjacency for efficient traversal.
-        reverse_deps: Dict[str, set[str]] = defaultdict(set)
+        reverse_deps: dict[str, set[str]] = defaultdict(set)
         for name, d in deps.items():
             for dep in d:
                 reverse_deps[dep].add(name)
 
         # Kahn's algorithm: peel off zero-in-degree nodes in waves.
-        result_batches: List[List[FieldRule]] = []
+        result_batches: list[list[FieldRule]] = []
         processed: set[str] = set()
 
         current_names = {name for name, deg in in_degree.items() if deg == 0}
@@ -1376,7 +1452,7 @@ class RulesGenerator(BaseGenerator):
     # Configuration Validation
     # ------------------------------------------------------------------
 
-    def validate_config(self, config: Dict[str, Any]) -> bool:
+    def validate_config(self, config: dict[str, Any]) -> bool:
         """Validate rules generator configuration.
 
         Checks Pydantic parsing, circular dependencies, and field
@@ -1433,15 +1509,14 @@ class RulesGenerator(BaseGenerator):
                             missing_source=src_field,
                         )
 
-            if isinstance(rule.rule_config, ConditionalRule):
-                if (
-                    rule.rule_config.depends_on not in all_field_names
-                ):
-                    self.logger.warning(
-                        "conditional_external_dependency",
-                        field=rule.field_name,
-                        missing_parent=rule.rule_config.depends_on,
-                    )
+            if isinstance(rule.rule_config, ConditionalRule) and (
+                rule.rule_config.depends_on not in all_field_names
+            ):
+                self.logger.warning(
+                    "conditional_external_dependency",
+                    field=rule.field_name,
+                    missing_parent=rule.rule_config.depends_on,
+                )
 
         self.logger.info(
             "config_validated",
@@ -1454,7 +1529,7 @@ class RulesGenerator(BaseGenerator):
     # Capabilities
     # ------------------------------------------------------------------
 
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Return a machine-readable description of this generator's capabilities.
 
         Returns:
@@ -1501,9 +1576,9 @@ class RulesGenerator(BaseGenerator):
 
     @staticmethod
     def _merge_rules_lists(
-        module_rules: List[FieldRule],
-        custom_rules: List[FieldRule],
-    ) -> List[FieldRule]:
+        module_rules: list[FieldRule],
+        custom_rules: list[FieldRule],
+    ) -> list[FieldRule]:
         """Merge module default rules with custom overrides.
 
         Custom rules override module defaults on a per-field basis

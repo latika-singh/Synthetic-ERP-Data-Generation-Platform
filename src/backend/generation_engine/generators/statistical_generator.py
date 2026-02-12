@@ -40,7 +40,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -61,7 +61,6 @@ from scipy.stats import (
 from generation_engine.generators.base import (
     BaseGenerator,
     ColumnSpec,
-    GenerationConfig,
     GenerationError,
     GenerationResult,
 )
@@ -97,7 +96,7 @@ class DistributionFit(BaseModel):
         "categorical",
         "empirical",
     ]
-    parameters: Dict[str, float] = Field(
+    parameters: dict[str, float] = Field(
         ...,
         description="Distribution-specific parameters (loc, scale, shape, etc.).",
     )
@@ -134,7 +133,7 @@ class CorrelationConfig(BaseModel):
         default="gaussian_copula",
         description="Correlation preservation method.",
     )
-    correlation_matrix: Optional[List[List[float]]] = Field(
+    correlation_matrix: list[list[float]] | None = Field(
         default=None,
         description="Pre-computed correlation matrix (overrides profile-derived).",
     )
@@ -162,7 +161,7 @@ class StatisticalConfig(BaseModel):
         outlier_handling: Strategy for generated values outside expected ranges.
     """
 
-    distributions: Optional[Dict[str, DistributionFit]] = Field(
+    distributions: dict[str, DistributionFit] | None = Field(
         default=None,
         description="Per-column distribution fits (overrides auto-fitting).",
     )
@@ -174,7 +173,7 @@ class StatisticalConfig(BaseModel):
         default=True,
         description="Automatically fit distributions from profile.",
     )
-    fit_candidates: List[str] = Field(
+    fit_candidates: list[str] = Field(
         default=["normal", "lognormal", "poisson", "exponential", "uniform"],
         description="Distributions to try during auto-fit.",
     )
@@ -184,7 +183,7 @@ class StatisticalConfig(BaseModel):
         lt=1.0,
         description="KS test significance level for distribution selection.",
     )
-    seed: Optional[int] = Field(
+    seed: int | None = Field(
         default=None,
         description="Random seed for reproducibility.",
     )
@@ -206,7 +205,7 @@ class StatisticalConfig(BaseModel):
 
 # Maps distribution type identifiers to their corresponding SciPy
 # distribution objects for consistent usage across fitting and sampling.
-_SCIPY_DIST_MAP: Dict[str, Any] = {
+_SCIPY_DIST_MAP: dict[str, Any] = {
     "normal": scipy_stats.norm,
     "lognormal": scipy_stats.lognorm,
     "poisson": scipy_stats.poisson,
@@ -260,7 +259,7 @@ class StatisticalGenerator(BaseGenerator):
             :class:`StatisticalConfig`.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Initialise the statistical generator with optional configuration.
 
         Parses configuration into a validated :class:`StatisticalConfig`
@@ -294,21 +293,131 @@ class StatisticalGenerator(BaseGenerator):
             self.logger.info("random_seed_set", seed=self._stat_config.seed)
 
         # Populated during generate() — stores per-column distribution fits.
-        self.fitted_distributions: Dict[str, DistributionFit] = {}
+        self.fitted_distributions: dict[str, DistributionFit] = {}
 
         # Populated during generate() — the correlation matrix used for copula.
-        self.correlation_matrix: Optional[np.ndarray] = None
+        self.correlation_matrix: np.ndarray | None = None
 
     # ------------------------------------------------------------------
     # Abstract Method Implementations  (Strategy Contract)
     # ------------------------------------------------------------------
 
+    # -- generate() helper methods (extracted for PLR0912/PLR0915) -------
+
+    @staticmethod
+    def _classify_columns(
+        column_specs: list[ColumnSpec],
+    ) -> tuple[list[str], list[str], list[str], dict[str, str]]:
+        """Classify columns into numeric, datetime, and categorical buckets.
+
+        Returns:
+            ``(numeric_cols, categorical_cols, datetime_cols, column_type_map)``
+        """
+        numeric_cols: list[str] = []
+        categorical_cols: list[str] = []
+        datetime_cols: list[str] = []
+        column_type_map: dict[str, str] = {}
+
+        for cs in column_specs:
+            dtype_lower = cs.data_type.lower() if cs.data_type else "string"
+            column_type_map[cs.name] = dtype_lower
+            if dtype_lower in _NUMERIC_TYPES:
+                numeric_cols.append(cs.name)
+            elif dtype_lower in _DATETIME_TYPES:
+                datetime_cols.append(cs.name)
+            else:
+                categorical_cols.append(cs.name)
+
+        return numeric_cols, categorical_cols, datetime_cols, column_type_map
+
+    def _generate_numeric_data(
+        self,
+        copula_numeric_cols: list[str],
+        num_records: int,
+    ) -> dict[str, np.ndarray]:
+        """Generate numeric + datetime column data via copula or independently."""
+        generated: dict[str, np.ndarray] = {}
+        if not copula_numeric_cols:
+            return generated
+
+        if self.correlation_matrix is not None:
+            copula_samples = self._generate_copula_samples(
+                n_samples=num_records,
+                n_columns=len(copula_numeric_cols),
+                correlation_matrix=self.correlation_matrix,
+            )
+            for idx, col_name in enumerate(copula_numeric_cols):
+                dist_fit = self.fitted_distributions.get(col_name)
+                generated[col_name] = (
+                    self._transform_to_marginal(copula_samples[:, idx], dist_fit)
+                    if dist_fit is not None
+                    else copula_samples[:, idx]
+                )
+            self._log_progress(
+                records_generated=num_records // 2,
+                total_records=num_records,
+            )
+        else:
+            for col_name in copula_numeric_cols:
+                dist_fit = self.fitted_distributions.get(col_name)
+                if dist_fit is not None:
+                    independent_u = np.array(
+                        np.random.random(num_records), dtype=np.float64,
+                    )
+                    generated[col_name] = self._transform_to_marginal(
+                        independent_u, dist_fit,
+                    )
+        return generated
+
+    def _generate_categorical_data(
+        self,
+        categorical_cols: list[str],
+        num_records: int,
+    ) -> dict[str, np.ndarray]:
+        """Generate categorical column data independently of the copula."""
+        generated: dict[str, np.ndarray] = {}
+        for col_name in categorical_cols:
+            dist_fit = self.fitted_distributions.get(col_name)
+            if dist_fit is not None:
+                uniform_vals = np.array(
+                    np.random.random(num_records), dtype=np.float64,
+                )
+                generated[col_name] = self._transform_to_marginal(
+                    uniform_vals, dist_fit,
+                )
+        return generated
+
+    def _build_gen_metadata(
+        self,
+        numeric_cols: list[str],
+        categorical_cols: list[str],
+        datetime_cols: list[str],
+    ) -> dict[str, Any]:
+        """Assemble the metadata dictionary for the generation result."""
+        return {
+            "method": "statistical",
+            "correlation_method": self._stat_config.correlation.method,
+            "num_numeric_columns": len(numeric_cols),
+            "num_categorical_columns": len(categorical_cols),
+            "num_datetime_columns": len(datetime_cols),
+            "seed": self._stat_config.seed,
+            "distribution_fits": {
+                name: {
+                    "type": fit.distribution_type,
+                    "goodness_of_fit": fit.goodness_of_fit,
+                }
+                for name, fit in self.fitted_distributions.items()
+            },
+        }
+
+    # -- Main generate entry point ----------------------------------------
+
     def generate(
         self,
-        schema: Dict[str, Any],
-        profile: Dict[str, Any],
+        schema: dict[str, Any],
+        profile: dict[str, Any],
         num_records: int,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002
     ) -> GenerationResult:
         """Generate synthetic data matching the provided schema and profile.
 
@@ -340,178 +449,62 @@ class StatisticalGenerator(BaseGenerator):
         )
 
         try:
-            # Validate configuration before proceeding.
             self.validate_config(self.config or {})
+            column_specs = self._validate_schema(schema)
+            profile_columns = profile.get("columns", {})
 
-            # Parse and validate schema into typed ColumnSpec objects.
-            column_specs: List[ColumnSpec] = self._validate_schema(schema)
-            column_names: List[str] = [cs.name for cs in column_specs]
+            numeric_cols, categorical_cols, datetime_cols, column_type_map = (
+                self._classify_columns(column_specs)
+            )
+            copula_numeric_cols = numeric_cols + datetime_cols
 
-            # Extract per-column statistics from the profile.
-            profile_columns: Dict[str, Any] = profile.get("columns", {})
-
-            # ----------------------------------------------------------
-            # Classify columns by type for differentiated processing.
-            # ----------------------------------------------------------
-            numeric_cols: List[str] = []
-            categorical_cols: List[str] = []
-            datetime_cols: List[str] = []
-            column_type_map: Dict[str, str] = {}
-
-            for cs in column_specs:
-                dtype_lower = cs.data_type.lower() if cs.data_type else "string"
-                column_type_map[cs.name] = dtype_lower
-                if dtype_lower in _NUMERIC_TYPES:
-                    numeric_cols.append(cs.name)
-                elif dtype_lower in _DATETIME_TYPES:
-                    datetime_cols.append(cs.name)
-                else:
-                    categorical_cols.append(cs.name)
-
-            # Datetime columns are treated as numeric (epoch seconds) for the
-            # copula, then converted back during post-processing.
-            copula_numeric_cols: List[str] = numeric_cols + datetime_cols
-
-            # ----------------------------------------------------------
-            # Stage 1: Fit marginal distributions for each column.
-            # ----------------------------------------------------------
+            # Stage 1: Fit marginal distributions.
             self.fitted_distributions = self._fit_all_distributions(
-                column_specs=column_specs,
-                numeric_cols=numeric_cols,
-                datetime_cols=datetime_cols,
-                categorical_cols=categorical_cols,
-                profile_columns=profile_columns,
-            )
-            self.logger.info(
-                "distributions_fitted",
-                num_columns=len(self.fitted_distributions),
-                column_types={
-                    name: fit.distribution_type
-                    for name, fit in self.fitted_distributions.items()
-                },
+                column_specs, numeric_cols, datetime_cols,
+                categorical_cols, profile_columns,
             )
 
-            # ----------------------------------------------------------
-            # Stage 2: Compute / extract correlation matrix.
-            # ----------------------------------------------------------
-            if (
-                copula_numeric_cols
+            # Stage 2: Resolve correlation matrix.
+            self.correlation_matrix = (
+                self._resolve_correlation_matrix(profile, copula_numeric_cols)
+                if copula_numeric_cols
                 and self._stat_config.correlation.method != "none"
-            ):
-                self.correlation_matrix = self._resolve_correlation_matrix(
-                    profile, copula_numeric_cols
-                )
-                self.logger.debug(
-                    "correlation_matrix_resolved",
-                    shape=list(self.correlation_matrix.shape),
-                    method=self._stat_config.correlation.method,
-                )
-            else:
-                self.correlation_matrix = None
+                else None
+            )
 
-            # ----------------------------------------------------------
-            # Stage 3 + 4: Generate copula samples → transform marginals.
-            # ----------------------------------------------------------
-            generated_data: Dict[str, np.ndarray] = {}
-
-            if copula_numeric_cols and self.correlation_matrix is not None:
-                copula_samples = self._generate_copula_samples(
-                    n_samples=num_records,
-                    n_columns=len(copula_numeric_cols),
-                    correlation_matrix=self.correlation_matrix,
-                )
-                for idx, col_name in enumerate(copula_numeric_cols):
-                    dist_fit = self.fitted_distributions.get(col_name)
-                    if dist_fit is not None:
-                        generated_data[col_name] = self._transform_to_marginal(
-                            copula_samples[:, idx], dist_fit
-                        )
-                    else:
-                        generated_data[col_name] = copula_samples[:, idx]
-                self._log_progress(
-                    records_generated=num_records // 2,
-                    total_records=num_records,
-                )
-            elif copula_numeric_cols:
-                # No correlation — generate columns independently.
-                for col_name in copula_numeric_cols:
-                    dist_fit = self.fitted_distributions.get(col_name)
-                    if dist_fit is not None:
-                        independent_u = np.array(
-                            np.random.random(num_records), dtype=np.float64
-                        )
-                        generated_data[col_name] = self._transform_to_marginal(
-                            independent_u, dist_fit
-                        )
-
-            # Generate categorical columns independently of the copula.
-            for col_name in categorical_cols:
-                dist_fit = self.fitted_distributions.get(col_name)
-                if dist_fit is not None:
-                    uniform_vals = np.array(
-                        np.random.random(num_records), dtype=np.float64
-                    )
-                    generated_data[col_name] = self._transform_to_marginal(
-                        uniform_vals, dist_fit
-                    )
-
+            # Stages 3-4: Generate via copula / independently.
+            generated_data = self._generate_numeric_data(
+                copula_numeric_cols, num_records,
+            )
+            generated_data.update(
+                self._generate_categorical_data(categorical_cols, num_records),
+            )
             self._log_progress(
                 records_generated=int(num_records * 0.8),
                 total_records=num_records,
             )
 
-            # ----------------------------------------------------------
-            # Stage 5: Post-processing.
-            # ----------------------------------------------------------
-            result_df: pd.DataFrame = self._postprocess(
-                generated_data=generated_data,
-                column_specs=column_specs,
-                column_type_map=column_type_map,
-                profile_columns=profile_columns,
-                num_records=num_records,
+            # Stage 5: Post-processing + null injection.
+            result_df = self._postprocess(
+                generated_data, column_specs,
+                column_type_map, profile_columns, num_records,
             )
-
-            # Apply null values based on schema null probabilities.
             result_df = self._apply_nulls(result_df, schema)
-
             self._log_progress(
-                records_generated=num_records,
-                total_records=num_records,
+                records_generated=num_records, total_records=num_records,
             )
-
-            # Log DataFrame dtypes for debugging diagnostics.
-            self.logger.debug(
-                "result_dataframe_dtypes",
-                dtypes={
-                    col: str(dtype)
-                    for col, dtype in result_df.dtypes.items()
-                },
-            )
-
-            # Build metadata with distribution-fit information.
-            metadata: Dict[str, Any] = {
-                "method": "statistical",
-                "correlation_method": self._stat_config.correlation.method,
-                "num_numeric_columns": len(numeric_cols),
-                "num_categorical_columns": len(categorical_cols),
-                "num_datetime_columns": len(datetime_cols),
-                "seed": self._stat_config.seed,
-                "distribution_fits": {
-                    name: {
-                        "type": fit.distribution_type,
-                        "goodness_of_fit": fit.goodness_of_fit,
-                    }
-                    for name, fit in self.fitted_distributions.items()
-                },
-            }
 
             self.logger.info(
                 "statistical_generation_completed",
                 num_records=len(result_df),
                 num_columns=len(result_df.columns),
             )
-
-            return self._build_result(data=result_df, metadata=metadata)
+            return self._build_result(
+                data=result_df,
+                metadata=self._build_gen_metadata(
+                    numeric_cols, categorical_cols, datetime_cols,
+                ),
+            )
 
         except GenerationError:
             raise
@@ -527,7 +520,7 @@ class StatisticalGenerator(BaseGenerator):
                 details={"error": str(exc), "error_type": type(exc).__name__},
             ) from exc
 
-    def validate_config(self, config: Dict[str, Any]) -> bool:
+    def validate_config(self, config: dict[str, Any]) -> bool:
         """Validate the statistical generator configuration.
 
         Parses the config through the :class:`StatisticalConfig` Pydantic model
@@ -584,7 +577,7 @@ class StatisticalGenerator(BaseGenerator):
         self.logger.debug("config_validated", auto_fit=parsed.auto_fit)
         return True
 
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Return a machine-readable description of this generator's capabilities.
 
         Used by the method selector to determine whether this generator is
@@ -629,12 +622,12 @@ class StatisticalGenerator(BaseGenerator):
 
     def _fit_all_distributions(
         self,
-        column_specs: List[ColumnSpec],
-        numeric_cols: List[str],
-        datetime_cols: List[str],
-        categorical_cols: List[str],
-        profile_columns: Dict[str, Any],
-    ) -> Dict[str, DistributionFit]:
+        column_specs: list[ColumnSpec],  # noqa: ARG002
+        numeric_cols: list[str],
+        datetime_cols: list[str],
+        categorical_cols: list[str],
+        profile_columns: dict[str, Any],
+    ) -> dict[str, DistributionFit]:
         """Fit distributions for every column in the schema.
 
         Delegates to :meth:`_fit_distribution` for numeric / datetime columns
@@ -644,7 +637,7 @@ class StatisticalGenerator(BaseGenerator):
         Returns:
             Mapping of column name → :class:`DistributionFit`.
         """
-        fitted: Dict[str, DistributionFit] = {}
+        fitted: dict[str, DistributionFit] = {}
 
         for col_name in numeric_cols + datetime_cols:
             col_stats = profile_columns.get(col_name, {})
@@ -673,7 +666,7 @@ class StatisticalGenerator(BaseGenerator):
             ):
                 fitted[col_name] = self._stat_config.distributions[col_name]
             else:
-                frequencies: Dict[str, float] = col_stats.get(
+                frequencies: dict[str, float] = col_stats.get(
                     "frequencies", col_stats.get("value_counts", {})
                 )
                 if frequencies:
@@ -690,9 +683,70 @@ class StatisticalGenerator(BaseGenerator):
 
         return fitted
 
+    # -- _fit_distribution helpers (extracted for PLR0915) -----------------
+
+    @staticmethod
+    def _refine_via_mle(
+        candidate_name: str,
+        profile_sample: np.ndarray,
+        params: dict[str, float],
+    ) -> dict[str, float]:
+        """Attempt MLE refinement of *params*; returns originals on failure."""
+        if len(profile_sample) <= 10:
+            return params
+        try:
+            if candidate_name == "lognormal":
+                positive = profile_sample[profile_sample > 0]
+                if len(positive) <= 10:
+                    return params
+                fit_result = lognorm.fit(positive, floc=0)
+                return {
+                    "s": float(fit_result[0]),
+                    "loc": float(fit_result[1]),
+                    "scale": float(fit_result[2]),
+                }
+            if candidate_name == "exponential":
+                fit_result = expon.fit(profile_sample)
+                return {"loc": float(fit_result[0]), "scale": float(fit_result[1])}
+            if candidate_name == "uniform":
+                fit_result = uniform.fit(profile_sample)
+                return {"loc": float(fit_result[0]), "scale": float(fit_result[1])}
+        except Exception:  # noqa: S110
+            pass  # Keep method-of-moments params.
+        return params
+
+    def _empirical_fallback(
+        self,
+        column_name: str,
+        percentile_values: list[tuple[float, float]],
+        mean_val: float,
+        std_val: float,
+        best_pvalue: float,
+    ) -> DistributionFit:
+        """Build an empirical :class:`DistributionFit` when parametric fits fail."""
+        self.logger.info(
+            "falling_back_to_empirical",
+            column=column_name,
+            best_pvalue=round(best_pvalue, 6),
+            significance_level=self._stat_config.significance_level,
+        )
+        pct_dict: dict[str, float] = {
+            f"p{int(p[0] * 100)}": p[1] for p in percentile_values
+        }
+        pct_dict["mean"] = mean_val
+        pct_dict["std"] = std_val
+        return DistributionFit(
+            distribution_type="empirical",
+            parameters=pct_dict,
+            goodness_of_fit=max(best_pvalue, 0.0),
+            column_name=column_name,
+        )
+
+    # -- Main fit entry point ---------------------------------------------
+
     def _fit_distribution(
         self,
-        column_stats: Dict[str, Any],
+        column_stats: dict[str, Any],
         column_name: str,
     ) -> DistributionFit:
         """Fit the best parametric distribution to a column's statistical profile.
@@ -718,79 +772,36 @@ class StatisticalGenerator(BaseGenerator):
         min_val = float(column_stats.get("min", mean_val - 3.0 * std_val))
         max_val = float(column_stats.get("max", mean_val + 3.0 * std_val))
         count = int(column_stats.get("count", 1000))
-
-        # Guard against degenerate statistics.
         std_val = max(std_val, 1e-10)
 
-        # Build a reference empirical CDF from profile percentiles.
         percentile_values = self._extract_percentiles(
-            column_stats, mean_val, std_val, min_val, max_val
+            column_stats, mean_val, std_val, min_val, max_val,
         )
 
-        best_fit: Optional[DistributionFit] = None
+        best_fit: DistributionFit | None = None
         best_pvalue: float = -1.0
 
         for candidate_name in self._stat_config.fit_candidates:
-            scipy_dist = _SCIPY_DIST_MAP.get(candidate_name)
-            if scipy_dist is None:
+            if _SCIPY_DIST_MAP.get(candidate_name) is None:
                 continue
-
             try:
-                # Build a profile-based reference sample via interpolated
-                # inverse CDF of the profile's percentiles.
                 sample_size = min(count, 5000)
-                pct_quantiles = [p[0] for p in percentile_values]
-                pct_vals = [p[1] for p in percentile_values]
+                pct_q = [p[0] for p in percentile_values]
+                pct_v = [p[1] for p in percentile_values]
                 profile_sample = np.interp(
-                    np.random.random(sample_size), pct_quantiles, pct_vals
+                    np.random.random(sample_size), pct_q, pct_v,
                 )
 
-                # Start with method-of-moments estimates as baseline.
                 params = self._estimate_params(
-                    candidate_name, mean_val, std_val, min_val, max_val
+                    candidate_name, mean_val, std_val, min_val, max_val,
+                )
+                params = self._refine_via_mle(
+                    candidate_name, profile_sample, params,
                 )
 
-                # Refine via scipy .fit() for continuous distributions where
-                # the profile sample is suitable (uses MLE internally).
-                if candidate_name == "lognormal" and len(profile_sample) > 10:
-                    positive_sample = profile_sample[profile_sample > 0]
-                    if len(positive_sample) > 10:
-                        try:
-                            fit_result = lognorm.fit(positive_sample, floc=0)
-                            params = {
-                                "s": float(fit_result[0]),
-                                "loc": float(fit_result[1]),
-                                "scale": float(fit_result[2]),
-                            }
-                        except Exception:
-                            pass  # Keep method-of-moments params.
-                elif candidate_name == "exponential" and len(profile_sample) > 10:
-                    try:
-                        fit_result = expon.fit(profile_sample)
-                        params = {
-                            "loc": float(fit_result[0]),
-                            "scale": float(fit_result[1]),
-                        }
-                    except Exception:
-                        pass
-                elif candidate_name == "uniform" and len(profile_sample) > 10:
-                    try:
-                        fit_result = uniform.fit(profile_sample)
-                        params = {
-                            "loc": float(fit_result[0]),
-                            "scale": float(fit_result[1]),
-                        }
-                    except Exception:
-                        pass
-
-                # Run a one-sample KS test of the profile sample against
-                # the candidate distribution's CDF.
-                ks_stat: float
-                p_value: float
                 ks_stat, p_value = self._ks_test_for_candidate(
-                    profile_sample, candidate_name, params
+                    profile_sample, candidate_name, params,
                 )
-
                 self.logger.debug(
                     "distribution_fit_candidate",
                     column=column_name,
@@ -801,14 +812,12 @@ class StatisticalGenerator(BaseGenerator):
 
                 if p_value > best_pvalue:
                     best_pvalue = p_value
-                    param_dict = self._params_to_dict(candidate_name, params)
                     best_fit = DistributionFit(
                         distribution_type=candidate_name,  # type: ignore[arg-type]
-                        parameters=param_dict,
+                        parameters=self._params_to_dict(candidate_name, params),
                         goodness_of_fit=round(p_value, 6),
                         column_name=column_name,
                     )
-
             except Exception as exc:
                 self.logger.debug(
                     "distribution_fit_candidate_failed",
@@ -818,24 +827,9 @@ class StatisticalGenerator(BaseGenerator):
                 )
                 continue
 
-        # Fall back to empirical if no parametric fit is adequate.
         if best_fit is None or best_pvalue < self._stat_config.significance_level:
-            self.logger.info(
-                "falling_back_to_empirical",
-                column=column_name,
-                best_pvalue=round(best_pvalue, 6),
-                significance_level=self._stat_config.significance_level,
-            )
-            pct_dict: Dict[str, float] = {
-                f"p{int(p[0] * 100)}": p[1] for p in percentile_values
-            }
-            pct_dict["mean"] = mean_val
-            pct_dict["std"] = std_val
-            best_fit = DistributionFit(
-                distribution_type="empirical",
-                parameters=pct_dict,
-                goodness_of_fit=max(best_pvalue, 0.0),
-                column_name=column_name,
+            best_fit = self._empirical_fallback(
+                column_name, percentile_values, mean_val, std_val, best_pvalue,
             )
 
         self.logger.info(
@@ -848,7 +842,7 @@ class StatisticalGenerator(BaseGenerator):
 
     def _fit_categorical(
         self,
-        frequencies: Dict[str, float],
+        frequencies: dict[str, float],
         column_name: str,
     ) -> DistributionFit:
         """Fit a categorical distribution from observed value frequencies.
@@ -880,9 +874,9 @@ class StatisticalGenerator(BaseGenerator):
         num_categories = len(frequencies)
         smoothing = self._stat_config.categorical_smoothing
 
-        # Laplace smoothing: P(x) = (count(x) + α) / (N + α·K)
+        # Laplace smoothing: P(x) = (count(x) + a) / (N + a*K)  [a = smoothing]
         smoothed_total = total + smoothing * num_categories
-        prob_params: Dict[str, float] = {}
+        prob_params: dict[str, float] = {}
         for category, cnt in frequencies.items():
             prob_params[str(category)] = (float(cnt) + smoothing) / smoothed_total
 
@@ -915,7 +909,7 @@ class StatisticalGenerator(BaseGenerator):
                 column=column_name,
                 multinomial_pmf=round(_multinomial_pmf, 8),
             )
-        except Exception:
+        except Exception:  # noqa: S110
             pass  # Non-critical diagnostic — safe to skip.
 
         self.logger.info(
@@ -1097,8 +1091,8 @@ class StatisticalGenerator(BaseGenerator):
 
     def _resolve_correlation_matrix(
         self,
-        profile: Dict[str, Any],
-        copula_numeric_cols: List[str],
+        profile: dict[str, Any],
+        copula_numeric_cols: list[str],
     ) -> np.ndarray:
         """Resolve the correlation matrix to use for copula generation.
 
@@ -1126,8 +1120,8 @@ class StatisticalGenerator(BaseGenerator):
 
     def _compute_correlation_matrix(
         self,
-        profile: Dict[str, Any],
-        columns: List[str],
+        profile: dict[str, Any],
+        columns: list[str],
     ) -> np.ndarray:
         """Build the correlation matrix from the statistical profile.
 
@@ -1163,38 +1157,14 @@ class StatisticalGenerator(BaseGenerator):
                     error=str(exc),
                 )
 
-        # 2) Try pairwise "col_a,col_b" → value entries.
-        column_index: Dict[str, int] = {name: idx for idx, name in enumerate(columns)}
-        correlations: Dict[str, Any] = profile.get("correlations", {})
-
-        for pair_key, corr_val in correlations.items():
-            parts = pair_key.split(",") if isinstance(pair_key, str) else []
-            if len(parts) == 2:
-                col_a, col_b = parts[0].strip(), parts[1].strip()
-                if col_a in column_index and col_b in column_index:
-                    i, j = column_index[col_a], column_index[col_b]
-                    try:
-                        corr = float(np.clip(float(corr_val), -1.0, 1.0))
-                        matrix[i, j] = corr
-                        matrix[j, i] = corr
-                    except (ValueError, TypeError):
-                        continue
-
-        # 3) Try per-column nested correlation dicts.
-        profile_columns: Dict[str, Any] = profile.get("columns", {})
-        for col_name, col_stats in profile_columns.items():
-            if col_name not in column_index:
-                continue
-            col_corrs: Dict[str, Any] = col_stats.get("correlations", {})
-            for other_col, corr_val in col_corrs.items():
-                if other_col in column_index:
-                    i, j = column_index[col_name], column_index[other_col]
-                    try:
-                        corr = float(np.clip(float(corr_val), -1.0, 1.0))
-                        matrix[i, j] = corr
-                        matrix[j, i] = corr
-                    except (ValueError, TypeError):
-                        continue
+        # 2) Fill from pairwise and per-column nested correlation data.
+        column_index = {name: idx for idx, name in enumerate(columns)}
+        self._fill_pairwise_correlations(
+            profile.get("correlations", {}), column_index, matrix,
+        )
+        self._fill_nested_correlations(
+            profile.get("columns", {}), column_index, matrix,
+        )
 
         np.fill_diagonal(matrix, 1.0)
         matrix = self._ensure_positive_semidefinite(matrix)
@@ -1208,6 +1178,48 @@ class StatisticalGenerator(BaseGenerator):
         )
 
         return matrix
+
+    @staticmethod
+    def _fill_pairwise_correlations(
+        correlations: dict[str, Any],
+        column_index: dict[str, int],
+        matrix: np.ndarray,
+    ) -> None:
+        """Populate *matrix* from ``"col_a,col_b"`` → value entries."""
+        for pair_key, corr_val in correlations.items():
+            parts = pair_key.split(",") if isinstance(pair_key, str) else []
+            if len(parts) != 2:
+                continue
+            col_a, col_b = parts[0].strip(), parts[1].strip()
+            if col_a in column_index and col_b in column_index:
+                i, j = column_index[col_a], column_index[col_b]
+                try:
+                    corr = float(np.clip(float(corr_val), -1.0, 1.0))
+                    matrix[i, j] = corr
+                    matrix[j, i] = corr
+                except (ValueError, TypeError):
+                    continue
+
+    @staticmethod
+    def _fill_nested_correlations(
+        profile_columns: dict[str, Any],
+        column_index: dict[str, int],
+        matrix: np.ndarray,
+    ) -> None:
+        """Populate *matrix* from per-column nested correlation dictionaries."""
+        for col_name, col_stats in profile_columns.items():
+            if col_name not in column_index:
+                continue
+            col_corrs: dict[str, Any] = col_stats.get("correlations", {})
+            for other_col, corr_val in col_corrs.items():
+                if other_col in column_index:
+                    i, j = column_index[col_name], column_index[other_col]
+                    try:
+                        corr = float(np.clip(float(corr_val), -1.0, 1.0))
+                        matrix[i, j] = corr
+                        matrix[j, i] = corr
+                    except (ValueError, TypeError):
+                        continue
 
     def _ensure_positive_semidefinite(self, matrix: np.ndarray) -> np.ndarray:
         """Project a symmetric matrix to the nearest positive semi-definite matrix.
@@ -1259,7 +1271,7 @@ class StatisticalGenerator(BaseGenerator):
         std: float,
         min_val: float,
         max_val: float,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Estimate distribution parameters via method of moments.
 
         Args:
@@ -1300,9 +1312,9 @@ class StatisticalGenerator(BaseGenerator):
 
     @staticmethod
     def _params_to_dict(
-        dist_name: str,
-        params: Dict[str, float],
-    ) -> Dict[str, float]:
+        dist_name: str,  # noqa: ARG004
+        params: dict[str, float],
+    ) -> dict[str, float]:
         """Normalise a parameter dictionary for consistent storage.
 
         Args:
@@ -1318,8 +1330,8 @@ class StatisticalGenerator(BaseGenerator):
         self,
         sample: np.ndarray,
         dist_name: str,
-        params: Dict[str, float],
-    ) -> Tuple[float, float]:
+        params: dict[str, float],
+    ) -> tuple[float, float]:
         """Run a one-sample Kolmogorov-Smirnov test for a candidate distribution.
 
         Uses :func:`scipy.stats.kstest` to compare the empirical CDF of
@@ -1373,12 +1385,12 @@ class StatisticalGenerator(BaseGenerator):
 
     def _extract_percentiles(
         self,
-        column_stats: Dict[str, Any],
+        column_stats: dict[str, Any],
         mean: float,
         std: float,
         min_val: float,
         max_val: float,
-    ) -> List[Tuple[float, float]]:
+    ) -> list[tuple[float, float]]:
         """Extract or synthesise (quantile, value) pairs from profile stats.
 
         Args:
@@ -1391,8 +1403,8 @@ class StatisticalGenerator(BaseGenerator):
         Returns:
             Sorted list of ``(quantile_fraction, value)`` tuples.
         """
-        percentiles_raw: Dict[str, Any] = column_stats.get("percentiles", {})
-        points: List[Tuple[float, float]] = []
+        percentiles_raw: dict[str, Any] = column_stats.get("percentiles", {})
+        points: list[tuple[float, float]] = []
 
         for pct_key, pct_val in percentiles_raw.items():
             try:
@@ -1425,7 +1437,7 @@ class StatisticalGenerator(BaseGenerator):
     @staticmethod
     def _transform_categorical(
         uniform_values: np.ndarray,
-        params: Dict[str, float],
+        params: dict[str, float],
     ) -> np.ndarray:
         """Map uniform variates to categorical values via cumulative probabilities.
 
@@ -1436,7 +1448,7 @@ class StatisticalGenerator(BaseGenerator):
         Returns:
             Object-dtype array of category string values.
         """
-        categories: List[str] = list(params.keys())
+        categories: list[str] = list(params.keys())
         probabilities = np.array([params[c] for c in categories], dtype=np.float64)
 
         # Normalise probabilities.
@@ -1458,7 +1470,7 @@ class StatisticalGenerator(BaseGenerator):
     @staticmethod
     def _transform_empirical(
         uniform_values: np.ndarray,
-        params: Dict[str, float],
+        params: dict[str, float],
     ) -> np.ndarray:
         """Transform uniform variates via an interpolated empirical inverse CDF.
 
@@ -1473,7 +1485,7 @@ class StatisticalGenerator(BaseGenerator):
         Returns:
             Array of values from the empirical distribution.
         """
-        pct_points: List[Tuple[float, float]] = []
+        pct_points: list[tuple[float, float]] = []
         for key, val in params.items():
             if key.startswith("p") and key[1:].isdigit():
                 pct = float(key[1:]) / 100.0
@@ -1501,10 +1513,10 @@ class StatisticalGenerator(BaseGenerator):
 
     def _postprocess(
         self,
-        generated_data: Dict[str, np.ndarray],
-        column_specs: List[ColumnSpec],
-        column_type_map: Dict[str, str],
-        profile_columns: Dict[str, Any],
+        generated_data: dict[str, np.ndarray],
+        column_specs: list[ColumnSpec],
+        column_type_map: dict[str, str],
+        profile_columns: dict[str, Any],
         num_records: int,
     ) -> pd.DataFrame:
         """Post-process generated arrays into a clean :class:`pandas.DataFrame`.
@@ -1527,83 +1539,76 @@ class StatisticalGenerator(BaseGenerator):
         Returns:
             A fully-processed :class:`pandas.DataFrame`.
         """
-        processed: Dict[str, Union[pd.Series, np.ndarray]] = {}
+        processed: dict[str, pd.Series | np.ndarray] = {}
 
         for cs in column_specs:
             col_name = cs.name
             values = generated_data.get(col_name)
-
             if values is None:
-                # Column wasn't generated — fill with sensible defaults.
-                if column_type_map.get(col_name, "") in _NUMERIC_TYPES:
-                    values = np.zeros(num_records, dtype=np.float64)
-                elif column_type_map.get(col_name, "") == "boolean":
-                    values = np.array(
-                        np.random.choice([True, False], size=num_records)
-                    )
-                else:
-                    values = np.full(num_records, "", dtype=object)
+                values = self._default_fill(
+                    column_type_map.get(col_name, ""), num_records,
+                )
 
             col_stats = profile_columns.get(col_name, {})
             data_type = column_type_map.get(col_name, cs.data_type.lower())
+            processed[col_name] = self._postprocess_column(
+                values, data_type, col_stats, cs,
+            )
 
-            # Integer columns: round then clip.
-            if data_type in ("integer", "int", "bigint"):
-                series = pd.Series(values, dtype=np.float64)
-                series = series.round(0)
-                series = self._apply_range_clip(series, cs, col_stats)
-                processed[col_name] = series.astype(np.int64)
-
-            # Float / decimal columns: clip and optionally round precision.
-            elif data_type in ("float", "decimal", "number"):
-                series = pd.Series(values, dtype=np.float64)
-                series = self._apply_range_clip(series, cs, col_stats)
-                constraints = cs.constraints or {}
-                precision = constraints.get("precision")
-                if precision is not None:
-                    series = series.round(int(precision))
-                processed[col_name] = series
-
-            # Datetime columns: convert epoch seconds → datetime.
-            elif data_type in _DATETIME_TYPES:
-                series = pd.Series(values, dtype=np.float64)
-                min_epoch = float(col_stats.get("min_epoch", 0.0))
-                max_epoch = float(
-                    col_stats.get("max_epoch", 4102444800.0)
-                )  # ~2100-01-01
-                series = series.clip(lower=min_epoch, upper=max_epoch)
-                processed[col_name] = pd.to_datetime(
-                    series, unit="s", utc=True
-                )
-
-            # Boolean columns.
-            elif data_type == "boolean":
-                if hasattr(values, "dtype") and values.dtype == object:
-                    series = pd.Series(values).map(
-                        lambda x: str(x).lower() in ("true", "1", "yes")
-                    )
-                else:
-                    series = pd.Series(values, dtype=bool)
-                processed[col_name] = series
-
-            # String / text / other categorical columns.
-            else:
-                series = pd.Series(values, dtype=object)
-                series = series.apply(str)
-                processed[col_name] = series
-
-        # Build DataFrame and enforce column order from schema.
         df = pd.DataFrame(processed)
         expected_cols = [cs.name for cs in column_specs if cs.name in df.columns]
-        df = df[expected_cols].copy()
+        return df[expected_cols].copy()
 
-        return df
+    @staticmethod
+    def _default_fill(dtype_key: str, num_records: int) -> np.ndarray:
+        """Generate default fill values for a missing generated column."""
+        if dtype_key in _NUMERIC_TYPES:
+            return np.zeros(num_records, dtype=np.float64)
+        if dtype_key == "boolean":
+            return np.array(np.random.choice([True, False], size=num_records))
+        return np.full(num_records, "", dtype=object)
+
+    def _postprocess_column(
+        self,
+        values: Any,
+        data_type: str,
+        col_stats: dict[str, Any],
+        cs: ColumnSpec,
+    ) -> pd.Series | np.ndarray:
+        """Apply type-specific post-processing for a single generated column."""
+        if data_type in ("integer", "int", "bigint"):
+            series = pd.Series(values, dtype=np.float64).round(0)
+            return self._apply_range_clip(series, cs, col_stats).astype(np.int64)
+
+        if data_type in ("float", "decimal", "number"):
+            series = self._apply_range_clip(
+                pd.Series(values, dtype=np.float64), cs, col_stats,
+            )
+            precision = (cs.constraints or {}).get("precision")
+            return series.round(int(precision)) if precision is not None else series
+
+        if data_type in _DATETIME_TYPES:
+            series = pd.Series(values, dtype=np.float64)
+            min_epoch = float(col_stats.get("min_epoch", 0.0))
+            max_epoch = float(col_stats.get("max_epoch", 4102444800.0))
+            return pd.to_datetime(
+                series.clip(lower=min_epoch, upper=max_epoch), unit="s", utc=True,
+            )
+
+        if data_type == "boolean":
+            if hasattr(values, "dtype") and values.dtype == object:
+                return pd.Series(values).map(
+                    lambda x: str(x).lower() in ("true", "1", "yes"),
+                )
+            return pd.Series(values, dtype=bool)
+
+        return pd.Series(values, dtype=object).apply(str)
 
     def _apply_range_clip(
         self,
         series: pd.Series,
         col_spec: ColumnSpec,
-        col_stats: Dict[str, Any],
+        col_stats: dict[str, Any],
     ) -> pd.Series:
         """Clip a numeric series to the range defined by constraints or profile.
 

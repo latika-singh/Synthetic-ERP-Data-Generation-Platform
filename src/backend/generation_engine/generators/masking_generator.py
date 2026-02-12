@@ -58,14 +58,15 @@ Usage::
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import hmac
 import re
 import secrets
 import string
-from datetime import datetime, timedelta
-from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -76,11 +77,11 @@ from pydantic import BaseModel, Field
 from generation_engine.generators.base import (
     BaseGenerator,
     ColumnSpec,
-    GenerationConfig,
     GenerationError,
     GenerationResult,
 )
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Pre-compiled regular expressions for format detection
@@ -100,7 +101,7 @@ _ZIP_PATTERN: re.Pattern[str] = re.compile(r"^\d{5}(-\d{4})?$")
 # ---------------------------------------------------------------------------
 
 
-class MaskingStrategy(str, Enum):
+class MaskingStrategy(StrEnum):
     """Enumeration of supported masking strategies.
 
     Each value corresponds to a specific privacy-preserving transformation
@@ -145,7 +146,7 @@ class FPEConfig(BaseModel):
         ...,
         description="Hex-encoded AES key (32 or 64 hex chars).",
     )
-    tweak: Optional[str] = Field(
+    tweak: str | None = Field(
         default=None,
         description="Optional hex-encoded tweak for domain separation.",
     )
@@ -181,13 +182,11 @@ class SubstitutionConfig(BaseModel):
             integrity preservation.
     """
 
-    substitution_map: Optional[Dict[str, str]] = Field(
+    substitution_map: dict[str, str] | None = Field(
         default=None,
         description="Direct value→replacement mapping.",
     )
-    faker_type: Optional[
-        Literal["name", "email", "address", "phone", "ssn", "company"]
-    ] = Field(
+    faker_type: Literal["name", "email", "address", "phone", "ssn", "company"] | None = Field(
         default=None,
         description="Synthetic data type to generate.",
     )
@@ -231,7 +230,7 @@ class TokenizationConfig(BaseModel):
         default="sha256",
         description="Hash algorithm for token generation.",
     )
-    salt: Optional[str] = Field(
+    salt: str | None = Field(
         default=None,
         description="Salt for hash computation.",
     )
@@ -265,7 +264,7 @@ class GeneralizationConfig(BaseModel):
         ...,
         description="Generalization technique.",
     )
-    bucket_size: Optional[int] = Field(
+    bucket_size: int | None = Field(
         default=None,
         ge=1,
         description="Bucket width for range_bucketing.",
@@ -297,11 +296,11 @@ class PerturbationConfig(BaseModel):
         le=10.0,
         description="Noise magnitude as fraction of std dev.",
     )
-    bounds: Optional[Tuple[float, float]] = Field(
+    bounds: tuple[float, float] | None = Field(
         default=None,
         description="(min, max) clipping boundaries.",
     )
-    round_to: Optional[int] = Field(
+    round_to: int | None = Field(
         default=None,
         ge=0,
         le=10,
@@ -359,15 +358,7 @@ class FieldMaskingRule(BaseModel):
 
     field_name: str = Field(..., description="Column to mask.")
     strategy: MaskingStrategy = Field(..., description="Masking strategy.")
-    config: Union[
-        FPEConfig,
-        SubstitutionConfig,
-        TokenizationConfig,
-        GeneralizationConfig,
-        PerturbationConfig,
-        DateShiftConfig,
-        Dict[str, Any],
-    ] = Field(
+    config: FPEConfig | SubstitutionConfig | TokenizationConfig | GeneralizationConfig | PerturbationConfig | DateShiftConfig | dict[str, Any] = Field(
         ...,
         description="Strategy-specific configuration.",
     )
@@ -391,11 +382,11 @@ class MaskingConfig(BaseModel):
         seed: Random seed for reproducible masking runs.
     """
 
-    field_rules: List[FieldMaskingRule] = Field(
+    field_rules: list[FieldMaskingRule] = Field(
         default_factory=list,
         description="Per-field masking rules.",
     )
-    global_key: Optional[str] = Field(
+    global_key: str | None = Field(
         default=None,
         description="Default AES key (hex) for FPE.",
     )
@@ -403,11 +394,11 @@ class MaskingConfig(BaseModel):
         default=True,
         description="Deterministic masking for referential integrity.",
     )
-    consistency_salt: Optional[str] = Field(
+    consistency_salt: str | None = Field(
         default=None,
         description="Salt for consistent hashing.",
     )
-    seed: Optional[int] = Field(
+    seed: int | None = Field(
         default=None,
         description="Random seed for reproducibility.",
     )
@@ -417,7 +408,7 @@ class MaskingConfig(BaseModel):
 # Synthetic Data Pools for Value Substitution
 # ---------------------------------------------------------------------------
 
-_FIRST_NAMES: List[str] = [
+_FIRST_NAMES: list[str] = [
     "James", "Mary", "Robert", "Patricia", "John", "Jennifer", "Michael",
     "Linda", "David", "Elizabeth", "William", "Barbara", "Richard", "Susan",
     "Joseph", "Jessica", "Thomas", "Sarah", "Christopher", "Karen", "Charles",
@@ -428,7 +419,7 @@ _FIRST_NAMES: List[str] = [
     "Deborah",
 ]
 
-_LAST_NAMES: List[str] = [
+_LAST_NAMES: list[str] = [
     "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
     "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
     "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
@@ -439,38 +430,38 @@ _LAST_NAMES: List[str] = [
     "Carter", "Roberts",
 ]
 
-_EMAIL_DOMAINS: List[str] = [
+_EMAIL_DOMAINS: list[str] = [
     "example.com", "test.org", "synthetic.net", "mockdata.io",
     "generated.dev", "placeholder.com", "sample.org", "demo.net",
     "testing.io", "noreal.com",
 ]
 
-_STREET_NAMES: List[str] = [
+_STREET_NAMES: list[str] = [
     "Main St", "Oak Ave", "Maple Dr", "Cedar Ln", "Pine Rd", "Elm Blvd",
     "Washington St", "Park Ave", "Highland Dr", "Sunset Blvd", "River Rd",
     "Lake View Dr", "Forest Ave", "Garden St", "Spring Ln", "Valley Rd",
     "Birch Way", "Cherry Ct", "Willow Pl", "Hickory Trl",
 ]
 
-_CITIES: List[str] = [
+_CITIES: list[str] = [
     "Springfield", "Riverside", "Fairview", "Madison", "Georgetown",
     "Franklin", "Clinton", "Arlington", "Salem", "Greenville", "Manchester",
     "Bristol", "Chester", "Oxford", "Burlington", "Dayton", "Milton",
     "Newport", "Hudson", "Clayton",
 ]
 
-_STATES: List[str] = [
+_STATES: list[str] = [
     "CA", "TX", "FL", "NY", "PA", "IL", "OH", "GA", "NC", "MI",
     "NJ", "VA", "WA", "AZ", "MA", "TN", "IN", "MO", "MD", "WI",
 ]
 
-_COMPANY_PREFIXES: List[str] = [
+_COMPANY_PREFIXES: list[str] = [
     "Acme", "Global", "Premier", "Apex", "Summit", "Pinnacle", "Vanguard",
     "Sterling", "Atlas", "Zenith", "Quantum", "Nexus", "Horizon", "Catalyst",
     "Dynamic", "Synergy", "Vertex", "Pacific", "Continental", "National",
 ]
 
-_COMPANY_SUFFIXES: List[str] = [
+_COMPANY_SUFFIXES: list[str] = [
     "Corp", "Inc", "LLC", "Solutions", "Systems", "Technologies",
     "Industries", "Enterprises", "Group", "Holdings", "Partners", "Services",
     "International", "Associates", "Consulting",
@@ -505,7 +496,7 @@ class MaskingGenerator(BaseGenerator):
             :class:`MaskingConfig` via Pydantic validation.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config=config)
         self.logger = get_logger(__name__)
 
@@ -520,11 +511,11 @@ class MaskingGenerator(BaseGenerator):
         # Consistency cache: maps (field_name, original_value) -> masked_value.
         # Ensures the same input always produces the same output for referential
         # integrity across related tables and repeated generation runs.
-        self._consistency_cache: Dict[str, Dict[str, str]] = {}
+        self._consistency_cache: dict[str, dict[str, str]] = {}
 
         # Entity date shift cache: maps entity_id -> shift_days for consistent
         # date shifting across all date fields of the same entity.
-        self._entity_shift_cache: Dict[str, int] = {}
+        self._entity_shift_cache: dict[str, int] = {}
 
         # Generate or load global encryption key for FPE operations
         if self._masking_config.global_key:
@@ -555,8 +546,8 @@ class MaskingGenerator(BaseGenerator):
 
     def generate(
         self,
-        schema: Dict[str, Any],
-        profile: Dict[str, Any],
+        schema: dict[str, Any],
+        profile: dict[str, Any],
         num_records: int,
         **kwargs: Any,
     ) -> GenerationResult:
@@ -588,15 +579,12 @@ class MaskingGenerator(BaseGenerator):
             self.validate_config(config_dict)
 
             # Validate schema structure via base class helper
-            column_specs: List[ColumnSpec] = self._validate_schema(schema)
+            self._validate_schema(schema)
 
             # Obtain or generate base data
             if "source_data" in kwargs and kwargs["source_data"] is not None:
                 source_df = kwargs["source_data"]
-                if isinstance(source_df, pd.DataFrame):
-                    df = source_df.copy()
-                else:
-                    df = pd.DataFrame(source_df)
+                df = source_df.copy() if isinstance(source_df, pd.DataFrame) else pd.DataFrame(source_df)
                 # Trim or expand to num_records
                 if len(df) > num_records:
                     df = df.head(num_records).reset_index(drop=True)
@@ -625,7 +613,7 @@ class MaskingGenerator(BaseGenerator):
             )
 
             # Apply masking strategies in priority order
-            masking_metadata: Dict[str, Any] = {
+            masking_metadata: dict[str, Any] = {
                 "method": "masking",
                 "strategies_applied": [],
                 "fields_masked": [],
@@ -694,7 +682,7 @@ class MaskingGenerator(BaseGenerator):
             masking_metadata["consistency_cache_size"] = sum(
                 len(v) for v in self._consistency_cache.values()
             )
-            masking_metadata["masked_at"] = datetime.now().isoformat()
+            masking_metadata["masked_at"] = datetime.now(tz=UTC).isoformat()
 
             # Build and return result via base class helper
             elapsed = self._stop_timer()
@@ -726,7 +714,62 @@ class MaskingGenerator(BaseGenerator):
                 },
             ) from exc
 
-    def validate_config(self, config: Dict[str, Any]) -> bool:
+    # ------------------------------------------------------------------
+    # Config validation helpers (extracted to reduce branch complexity)
+    # ------------------------------------------------------------------
+
+    def _validate_schema_field_names(
+        self,
+        masking_cfg: MaskingConfig,
+        schema: dict[str, Any] | None,
+    ) -> None:
+        """Warn when field rules reference columns not present in *schema*."""
+        if schema is None:
+            return
+        schema_columns = schema.get("columns", [])
+        col_names: set[str] = set()
+        for col in schema_columns:
+            if isinstance(col, dict):
+                col_names.add(col.get("name", ""))
+            elif isinstance(col, ColumnSpec):
+                col_names.add(col.name)
+        for rule in masking_cfg.field_rules:
+            if col_names and rule.field_name not in col_names:
+                self.logger.warning(
+                    "field_rule_references_unknown_column",
+                    field_name=rule.field_name,
+                    known_columns=sorted(col_names),
+                )
+
+    @staticmethod
+    def _validate_fpe_keys(masking_cfg: MaskingConfig) -> None:
+        """Verify that FPE key hex values are well-formed and correctly sized."""
+        for rule in masking_cfg.field_rules:
+            if rule.strategy != MaskingStrategy.FORMAT_PRESERVING_ENCRYPTION:
+                continue
+            fpe_cfg = rule.config
+            if isinstance(fpe_cfg, FPEConfig):
+                key_hex = fpe_cfg.key
+            elif isinstance(fpe_cfg, dict):
+                key_hex = fpe_cfg.get("key", "")
+            else:
+                continue
+            try:
+                key_bytes = bytes.fromhex(key_hex)
+                if len(key_bytes) not in (16, 24, 32):
+                    raise ValueError(
+                        f"FPE key for field '{rule.field_name}' must be "
+                        f"16, 24, or 32 bytes (got {len(key_bytes)})."
+                    )
+            except ValueError as ve:
+                if "non-hexadecimal" in str(ve).lower():
+                    raise ValueError(
+                        f"FPE key for field '{rule.field_name}' must be "
+                        f"a valid hex string."
+                    ) from ve
+                raise
+
+    def validate_config(self, config: dict[str, Any]) -> bool:
         """Validate masking configuration before execution.
 
         Performs structural validation via Pydantic and semantic checks
@@ -753,50 +796,8 @@ class MaskingGenerator(BaseGenerator):
                 f"Invalid masking configuration: {exc}"
             ) from exc
 
-        # Schema-aware field name validation
-        schema = config.get("_schema")
-        if schema is not None:
-            schema_columns = schema.get("columns", [])
-            column_names: set[str] = set()
-            for col in schema_columns:
-                if isinstance(col, dict):
-                    column_names.add(col.get("name", ""))
-                elif isinstance(col, ColumnSpec):
-                    column_names.add(col.name)
-
-            for rule in masking_cfg.field_rules:
-                if column_names and rule.field_name not in column_names:
-                    self.logger.warning(
-                        "field_rule_references_unknown_column",
-                        field_name=rule.field_name,
-                        known_columns=sorted(column_names),
-                    )
-
-        # Validate FPE key format for FPE rules
-        for rule in masking_cfg.field_rules:
-            if rule.strategy == MaskingStrategy.FORMAT_PRESERVING_ENCRYPTION:
-                fpe_cfg = rule.config
-                if isinstance(fpe_cfg, FPEConfig):
-                    key_hex = fpe_cfg.key
-                elif isinstance(fpe_cfg, dict):
-                    key_hex = fpe_cfg.get("key", "")
-                else:
-                    continue
-
-                try:
-                    key_bytes = bytes.fromhex(key_hex)
-                    if len(key_bytes) not in (16, 24, 32):
-                        raise ValueError(
-                            f"FPE key for field '{rule.field_name}' must be "
-                            f"16, 24, or 32 bytes (got {len(key_bytes)})."
-                        )
-                except ValueError as ve:
-                    if "non-hexadecimal" in str(ve).lower():
-                        raise ValueError(
-                            f"FPE key for field '{rule.field_name}' must be "
-                            f"a valid hex string."
-                        ) from ve
-                    raise
+        self._validate_schema_field_names(masking_cfg, config.get("_schema"))
+        self._validate_fpe_keys(masking_cfg)
 
         self.logger.debug(
             "masking_config_validated",
@@ -804,7 +805,7 @@ class MaskingGenerator(BaseGenerator):
         )
         return True
 
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Return the masking generator's capability descriptor.
 
         Used by the method selector to determine when masking is the
@@ -882,44 +883,27 @@ class MaskingGenerator(BaseGenerator):
         Raises:
             GenerationError: If the strategy is unsupported.
         """
-        strategy_map = {
-            MaskingStrategy.FORMAT_PRESERVING_ENCRYPTION: self._apply_fpe,
-            MaskingStrategy.VALUE_SUBSTITUTION: self._apply_substitution,
-            MaskingStrategy.TOKENIZATION: self._apply_tokenization,
-            MaskingStrategy.GENERALIZATION: self._apply_generalization,
-            MaskingStrategy.PERTURBATION: self._apply_perturbation,
-            MaskingStrategy.REDACTION: self._apply_redaction,
-            MaskingStrategy.SHUFFLING: self._apply_shuffling,
-            MaskingStrategy.DATE_SHIFTING: self._apply_date_shifting,
-        }
+        # Strategies that need no extra config
+        if rule.strategy == MaskingStrategy.REDACTION:
+            return self._apply_redaction(values)
+        if rule.strategy == MaskingStrategy.SHUFFLING:
+            return self._apply_shuffling(values)
 
-        handler = strategy_map.get(rule.strategy)
-        if handler is None:
-            raise GenerationError(
-                message=f"Unsupported masking strategy: {rule.strategy}",
-                method="masking",
-                details={"strategy": rule.strategy.value},
-            )
+        # Resolve typed config from raw dict if necessary
+        raw_config = rule.config
+        resolved = (
+            self._parse_strategy_config(rule.strategy, raw_config)
+            if isinstance(raw_config, dict)
+            else raw_config
+        )
 
-        # For strategies that do not require additional config
-        if rule.strategy in (
-            MaskingStrategy.REDACTION,
-            MaskingStrategy.SHUFFLING,
-        ):
-            return handler(values)
-
-        # Parse config to the appropriate Pydantic model if raw dict
-        config = rule.config
-        if isinstance(config, dict):
-            config = self._parse_strategy_config(rule.strategy, config)
-
-        return handler(values, config)
+        return self._dispatch_with_config(rule.strategy, values, resolved)
 
     def _parse_strategy_config(
         self,
         strategy: MaskingStrategy,
-        config_dict: Dict[str, Any],
-    ) -> BaseModel:
+        config_dict: dict[str, Any],
+    ) -> FPEConfig | SubstitutionConfig | TokenizationConfig | GeneralizationConfig | PerturbationConfig | DateShiftConfig | dict[str, Any]:
         """Parse a raw config dict into the strategy-specific Pydantic model.
 
         Args:
@@ -927,9 +911,10 @@ class MaskingGenerator(BaseGenerator):
             config_dict: Raw configuration dictionary.
 
         Returns:
-            Validated Pydantic configuration model.
+            Validated Pydantic configuration model, or the raw dict if no
+            model class is registered for the strategy.
         """
-        config_map = {
+        config_map: dict[MaskingStrategy, type[BaseModel]] = {
             MaskingStrategy.FORMAT_PRESERVING_ENCRYPTION: FPEConfig,
             MaskingStrategy.VALUE_SUBSTITUTION: SubstitutionConfig,
             MaskingStrategy.TOKENIZATION: TokenizationConfig,
@@ -939,8 +924,45 @@ class MaskingGenerator(BaseGenerator):
         }
         model_cls = config_map.get(strategy)
         if model_cls is None:
-            return config_dict  # type: ignore[return-value]
-        return model_cls(**config_dict)
+            return config_dict
+        return model_cls(**config_dict)  # type: ignore[return-value]
+
+    def _dispatch_with_config(
+        self,
+        strategy: MaskingStrategy,
+        values: pd.Series,
+        config: Any,
+    ) -> pd.Series:
+        """Route a config-bearing strategy to the correct handler.
+
+        Args:
+            strategy: The masking strategy to apply.
+            values: Column data to mask.
+            config: Parsed or raw configuration for the strategy.
+
+        Returns:
+            Masked :class:`pd.Series`.
+
+        Raises:
+            GenerationError: If the strategy is unsupported.
+        """
+        if strategy == MaskingStrategy.FORMAT_PRESERVING_ENCRYPTION:
+            return self._apply_fpe(values, config)
+        if strategy == MaskingStrategy.VALUE_SUBSTITUTION:
+            return self._apply_substitution(values, config)
+        if strategy == MaskingStrategy.TOKENIZATION:
+            return self._apply_tokenization(values, config)
+        if strategy == MaskingStrategy.GENERALIZATION:
+            return self._apply_generalization(values, config)
+        if strategy == MaskingStrategy.PERTURBATION:
+            return self._apply_perturbation(values, config)
+        if strategy == MaskingStrategy.DATE_SHIFTING:
+            return self._apply_date_shifting(values, config)
+        raise GenerationError(
+            message=f"Unsupported masking strategy: {strategy}",
+            method="masking",
+            details={"strategy": strategy.value},
+        )
 
     # ------------------------------------------------------------------
     # Format-Preserving Encryption (FPE)
@@ -949,7 +971,7 @@ class MaskingGenerator(BaseGenerator):
     def _apply_fpe(
         self,
         values: pd.Series,
-        config: Union[FPEConfig, Dict[str, Any]],
+        config: FPEConfig | dict[str, Any],
     ) -> pd.Series:
         """Apply format-preserving encryption to a column.
 
@@ -1010,7 +1032,7 @@ class MaskingGenerator(BaseGenerator):
             )
             return prefix + encrypted_middle + suffix
 
-        return values.apply(encrypt_value)
+        return cast("pd.Series", values.apply(encrypt_value))
 
     def _feistel_encrypt(
         self,
@@ -1039,9 +1061,9 @@ class MaskingGenerator(BaseGenerator):
         char_to_idx = {c: i for i, c in enumerate(charset)}
 
         # Separate encryptable characters from fixed separators
-        enc_positions: List[int] = []
-        enc_indices: List[int] = []
-        case_map: List[bool] = []
+        enc_positions: list[int] = []
+        enc_indices: list[int] = []
+        case_map: list[bool] = []
 
         for i, ch in enumerate(value):
             lower_ch = ch.lower() if ch.isalpha() else ch
@@ -1106,7 +1128,7 @@ class MaskingGenerator(BaseGenerator):
             encrypted_block = encryptor.update(block) + encryptor.finalize()
 
             # Generate pseudorandom offsets for left half
-            new_left: List[int] = []
+            new_left: list[int] = []
             for i, l_val in enumerate(left):
                 byte_idx = i % len(encrypted_block)
                 offset = encrypted_block[byte_idx]
@@ -1121,7 +1143,7 @@ class MaskingGenerator(BaseGenerator):
         # Map back to characters preserving positions and original case
         result_chars = list(value)
         for pos_idx, (orig_pos, is_upper) in enumerate(
-            zip(enc_positions, case_map)
+            zip(enc_positions, case_map, strict=True)
         ):
             ch = charset[result_indices[pos_idx]]
             if is_upper and ch.isalpha():
@@ -1171,7 +1193,7 @@ class MaskingGenerator(BaseGenerator):
     def _apply_substitution(
         self,
         values: pd.Series,
-        config: Union[SubstitutionConfig, Dict[str, Any]],
+        config: SubstitutionConfig | dict[str, Any],
     ) -> pd.Series:
         """Apply value substitution masking to a column.
 
@@ -1235,13 +1257,13 @@ class MaskingGenerator(BaseGenerator):
 
             return replacement
 
-        return values.apply(substitute_value)
+        return cast("pd.Series", values.apply(substitute_value))
 
     def _generate_synthetic_value(
         self,
         original: str,
-        faker_type: Optional[str],
-        locale: str,
+        faker_type: str | None,
+        locale: str,  # noqa: ARG002  — part of the public interface; reserved for future locale support
     ) -> str:
         """Generate a synthetic replacement value based on type.
 
@@ -1299,11 +1321,11 @@ class MaskingGenerator(BaseGenerator):
             return f"{area:03d}-{group:02d}-{serial:04d}"
 
         elif faker_type == "company":
-            prefix = _COMPANY_PREFIXES[seed_int % len(_COMPANY_PREFIXES)]
-            suffix = _COMPANY_SUFFIXES[
+            co_prefix = _COMPANY_PREFIXES[seed_int % len(_COMPANY_PREFIXES)]
+            co_suffix = _COMPANY_SUFFIXES[
                 (seed_int >> 8) % len(_COMPANY_SUFFIXES)
             ]
-            return f"{prefix} {suffix}"
+            return f"{co_prefix} {co_suffix}"
 
         else:
             # Generic substitution preserving character classes
@@ -1328,7 +1350,7 @@ class MaskingGenerator(BaseGenerator):
         # Full alphanumeric pool for fallback character selection
         all_chars = string.ascii_letters + string.digits
 
-        result: List[str] = []
+        result: list[str] = []
         for i, ch in enumerate(cleaned):
             # Mix position into seed for per-character variation
             char_seed = (seed_int + i * 31) & 0xFFFFFFFF
@@ -1353,7 +1375,7 @@ class MaskingGenerator(BaseGenerator):
     def _apply_tokenization(
         self,
         values: pd.Series,
-        config: Union[TokenizationConfig, Dict[str, Any]],
+        config: TokenizationConfig | dict[str, Any],
     ) -> pd.Series:
         """Apply tokenization masking to a column.
 
@@ -1399,7 +1421,7 @@ class MaskingGenerator(BaseGenerator):
 
             return f"{config.token_prefix}_{raw_token}"
 
-        return values.apply(tokenize_value)
+        return cast("pd.Series", values.apply(tokenize_value))
 
     @staticmethod
     def _format_preserving_token(original: str, token: str) -> str:
@@ -1416,7 +1438,7 @@ class MaskingGenerator(BaseGenerator):
         Returns:
             Format-adjusted token string.
         """
-        result: List[str] = []
+        result: list[str] = []
         token_idx = 0
         for ch in original:
             if token_idx >= len(token):
@@ -1445,7 +1467,7 @@ class MaskingGenerator(BaseGenerator):
     def _apply_generalization(
         self,
         values: pd.Series,
-        config: Union[GeneralizationConfig, Dict[str, Any]],
+        config: GeneralizationConfig | dict[str, Any],
     ) -> pd.Series:
         """Apply generalization masking to a column.
 
@@ -1514,7 +1536,7 @@ class MaskingGenerator(BaseGenerator):
             except (ValueError, TypeError):
                 return val
 
-        return values.apply(bucket_value)
+        return cast("pd.Series", values.apply(bucket_value))
 
     @staticmethod
     def _generalize_category_rollup(
@@ -1543,7 +1565,7 @@ class MaskingGenerator(BaseGenerator):
             keep_chars = max(1, len(str_val) - config.level)
             return str_val[:keep_chars] + "*" * (len(str_val) - keep_chars)
 
-        return values.apply(rollup_value)
+        return cast("pd.Series", values.apply(rollup_value))
 
     @staticmethod
     def _generalize_geographic(
@@ -1580,7 +1602,7 @@ class MaskingGenerator(BaseGenerator):
 
             # Reconstruct with original separators
             digit_idx = 0
-            reconstructed: List[str] = []
+            reconstructed: list[str] = []
             for ch in str_val:
                 if ch.isdigit() and digit_idx < len(masked):
                     reconstructed.append(masked[digit_idx])
@@ -1589,7 +1611,7 @@ class MaskingGenerator(BaseGenerator):
                     reconstructed.append(ch)
             return "".join(reconstructed)
 
-        return values.apply(generalize_geo)
+        return cast("pd.Series", values.apply(generalize_geo))
 
     # ------------------------------------------------------------------
     # Perturbation
@@ -1598,7 +1620,7 @@ class MaskingGenerator(BaseGenerator):
     def _apply_perturbation(
         self,
         values: pd.Series,
-        config: Union[PerturbationConfig, Dict[str, Any]],
+        config: PerturbationConfig | dict[str, Any],
     ) -> pd.Series:
         """Apply calibrated noise perturbation to numeric values.
 
@@ -1623,7 +1645,7 @@ class MaskingGenerator(BaseGenerator):
             return values
 
         # Calculate column standard deviation for noise scaling
-        valid_array: np.ndarray = numeric_values[non_null_mask].values
+        valid_array: np.ndarray = np.asarray(numeric_values[non_null_mask].values)
         col_std = float(np.std(valid_array))
         if col_std == 0:
             col_std = 1.0  # Avoid zero-scale noise
@@ -1688,7 +1710,7 @@ class MaskingGenerator(BaseGenerator):
                 return val
             return "***REDACTED***"
 
-        return values.apply(redact_value)
+        return cast("pd.Series", values.apply(redact_value))
 
     # ------------------------------------------------------------------
     # Shuffling
@@ -1717,10 +1739,80 @@ class MaskingGenerator(BaseGenerator):
     # Date Shifting
     # ------------------------------------------------------------------
 
+    # -- Date-shifting helper methods (extracted to satisfy PLR0912) -----
+
+    @staticmethod
+    def _parse_to_datetime(val: Any) -> datetime | None:
+        """Attempt to coerce *val* into a :class:`datetime`.
+
+        Returns ``None`` when the value cannot be converted.
+        """
+        if isinstance(val, datetime):
+            return val
+        try:
+            parsed = pd.to_datetime(val)
+            if pd.isna(parsed):
+                return None
+            return cast("datetime", parsed.to_pydatetime())
+        except (ValueError, TypeError):
+            return None
+
+    def _resolve_shift_days(
+        self, val: Any, shift_range: int, consistent: bool,
+    ) -> int:
+        """Compute the random shift magnitude in days.
+
+        When *consistent* is ``True`` the same input value always gets the
+        same shift (cached in ``_entity_shift_cache``).
+        """
+        if consistent:
+            entity_key = str(val)
+            if entity_key not in self._entity_shift_cache:
+                self._entity_shift_cache[entity_key] = int(
+                    np.random.randint(-shift_range, shift_range + 1)
+                )
+            return self._entity_shift_cache[entity_key]
+        return int(np.random.randint(-shift_range, shift_range + 1))
+
+    @staticmethod
+    def _constrain_and_shift(
+        dt: datetime, shift_days: int, cfg: DateShiftConfig,
+    ) -> datetime:
+        """Apply month / day-of-week constraints and return the shifted date."""
+        if cfg.preserve_month:
+            _, days_in_month = calendar.monthrange(dt.year, dt.month)
+            max_forward = days_in_month - dt.day
+            max_backward = dt.day - 1
+            shift_days = max(-max_backward, min(max_forward, shift_days))
+
+        shifted = dt + timedelta(days=shift_days)
+
+        if cfg.preserve_day_of_week:
+            day_diff = dt.weekday() - shifted.weekday()
+            if day_diff != 0:
+                correction = day_diff if abs(day_diff) <= 3 else (
+                    day_diff + (7 if day_diff < 0 else -7)
+                )
+                shifted += timedelta(days=correction)
+        return shifted
+
+    @staticmethod
+    def _format_shifted_result(val: Any, shifted: datetime) -> Any:
+        """Return *shifted* in the same format as the original *val*."""
+        if not isinstance(val, str):
+            return shifted
+        if re.match(r"^\d{4}-\d{2}-\d{2}T", val):
+            return shifted.strftime("%Y-%m-%dT%H:%M:%S")
+        if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:", val):
+            return shifted.strftime("%Y-%m-%d %H:%M:%S")
+        return shifted.strftime("%Y-%m-%d")
+
+    # -- Main date-shifting entry point -----------------------------------
+
     def _apply_date_shifting(
         self,
         values: pd.Series,
-        config: Union[DateShiftConfig, Dict[str, Any]],
+        config: DateShiftConfig | dict[str, Any],
     ) -> pd.Series:
         """Shift date/datetime values by random offsets.
 
@@ -1743,84 +1835,109 @@ class MaskingGenerator(BaseGenerator):
         def shift_date(val: Any) -> Any:
             if val is None or (isinstance(val, float) and np.isnan(val)):
                 return val
-
-            # Parse the date value
-            try:
-                if isinstance(val, datetime):
-                    dt = val
-                elif isinstance(val, str):
-                    parsed = pd.to_datetime(val)
-                    if pd.isna(parsed):
-                        return val
-                    dt = parsed.to_pydatetime()
-                else:
-                    parsed = pd.to_datetime(val)
-                    if pd.isna(parsed):
-                        return val
-                    dt = parsed.to_pydatetime()
-            except (ValueError, TypeError):
+            dt = self._parse_to_datetime(val)
+            if dt is None:
                 return val
+            shift_days = self._resolve_shift_days(
+                val, shift_range, config.consistent_per_entity,
+            )
+            shifted = self._constrain_and_shift(dt, shift_days, config)
+            return self._format_shifted_result(val, shifted)
 
-            # Determine shift amount
-            if config.consistent_per_entity:
-                entity_key = str(val)
-                if entity_key not in self._entity_shift_cache:
-                    self._entity_shift_cache[entity_key] = int(
-                        np.random.randint(-shift_range, shift_range + 1)
-                    )
-                shift_days = self._entity_shift_cache[entity_key]
-            else:
-                shift_days = int(
-                    np.random.randint(-shift_range, shift_range + 1)
-                )
-
-            if config.preserve_month:
-                # Restrict shift to within the same month
-                import calendar
-
-                _, days_in_month = calendar.monthrange(dt.year, dt.month)
-                max_forward = days_in_month - dt.day
-                max_backward = dt.day - 1
-                shift_days = max(
-                    -max_backward, min(max_forward, shift_days)
-                )
-
-            shifted = dt + timedelta(days=shift_days)
-
-            if config.preserve_day_of_week:
-                # Adjust to nearest date with same weekday
-                original_weekday = dt.weekday()
-                shifted_weekday = shifted.weekday()
-                day_diff = original_weekday - shifted_weekday
-                if day_diff != 0:
-                    if abs(day_diff) <= 3:
-                        shifted += timedelta(days=day_diff)
-                    else:
-                        shifted += timedelta(
-                            days=day_diff + (7 if day_diff < 0 else -7)
-                        )
-
-            # Return in the same format as input
-            if isinstance(val, str):
-                # Detect original format via regex pattern matching
-                if re.match(r"^\d{4}-\d{2}-\d{2}T", val):
-                    return shifted.strftime("%Y-%m-%dT%H:%M:%S")
-                elif re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:", val):
-                    return shifted.strftime("%Y-%m-%d %H:%M:%S")
-                else:
-                    return shifted.strftime("%Y-%m-%d")
-            return shifted
-
-        return values.apply(shift_date)
+        return cast("pd.Series", values.apply(shift_date))
 
     # ------------------------------------------------------------------
     # Base Data Generation
     # ------------------------------------------------------------------
 
+    # -- Base data helpers (per data-type) --------------------------------
+
+    @staticmethod
+    def _gen_base_numeric(
+        col_profile: dict[str, Any], data_type: str, num_records: int,
+    ) -> Any:
+        """Generate base numeric column data from profile statistics."""
+        mean = float(col_profile.get("mean", 0.0))
+        std = float(col_profile.get("std", 1.0))
+        min_val = float(col_profile.get("min", mean - 3 * std))
+        max_val = float(col_profile.get("max", mean + 3 * std))
+
+        values = np.random.normal(
+            loc=mean, scale=max(std, 0.01), size=num_records,
+        )
+        values = np.clip(values, min_val, max_val)
+
+        if data_type == "integer":
+            return values.astype(int)
+        if data_type == "decimal":
+            return np.round(values, col_profile.get("scale", 2))
+        return values
+
+    @staticmethod
+    def _gen_base_string(
+        col_profile: dict[str, Any], num_records: int,
+    ) -> Any:
+        """Generate base string column data from profile categories."""
+        value_pool = (
+            col_profile.get("categories", [])
+            or col_profile.get("sample_values", [])
+        )
+        if value_pool:
+            return np.random.choice(value_pool, size=num_records)
+        avg_length = int(col_profile.get("avg_length", 10))
+        return [
+            "".join(
+                secrets.choice(string.ascii_lowercase)
+                for _ in range(max(1, avg_length))
+            )
+            for _ in range(num_records)
+        ]
+
+    @staticmethod
+    def _gen_base_date(
+        col_profile: dict[str, Any], data_type: str, num_records: int,
+    ) -> Any:
+        """Generate base date / datetime column data from profile ranges."""
+        start_str = str(col_profile.get("min", "2020-01-01"))
+        end_str = str(col_profile.get("max", "2024-12-31"))
+        try:
+            start_dt = datetime.strptime(
+                start_str[:10], "%Y-%m-%d",
+            ).replace(tzinfo=UTC)
+            end_dt = datetime.strptime(
+                end_str[:10], "%Y-%m-%d",
+            ).replace(tzinfo=UTC)
+        except (ValueError, TypeError):
+            start_dt = datetime(2020, 1, 1, tzinfo=UTC)
+            end_dt = datetime(2024, 12, 31, tzinfo=UTC)
+
+        delta_days = max(1, (end_dt - start_dt).days)
+        random_days = np.random.randint(0, delta_days, size=num_records)
+        dates = [start_dt + timedelta(days=int(d)) for d in random_days]
+
+        fmt = "%Y-%m-%d" if data_type == "date" else "%Y-%m-%d %H:%M:%S"
+        return [d.strftime(fmt) for d in dates]
+
+    @staticmethod
+    def _gen_base_boolean(
+        col_profile: dict[str, Any], num_records: int,
+    ) -> Any:
+        """Generate base boolean column data."""
+        true_ratio = float(col_profile.get("true_ratio", 0.5))
+        return np.random.choice(
+            [True, False], size=num_records, p=[true_ratio, 1 - true_ratio],
+        )
+
+    # -- Main base-data builder -------------------------------------------
+
+    _NUMERIC_TYPES = frozenset(("integer", "decimal", "float", "numeric"))
+    _STRING_TYPES = frozenset(("string", "text", "varchar"))
+    _DATE_TYPES = frozenset(("date", "datetime", "timestamp"))
+
     def _generate_base_data(
         self,
-        schema: Dict[str, Any],
-        profile: Dict[str, Any],
+        schema: dict[str, Any],
+        profile: dict[str, Any],
         num_records: int,
     ) -> pd.DataFrame:
         """Generate synthetic base data from statistical profiles.
@@ -1839,96 +1956,16 @@ class MaskingGenerator(BaseGenerator):
         """
         columns_raw = schema.get("columns", [])
         profile_columns = profile.get("columns", {})
-        data: Dict[str, Any] = {}
+        data: dict[str, Any] = {}
 
         for col_def in columns_raw:
-            if isinstance(col_def, ColumnSpec):
-                col_name = col_def.name
-                data_type = col_def.data_type
-            elif isinstance(col_def, dict):
-                col_name = col_def.get("name", "")
-                data_type = col_def.get("data_type", "string")
-            else:
+            col_name, data_type = self._extract_col_meta(col_def)
+            if col_name is None:
                 continue
-
             col_profile = profile_columns.get(col_name, {})
-
-            if data_type in ("integer", "decimal", "float", "numeric"):
-                mean = float(col_profile.get("mean", 0.0))
-                std = float(col_profile.get("std", 1.0))
-                min_val = float(col_profile.get("min", mean - 3 * std))
-                max_val = float(col_profile.get("max", mean + 3 * std))
-
-                values = np.random.normal(
-                    loc=mean, scale=max(std, 0.01), size=num_records
-                )
-                values = np.clip(values, min_val, max_val)
-
-                if data_type == "integer":
-                    values = values.astype(int)
-                elif data_type == "decimal":
-                    scale = col_profile.get("scale", 2)
-                    values = np.round(values, scale)
-
-                data[col_name] = values
-
-            elif data_type in ("string", "text", "varchar"):
-                categories = col_profile.get("categories", [])
-                sample_values = col_profile.get("sample_values", [])
-                value_pool = categories or sample_values
-
-                if value_pool:
-                    data[col_name] = np.random.choice(
-                        value_pool, size=num_records
-                    )
-                else:
-                    avg_length = int(col_profile.get("avg_length", 10))
-                    data[col_name] = [
-                        "".join(
-                            secrets.choice(string.ascii_lowercase)
-                            for _ in range(max(1, avg_length))
-                        )
-                        for _ in range(num_records)
-                    ]
-
-            elif data_type in ("date", "datetime", "timestamp"):
-                start_str = str(col_profile.get("min", "2020-01-01"))
-                end_str = str(col_profile.get("max", "2024-12-31"))
-                try:
-                    start_dt = datetime.strptime(start_str[:10], "%Y-%m-%d")
-                    end_dt = datetime.strptime(end_str[:10], "%Y-%m-%d")
-                except (ValueError, TypeError):
-                    start_dt = datetime(2020, 1, 1)
-                    end_dt = datetime(2024, 12, 31)
-
-                delta_days = max(1, (end_dt - start_dt).days)
-                random_days = np.random.randint(
-                    0, delta_days, size=num_records
-                )
-                dates = [
-                    start_dt + timedelta(days=int(d)) for d in random_days
-                ]
-
-                if data_type == "date":
-                    data[col_name] = [d.strftime("%Y-%m-%d") for d in dates]
-                else:
-                    data[col_name] = [
-                        d.strftime("%Y-%m-%d %H:%M:%S") for d in dates
-                    ]
-
-            elif data_type == "boolean":
-                true_ratio = float(col_profile.get("true_ratio", 0.5))
-                data[col_name] = np.random.choice(
-                    [True, False],
-                    size=num_records,
-                    p=[true_ratio, 1 - true_ratio],
-                )
-
-            else:
-                # Default: generate random hex strings
-                data[col_name] = [
-                    secrets.token_hex(4) for _ in range(num_records)
-                ]
+            data[col_name] = self._gen_base_column(
+                col_profile, data_type, num_records,
+            )
 
         df = pd.DataFrame(data)
         self.logger.debug(
@@ -1939,12 +1976,38 @@ class MaskingGenerator(BaseGenerator):
         )
         return df
 
+    @staticmethod
+    def _extract_col_meta(col_def: Any) -> tuple[str | None, str]:
+        """Return ``(col_name, data_type)`` from a column definition."""
+        if isinstance(col_def, ColumnSpec):
+            return col_def.name, col_def.data_type
+        if isinstance(col_def, dict):
+            return col_def.get("name", ""), col_def.get("data_type", "string")
+        return None, "string"
+
+    def _gen_base_column(
+        self,
+        col_profile: dict[str, Any],
+        data_type: str,
+        num_records: int,
+    ) -> Any:
+        """Dispatch to the appropriate per-type base-data generator."""
+        if data_type in self._NUMERIC_TYPES:
+            return self._gen_base_numeric(col_profile, data_type, num_records)
+        if data_type in self._STRING_TYPES:
+            return self._gen_base_string(col_profile, num_records)
+        if data_type in self._DATE_TYPES:
+            return self._gen_base_date(col_profile, data_type, num_records)
+        if data_type == "boolean":
+            return self._gen_base_boolean(col_profile, num_records)
+        return [secrets.token_hex(4) for _ in range(num_records)]
+
     # ------------------------------------------------------------------
     # Format Detection Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _detect_value_format(value: str) -> Optional[str]:
+    def _detect_value_format(value: str) -> str | None:
         """Detect the format of a string value using compiled regex patterns.
 
         Args:
