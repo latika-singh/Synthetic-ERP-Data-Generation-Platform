@@ -36,15 +36,16 @@ correlation IDs are available for all subsequent middleware operations.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from time import perf_counter
-from typing import Dict, Optional, Set
 
 import structlog
 from flask import Flask, Response, current_app, g, request
 
 from shared.logging.structured_logger import bind_context, clear_context, get_logger
+
 
 # ---------------------------------------------------------------------------
 # Optional dependency imports with graceful fallbacks.
@@ -76,7 +77,7 @@ end-to-end distributed tracing continuity. When a request arrives without
 this header, the middleware generates a fresh UUID4 value.
 """
 
-SENSITIVE_HEADERS: Set[str] = {"authorization", "cookie", "x-api-key"}
+SENSITIVE_HEADERS: set[str] = {"authorization", "cookie", "x-api-key"}
 """Set of HTTP header names (lowercase) that must never appear in log output.
 
 These headers may contain credentials (Bearer tokens, session cookies, API
@@ -84,7 +85,7 @@ keys) and are redacted to comply with SOC 2 Type II security requirements
 and prevent credential leakage through log aggregation pipelines.
 """
 
-LOG_EXEMPT_PATHS: Set[str] = {"/health", "/ready"}
+LOG_EXEMPT_PATHS: set[str] = {"/health", "/ready"}
 """Set of URL paths excluded from verbose request/response logging.
 
 Kubernetes liveness and readiness probes generate high-frequency traffic
@@ -132,7 +133,7 @@ def _get_or_create_request_id() -> str:
         A string containing the request correlation ID — either
         extracted from the incoming header or a freshly generated UUID4.
     """
-    existing_id: Optional[str] = request.headers.get(REQUEST_ID_HEADER)
+    existing_id: str | None = request.headers.get(REQUEST_ID_HEADER)
 
     if existing_id is not None and existing_id.strip():
         # Sanitize: strip whitespace and limit length to prevent header
@@ -144,7 +145,7 @@ def _get_or_create_request_id() -> str:
     return str(uuid.uuid4())
 
 
-def _get_otel_context() -> Dict[str, str]:
+def _get_otel_context() -> dict[str, str]:
     """Extract OpenTelemetry trace context from the current active span.
 
     Retrieves the currently active OpenTelemetry span and extracts the
@@ -159,7 +160,7 @@ def _get_otel_context() -> Dict[str, str]:
         empty strings if OpenTelemetry is not installed, not initialized,
         or no active span exists in the current execution context.
     """
-    result: Dict[str, str] = {"trace_id": "", "span_id": ""}
+    result: dict[str, str] = {"trace_id": "", "span_id": ""}
 
     if not _OTEL_AVAILABLE or trace is None:
         return result
@@ -176,7 +177,7 @@ def _get_otel_context() -> Dict[str, str]:
         result["trace_id"] = format(span_context.trace_id, "032x")
         result["span_id"] = format(span_context.span_id, "016x")
 
-    except Exception:  # noqa: S110, BLE001
+    except Exception:  # noqa: S110
         # Graceful degradation — OTel context extraction is best-effort.
         # We intentionally do not log here to avoid potential infinite
         # recursion if the logging system itself triggers this code path
@@ -242,14 +243,14 @@ def _before_request_logging() -> None:
 
     # Step 6: Log incoming request (skip for health probe endpoints).
     if request.path not in LOG_EXEMPT_PATHS:
-        log_data: Dict[str, object] = {
+        log_data: dict[str, object] = {
             "method": request.method,
             "path": request.path,
             "query_string": request.query_string.decode("utf-8", errors="replace"),
         }
 
         # Include content_length when present (e.g., POST/PUT bodies).
-        content_length: Optional[int] = request.content_length
+        content_length: int | None = request.content_length
         if content_length is not None:
             log_data["content_length"] = content_length
 
@@ -271,7 +272,7 @@ def _after_request_logging(response: Response) -> Response:
 
     Log level is escalated based on HTTP status code:
 
-    - ``INFO`` for 1xx–3xx successful and redirect responses
+    - ``INFO`` for 1xx-3xx successful and redirect responses
     - ``WARNING`` for 4xx client error responses
     - ``ERROR`` for 5xx server error responses
 
@@ -297,7 +298,7 @@ def _after_request_logging(response: Response) -> Response:
 
     # Log completed request (skip for health probe endpoints).
     if request.path not in LOG_EXEMPT_PATHS:
-        otel_ctx: Dict[str, str] = getattr(
+        otel_ctx: dict[str, str] = getattr(
             g, "otel_context", {"trace_id": "", "span_id": ""}
         )
 
@@ -306,7 +307,7 @@ def _after_request_logging(response: Response) -> Response:
         user_id: str = getattr(g, "user_id", "anonymous")
         tenant_id: str = getattr(g, "tenant_id", "unknown")
 
-        log_data: Dict[str, object] = {
+        log_data: dict[str, object] = {
             "method": request.method,
             "path": request.path,
             "status_code": response.status_code,
@@ -331,7 +332,7 @@ def _after_request_logging(response: Response) -> Response:
                         StatusCode.ERROR,
                         f"HTTP {status_code}",
                     )
-            except Exception:  # noqa: S110, BLE001
+            except Exception:  # noqa: S110
                 # Best-effort — do not let OTel failures affect response flow.
                 pass
 
@@ -356,7 +357,7 @@ def _after_request_logging(response: Response) -> Response:
     return response
 
 
-def _teardown_request_logging(exception: Optional[BaseException]) -> None:
+def _teardown_request_logging(exception: BaseException | None) -> None:
     """Flask ``teardown_request`` hook for cleanup after request completion.
 
     Executes at the very end of the request lifecycle (after the response
@@ -377,12 +378,12 @@ def _teardown_request_logging(exception: Optional[BaseException]) -> None:
     """
     if exception is not None:
         # Calculate duration if start time was recorded.
-        duration_ms: Optional[float] = None
-        start_time: Optional[float] = getattr(g, "request_start_time", None)
+        duration_ms: float | None = None
+        start_time: float | None = getattr(g, "request_start_time", None)
         if start_time is not None:
             duration_ms = round((perf_counter() - start_time) * 1000, 2)
 
-        error_data: Dict[str, object] = {
+        error_data: dict[str, object] = {
             "exception_type": type(exception).__name__,
             "exception_message": str(exception),
             "request_id": getattr(g, "request_id", "unknown"),
@@ -451,10 +452,7 @@ def register_logging_middleware(app: Flask) -> None:
     """
     # Determine the effective log level from app configuration.
     log_level_str: str = app.config.get("LOG_LEVEL", "INFO")
-    if isinstance(log_level_str, str):
-        log_level_str = log_level_str.upper()
-    else:
-        log_level_str = "INFO"
+    log_level_str = log_level_str.upper() if isinstance(log_level_str, str) else "INFO"
 
     # Convert string level to logging module integer.
     log_level: int = getattr(logging, log_level_str, logging.INFO)
@@ -467,7 +465,10 @@ def register_logging_middleware(app: Flask) -> None:
     # will override this if called after middleware registration. This
     # baseline ensures the middleware operates correctly even in isolation
     # (e.g., during unit tests or when the shared module is not initialized).
-    try:
+    with contextlib.suppress(Exception):
+        # structlog configuration may fail if already fully configured with
+        # incompatible settings. This is a non-critical initialization step;
+        # the middleware hooks function correctly with any structlog config.
         structlog.configure(
             processors=[
                 structlog.contextvars.merge_contextvars,
@@ -480,11 +481,6 @@ def register_logging_middleware(app: Flask) -> None:
             logger_factory=structlog.PrintLoggerFactory(),
             cache_logger_on_first_use=True,
         )
-    except Exception:  # noqa: S110, BLE001
-        # structlog configuration may fail if already fully configured with
-        # incompatible settings. This is a non-critical initialization step;
-        # the middleware hooks function correctly with any structlog config.
-        pass
 
     # Register Flask lifecycle hooks in execution order.
     app.before_request(_before_request_logging)
