@@ -46,18 +46,21 @@ Example::
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from flask import Flask, current_app, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
-from pymongo import MongoClient
-from pymongo.database import Database
 from prometheus_client import CollectorRegistry
-import redis
 
-from shared.database.mongodb import init_mongodb, get_mongo_db
-from shared.database.redis_client import init_redis, get_redis_client
+from shared.database.mongodb import get_mongo_db, init_mongodb
+
+
+if TYPE_CHECKING:
+    import redis
+    from pymongo import MongoClient
+    from pymongo.database import Database
+from shared.database.redis_client import get_redis_client, init_redis
 from shared.logging.structured_logger import get_logger
 
 
@@ -91,12 +94,12 @@ from the default global registry to allow selective metric export on the
 # ``init_extensions()`` and available for module-level inspection.
 # Actual request-time access should prefer ``get_db()`` / ``get_redis()``.
 # ---------------------------------------------------------------------------
-mongo_client: Optional[MongoClient] = None
+mongo_client: MongoClient | None = None
 """Singleton ``pymongo.MongoClient`` reference populated after MongoDB
 initialisation completes.  ``None`` until ``init_extensions()`` is called
 (or if the initial connection attempt failed)."""
 
-redis_client: Optional[redis.Redis] = None
+redis_client: redis.Redis | None = None
 """Singleton ``redis.Redis`` client reference populated after Redis
 initialisation completes.  ``None`` until ``init_extensions()`` is called
 (or if the initial connection attempt failed)."""
