@@ -63,14 +63,15 @@ from __future__ import annotations
 import enum
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from pymongo.collection import Collection, ReturnDocument
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
-from ..extensions import get_db
+from api_gateway.extensions import get_db
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — leverages structlog ProcessorFormatter when configured
@@ -84,7 +85,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 # ===================================================================
 
 
-class JobStatus(str, enum.Enum):
+class JobStatus(enum.StrEnum):
     """Seven-state lifecycle for generation jobs.
 
     The generation job state machine follows this progression::
@@ -92,9 +93,9 @@ class JobStatus(str, enum.Enum):
         Submitted → Generating → Validating → Certifying → Provisioning → Completed
                   ↘ Failed (reachable from any non-terminal state)
 
-    Using ``str`` as a mixin enables clean MongoDB serialization — enum values
-    are stored as plain strings in the document and can be compared directly
-    against query filter strings.
+    Inheriting from ``enum.StrEnum`` enables clean MongoDB serialization —
+    enum values are stored as plain strings in the document and can be
+    compared directly against query filter strings.
 
     Attributes:
         SUBMITTED: Job has been created and is awaiting generation.
@@ -115,7 +116,7 @@ class JobStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class GenerationMethod(str, enum.Enum):
+class GenerationMethod(enum.StrEnum):
     """Supported synthetic data generation strategies.
 
     Each method corresponds to a distinct generator implementation in the
@@ -134,7 +135,7 @@ class GenerationMethod(str, enum.Enum):
     MASKING = "masking"
 
 
-class OutputFormat(str, enum.Enum):
+class OutputFormat(enum.StrEnum):
     """Supported output formats for generated synthetic data.
 
     Attributes:
@@ -343,7 +344,7 @@ class GenerationJob:
             raise ValueError(
                 f"Invalid generation_method '{method}'. "
                 f"Must be one of: {valid}"
-            )
+            ) from None
 
     @staticmethod
     def _validate_output_format(fmt: str) -> str:
@@ -366,7 +367,7 @@ class GenerationJob:
             valid = [f.value for f in OutputFormat]
             raise ValueError(
                 f"Invalid output_format '{fmt}'. Must be one of: {valid}"
-            )
+            ) from None
 
     @staticmethod
     def _validate_status(status: str) -> str:
@@ -389,7 +390,7 @@ class GenerationJob:
             valid = [s.value for s in JobStatus]
             raise ValueError(
                 f"Invalid status '{status}'. Must be one of: {valid}"
-            )
+            ) from None
 
     @staticmethod
     def _calculate_total_records(schema_config: dict[str, Any]) -> int:
@@ -475,7 +476,7 @@ class GenerationJob:
         validated_format: str = cls._validate_output_format(output_format)
 
         job_id: str = str(uuid.uuid4())
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
 
         document: dict[str, Any] = {
             "job_id": job_id,
@@ -547,7 +548,7 @@ class GenerationJob:
         cls,
         job_id: str,
         tenant_id: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve a single generation job by ``job_id``.
 
         The query always includes ``tenant_id`` in the filter to enforce
@@ -588,7 +589,7 @@ class GenerationJob:
     def find_by_tenant(
         cls,
         tenant_id: str,
-        status: Optional[str] = None,
+        status: str | None = None,
         page: int = 1,
         page_size: int = 20,
         sort_by: str = "created_at",
@@ -653,8 +654,9 @@ class GenerationJob:
             )
 
             items: list[dict[str, Any]] = [
-                cls._serialize_document(doc)
+                serialized
                 for doc in cursor
+                if (serialized := cls._serialize_document(doc)) is not None
             ]
 
             has_next: bool = (skip + page_size) < total
@@ -688,8 +690,8 @@ class GenerationJob:
         job_id: str,
         tenant_id: str,
         new_status: str,
-        error_message: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+        error_message: str | None = None,
+    ) -> dict[str, Any] | None:
         """Transition a generation job to a new lifecycle status.
 
         Validates ``new_status`` against the :class:`JobStatus` enum, updates
@@ -718,7 +720,7 @@ class GenerationJob:
             pymongo.errors.OperationFailure: If the MongoDB update fails.
         """
         validated_status: str = cls._validate_status(new_status)
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
 
         update_fields: dict[str, Any] = {
             "status": validated_status,
@@ -790,7 +792,7 @@ class GenerationJob:
         tenant_id: str,
         progress_percentage: int,
         records_generated: int,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Update generation progress for a running job.
 
         Progress values are clamped to valid ranges to prevent erroneous
@@ -800,7 +802,7 @@ class GenerationJob:
         Args:
             job_id: The UUID4 identifier of the generation job.
             tenant_id: The tenant namespace identifier (R-007).
-            progress_percentage: Integer percentage (0–100) indicating how
+            progress_percentage: Integer percentage (0-100) indicating how
                 much of the generation is complete.  Values outside the range
                 are clamped.
             records_generated: Number of records generated so far.  Negative
@@ -825,7 +827,7 @@ class GenerationJob:
                     "$set": {
                         "progress_percentage": clamped_progress,
                         "total_records_generated": clamped_records,
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(UTC),
                     }
                 },
                 return_document=ReturnDocument.AFTER,
@@ -868,12 +870,12 @@ class GenerationJob:
         job_id: str,
         tenant_id: str,
         quality_score: float,
-        quality_report: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+        quality_report: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Update the quality score and optionally the full quality report.
 
         The weighted quality scoring model is:
-        ``Q = 0.4 × S_statistical + 0.3 × S_business_rules + 0.3 × S_referential_integrity``
+        ``Q = 0.4 x S_statistical + 0.3 x S_business_rules + 0.3 x S_referential_integrity``
         where each component score is normalised to ``[0.0, 1.0]``.
 
         Args:
@@ -899,7 +901,7 @@ class GenerationJob:
 
         update_fields: dict[str, Any] = {
             "quality_score": quality_score,
-            "updated_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(UTC),
         }
 
         if quality_report is not None:
@@ -950,7 +952,7 @@ class GenerationJob:
         job_id: str,
         tenant_id: str,
         certificate: dict[str, Any],
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Attach a compliance certificate to a generation job.
 
         The Compliance Service issues certificates after a dataset passes PII
@@ -986,7 +988,7 @@ class GenerationJob:
                 {
                     "$set": {
                         "compliance_certificate": certificate,
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(UTC),
                     }
                 },
                 return_document=ReturnDocument.AFTER,
@@ -1088,7 +1090,7 @@ class GenerationJob:
     def count_by_tenant(
         cls,
         tenant_id: str,
-        status: Optional[str] = None,
+        status: str | None = None,
     ) -> int:
         """Count generation jobs for a tenant.
 

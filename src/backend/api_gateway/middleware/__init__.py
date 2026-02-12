@@ -22,29 +22,23 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from flask import Flask
 
 # ---------------------------------------------------------------------------
 # Re-exports from auth middleware
 # ---------------------------------------------------------------------------
-from api_gateway.middleware.auth import (  # noqa: F401
+from api_gateway.middleware.auth import (
     register_auth_middleware,
     require_permissions,
     require_roles,
 )
 
 # ---------------------------------------------------------------------------
-# Re-exports from rate limiter middleware
-# ---------------------------------------------------------------------------
-from api_gateway.middleware.rate_limiter import (  # noqa: F401
-    register_rate_limiter,
-)
-
-# ---------------------------------------------------------------------------
 # Re-exports from error handler middleware
 # ---------------------------------------------------------------------------
-from api_gateway.middleware.error_handler import (  # noqa: F401
+from api_gateway.middleware.error_handler import (
     ServiceCircuitBreaker,
     register_error_handlers,
     with_retry,
@@ -53,16 +47,24 @@ from api_gateway.middleware.error_handler import (  # noqa: F401
 # ---------------------------------------------------------------------------
 # Re-exports from logging middleware
 # ---------------------------------------------------------------------------
-from api_gateway.middleware.logging_middleware import (  # noqa: F401
+from api_gateway.middleware.logging_middleware import (
     register_logging_middleware,
 )
+
+# ---------------------------------------------------------------------------
+# Re-exports from rate limiter middleware
+# ---------------------------------------------------------------------------
+from api_gateway.middleware.rate_limiter import (
+    register_rate_limiter,
+)
+
 
 # ---------------------------------------------------------------------------
 # Re-exports from tenant middleware (may not yet be available)
 # ---------------------------------------------------------------------------
 _tenant_middleware_available: bool = False
 try:
-    from api_gateway.middleware.tenant import (  # noqa: F401
+    from api_gateway.middleware.tenant import (
         get_tenant_filter,
         register_tenant_middleware,
         require_tenant,
@@ -106,17 +108,17 @@ except ImportError:
 # Public API surface
 # ---------------------------------------------------------------------------
 __all__ = [
+    "ServiceCircuitBreaker",
+    "get_tenant_filter",
     "register_all_middleware",
     "register_auth_middleware",
-    "register_rate_limiter",
     "register_error_handlers",
     "register_logging_middleware",
+    "register_rate_limiter",
     "register_tenant_middleware",
-    "require_roles",
     "require_permissions",
+    "require_roles",
     "require_tenant",
-    "get_tenant_filter",
-    "ServiceCircuitBreaker",
     "with_retry",
 ]
 
@@ -127,7 +129,7 @@ logger = logging.getLogger(__name__)
 
 # Try to use structlog if available, fall back to stdlib logging
 try:
-    import structlog  # noqa: F401
+    import structlog
 
     _log = structlog.get_logger(__name__)
 except ImportError:

@@ -38,12 +38,13 @@ from api_gateway.models.generation_job import (
 )
 from api_gateway.models.user import User, UserRole, UserStatus
 
+
 __all__: list[str] = [
-    "GenerationJob",
-    "JobStatus",
-    "GenerationMethod",
-    "OutputFormat",
     "COLLECTION_NAME",
+    "GenerationJob",
+    "GenerationMethod",
+    "JobStatus",
+    "OutputFormat",
     "User",
     "UserRole",
     "UserStatus",

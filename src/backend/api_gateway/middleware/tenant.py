@@ -58,12 +58,16 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from functools import lru_cache, wraps
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from functools import wraps
+from typing import TYPE_CHECKING, Any
 
-from flask import Flask, Response, current_app, g, jsonify, request
+from flask import Flask, Response, g, jsonify, request
 
-import structlog
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import structlog
 
 from api_gateway.extensions import get_db, get_redis
 from shared.database.mongodb import COLLECTION_TENANT_CONFIGURATIONS
@@ -89,7 +93,7 @@ TENANT_JWT_CLAIM: str = "https://synthetic-erp/tenant_id"
 Auth0 requires custom claims to use a namespaced URI to avoid collisions
 with registered JWT claims (RFC 7519)."""
 
-TENANT_EXEMPT_PATHS: Set[str] = {
+TENANT_EXEMPT_PATHS: set[str] = {
     "/health",
     "/ready",
     "/api/v1/auth/login",
@@ -157,8 +161,8 @@ class TenantContext:
     tenant_name: str
     namespace: str
     is_active: bool
-    resource_quotas: Dict[str, Any] = field(default_factory=dict)
-    settings: Dict[str, Any] = field(default_factory=dict)
+    resource_quotas: dict[str, Any] = field(default_factory=dict)
+    settings: dict[str, Any] = field(default_factory=dict)
 
 
 # ===================================================================
@@ -166,7 +170,7 @@ class TenantContext:
 # ===================================================================
 
 
-def _extract_tenant_id() -> Optional[str]:
+def _extract_tenant_id() -> str | None:
     """Extract the tenant identifier from the current request context.
 
     Resolution priority:
@@ -185,19 +189,19 @@ def _extract_tenant_id() -> Optional[str]:
         The resolved tenant identifier string, or ``None`` if no tenant
         context can be determined from the request.
     """
-    tenant_id: Optional[str] = None
+    tenant_id: str | None = None
     source: str = "none"
 
     # --- Priority 1: JWT claim from the auth middleware ---
-    jwt_payload: Optional[Dict[str, Any]] = getattr(g, "jwt_payload", None)
+    jwt_payload: dict[str, Any] | None = getattr(g, "jwt_payload", None)
     if jwt_payload is not None:
-        jwt_tenant: Optional[str] = jwt_payload.get(TENANT_JWT_CLAIM)
+        jwt_tenant: str | None = jwt_payload.get(TENANT_JWT_CLAIM)
         if jwt_tenant:
             tenant_id = str(jwt_tenant).strip()
             source = "jwt_claim"
 
     # --- Priority 2 / 3: X-Tenant-ID header ---
-    header_tenant: Optional[str] = request.headers.get(TENANT_HEADER)
+    header_tenant: str | None = request.headers.get(TENANT_HEADER)
     if header_tenant:
         header_tenant = header_tenant.strip()
 
@@ -223,7 +227,7 @@ def _extract_tenant_id() -> Optional[str]:
     return tenant_id if tenant_id else None
 
 
-def _validate_tenant(tenant_id: str) -> Optional[TenantContext]:
+def _validate_tenant(tenant_id: str) -> TenantContext | None:
     """Validate a tenant identifier against MongoDB and return its context.
 
     The function first checks the Redis cache (with key
@@ -245,7 +249,7 @@ def _validate_tenant(tenant_id: str) -> Optional[TenantContext]:
     # ------------------------------------------------------------------
     # 1. Try Redis cache first
     # ------------------------------------------------------------------
-    cached_context: Optional[TenantContext] = _get_cached_tenant(tenant_id)
+    cached_context: TenantContext | None = _get_cached_tenant(tenant_id)
     if cached_context is not None:
         logger.debug("tenant_cache_hit", tenant_id=tenant_id)
         if not cached_context.is_active:
@@ -263,7 +267,7 @@ def _validate_tenant(tenant_id: str) -> Optional[TenantContext]:
         db = get_db()
         collection = db[COLLECTION_TENANT_CONFIGURATIONS]
 
-        doc: Optional[Dict[str, Any]] = collection.find_one(
+        doc: dict[str, Any] | None = collection.find_one(
             {"tenant_id": tenant_id}
         )
 
@@ -313,7 +317,7 @@ def _validate_tenant(tenant_id: str) -> Optional[TenantContext]:
             error_type=type(exc).__name__,
         )
         # On database errors, try the in-process LRU cache as a last resort.
-        fallback: Optional[TenantContext] = _get_lru_cached_tenant(tenant_id)
+        fallback: TenantContext | None = _get_lru_cached_tenant(tenant_id)
         if fallback is not None and fallback.is_active:
             logger.warning(
                 "tenant_validation_fallback_lru",
@@ -341,7 +345,7 @@ def _is_admin_cross_tenant_request() -> bool:
         ``True`` if the current user is a Platform Admin performing an
         explicit cross-tenant operation; ``False`` otherwise.
     """
-    user_roles: List[str] = getattr(g, "user_roles", [])
+    user_roles: list[str] = getattr(g, "user_roles", [])
     if not user_roles:
         return False
 
@@ -363,7 +367,7 @@ def _is_admin_cross_tenant_request() -> bool:
 # ===================================================================
 
 
-def _tenant_context_to_dict(ctx: TenantContext) -> Dict[str, Any]:
+def _tenant_context_to_dict(ctx: TenantContext) -> dict[str, Any]:
     """Serialise a :class:`TenantContext` instance to a JSON-safe dict.
 
     Args:
@@ -382,7 +386,7 @@ def _tenant_context_to_dict(ctx: TenantContext) -> Dict[str, Any]:
     }
 
 
-def _dict_to_tenant_context(data: Dict[str, Any]) -> TenantContext:
+def _dict_to_tenant_context(data: dict[str, Any]) -> TenantContext:
     """Deserialise a dictionary back into a :class:`TenantContext`.
 
     Args:
@@ -401,7 +405,7 @@ def _dict_to_tenant_context(data: Dict[str, Any]) -> TenantContext:
     )
 
 
-def _get_cached_tenant(tenant_id: str) -> Optional[TenantContext]:
+def _get_cached_tenant(tenant_id: str) -> TenantContext | None:
     """Attempt to retrieve a cached tenant config from Redis.
 
     Falls back to the in-process LRU cache if Redis is unavailable.
@@ -416,13 +420,13 @@ def _get_cached_tenant(tenant_id: str) -> Optional[TenantContext]:
     try:
         redis_client = get_redis()
         cache_key: str = f"{_REDIS_TENANT_PREFIX}{tenant_id}"
-        raw: Optional[bytes] = redis_client.get(cache_key)
+        raw: bytes | None = redis_client.get(cache_key)  # type: ignore[assignment]
         if raw is not None:
-            data: Dict[str, Any] = json.loads(raw.decode("utf-8"))
+            data: dict[str, Any] = json.loads(raw.decode("utf-8"))
             return _dict_to_tenant_context(data)
     except Exception:
         # Redis unavailable — fall through to LRU cache.
-        pass
+        logger.debug("redis_tenant_cache_miss", tenant_id=tenant_id)
 
     # --- Fallback: in-process LRU cache ---
     return _get_lru_cached_tenant(tenant_id)
@@ -466,11 +470,11 @@ def _set_cached_tenant(tenant_id: str, ctx: TenantContext) -> None:
 # we can honour the TTL without relying on functools.lru_cache expiry (which
 # does not support TTL).  The dict is bounded to _LRU_CACHE_MAXSIZE entries.
 
-_lru_store: Dict[str, Tuple[str, float]] = {}
+_lru_store: dict[str, tuple[str, float]] = {}
 """In-process LRU-style cache: ``{tenant_id: (serialised_json, timestamp)}``."""
 
 
-def _get_lru_cached_tenant(tenant_id: str) -> Optional[TenantContext]:
+def _get_lru_cached_tenant(tenant_id: str) -> TenantContext | None:
     """Retrieve a tenant config from the in-process LRU cache.
 
     Entries older than :data:`TENANT_CACHE_TTL` seconds are considered stale
@@ -482,7 +486,7 @@ def _get_lru_cached_tenant(tenant_id: str) -> Optional[TenantContext]:
     Returns:
         A :class:`TenantContext` if found and not expired, else ``None``.
     """
-    entry: Optional[Tuple[str, float]] = _lru_store.get(tenant_id)
+    entry: tuple[str, float] | None = _lru_store.get(tenant_id)
     if entry is None:
         return None
 
@@ -493,7 +497,7 @@ def _get_lru_cached_tenant(tenant_id: str) -> Optional[TenantContext]:
         return None
 
     try:
-        data: Dict[str, Any] = json.loads(serialised)
+        data: dict[str, Any] = json.loads(serialised)
         return _dict_to_tenant_context(data)
     except (json.JSONDecodeError, KeyError):
         _lru_store.pop(tenant_id, None)
@@ -512,7 +516,7 @@ def _set_lru_cached_tenant(tenant_id: str, serialised: str) -> None:
     """
     # Simple size-bounded eviction — remove the oldest entry.
     if len(_lru_store) >= _LRU_CACHE_MAXSIZE and tenant_id not in _lru_store:
-        oldest_key: Optional[str] = None
+        oldest_key: str | None = None
         oldest_ts: float = float("inf")
         for key, (_, ts) in _lru_store.items():
             if ts < oldest_ts:
@@ -529,7 +533,7 @@ def _set_lru_cached_tenant(tenant_id: str, serialised: str) -> None:
 # ===================================================================
 
 
-def tenant_context_middleware() -> Optional[Tuple[Response, int]]:
+def tenant_context_middleware() -> tuple[Response, int] | None:
     """Flask ``before_request`` hook enforcing multi-tenant context resolution.
 
     Execution flow:
@@ -568,7 +572,7 @@ def tenant_context_middleware() -> Optional[Tuple[Response, int]]:
     # ------------------------------------------------------------------
     # 2. Extract tenant identifier
     # ------------------------------------------------------------------
-    tenant_id: Optional[str] = _extract_tenant_id()
+    tenant_id: str | None = _extract_tenant_id()
 
     if tenant_id is None:
         logger.warning(
@@ -589,7 +593,7 @@ def tenant_context_middleware() -> Optional[Tuple[Response, int]]:
     # ------------------------------------------------------------------
     # 3. Validate tenant existence and activation status
     # ------------------------------------------------------------------
-    tenant_context: Optional[TenantContext] = _validate_tenant(tenant_id)
+    tenant_context: TenantContext | None = _validate_tenant(tenant_id)
 
     if tenant_context is None:
         logger.warning(
@@ -610,14 +614,14 @@ def tenant_context_middleware() -> Optional[Tuple[Response, int]]:
     # ------------------------------------------------------------------
     # 4. Cross-tenant authorization check
     # ------------------------------------------------------------------
-    jwt_tenant: Optional[str] = None
-    jwt_payload: Optional[Dict[str, Any]] = getattr(g, "jwt_payload", None)
+    jwt_tenant: str | None = None
+    jwt_payload: dict[str, Any] | None = getattr(g, "jwt_payload", None)
     if jwt_payload is not None:
         jwt_tenant = jwt_payload.get(TENANT_JWT_CLAIM)
         if jwt_tenant:
             jwt_tenant = str(jwt_tenant).strip()
 
-    header_tenant: Optional[str] = request.headers.get(TENANT_HEADER)
+    header_tenant: str | None = request.headers.get(TENANT_HEADER)
     if header_tenant:
         header_tenant = header_tenant.strip()
 
@@ -681,7 +685,7 @@ def _propagate_tenant_header(response: Response) -> Response:
         The same :class:`Response` with the ``X-Tenant-ID`` header set
         (if a tenant context was resolved for the request).
     """
-    tenant_id: Optional[str] = getattr(g, "tenant_id", None)
+    tenant_id: str | None = getattr(g, "tenant_id", None)
     if tenant_id:
         response.headers[TENANT_HEADER] = tenant_id
     return response
@@ -731,7 +735,7 @@ def require_tenant(f: Callable) -> Callable:
             The return value of the wrapped handler, or a 400 JSON error
             response if no tenant context is available.
         """
-        tenant_id: Optional[str] = getattr(g, "tenant_id", None)
+        tenant_id: str | None = getattr(g, "tenant_id", None)
         if not tenant_id:
             logger.warning(
                 "require_tenant_failed",
@@ -756,7 +760,7 @@ def require_tenant(f: Callable) -> Callable:
 # ===================================================================
 
 
-def get_tenant_filter() -> Dict[str, str]:
+def get_tenant_filter() -> dict[str, str]:
     """Return a MongoDB query filter scoped to the current tenant.
 
     This utility is intended to be called from service-layer methods and
@@ -779,7 +783,7 @@ def get_tenant_filter() -> Dict[str, str]:
             base_filter['status'] = 'completed'
             return list(db['generation_profiles'].find(base_filter))
     """
-    tenant_id: Optional[str] = getattr(g, "tenant_id", None)
+    tenant_id: str | None = getattr(g, "tenant_id", None)
     if tenant_id:
         return {"tenant_id": tenant_id}
     return {}

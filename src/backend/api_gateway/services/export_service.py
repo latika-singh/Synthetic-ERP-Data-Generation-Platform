@@ -52,12 +52,11 @@ Usage::
 from __future__ import annotations
 
 import json
-import logging
 import re
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from enum import Enum, StrEnum
+from typing import Any
 
 import httpx
 from circuitbreaker import circuit
@@ -66,11 +65,12 @@ from flask import current_app
 from api_gateway.extensions import get_db, get_redis
 from shared.logging.structured_logger import get_logger
 
+
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-EXPORT_TYPES: List[str] = ["database", "cloud_storage", "file_download"]
+EXPORT_TYPES: list[str] = ["database", "cloud_storage", "file_download"]
 """Valid export type identifiers accepted by :meth:`ExportService.create_export`.
 
 - ``"database"``      — Direct JDBC provisioning to a target database.
@@ -78,14 +78,14 @@ EXPORT_TYPES: List[str] = ["database", "cloud_storage", "file_download"]
 - ``"file_download"`` — Generate a downloadable file on the platform.
 """
 
-DATABASE_TARGETS: List[str] = ["postgresql", "oracle", "sqlserver", "hana"]
+DATABASE_TARGETS: list[str] = ["postgresql", "oracle", "sqlserver", "hana"]
 """Supported database provisioning targets, corresponding to the JDBC
 connectors implemented by the Provisioning Service."""
 
-CLOUD_TARGETS: List[str] = ["aws_s3", "azure_blob", "gcp_storage"]
+CLOUD_TARGETS: list[str] = ["aws_s3", "azure_blob", "gcp_storage"]
 """Supported cloud storage providers for export uploads."""
 
-OUTPUT_FORMATS: List[str] = ["sql", "csv", "json", "parquet"]
+OUTPUT_FORMATS: list[str] = ["sql", "csv", "json", "parquet"]
 """Supported output file formats for generated data exports."""
 
 # MongoDB collection name for export records.
@@ -104,7 +104,7 @@ _PROGRESS_KEY_PREFIX: str = "export:progress"
 _DISPATCH_TIMEOUT_SECONDS: int = 60
 
 # Provisioning Service endpoint paths keyed by export_type.
-_ENDPOINT_MAP: Dict[str, str] = {
+_ENDPOINT_MAP: dict[str, str] = {
     "database": "/api/v1/provision/database",
     "cloud_storage": "/api/v1/provision/cloud",
     "file_download": "/api/v1/export/file",
@@ -113,13 +113,13 @@ _ENDPOINT_MAP: Dict[str, str] = {
 # Regex for basic connection-string format validation — must contain a
 # scheme separator (``://``) and at least one host character.
 _CONNECTION_STRING_PATTERN: re.Pattern[str] = re.compile(
-    r"^[a-zA-Z][a-zA-Z0-9+\-.]*://\S+"
+    r"^[a-zA-Z][a-zA-Z0-9+\-.]*://\S+",
 )
 
 # Regex for valid bucket / container names (3-63 characters, lowercase
 # alphanumeric and hyphens, no leading/trailing hyphen).
 _BUCKET_NAME_PATTERN: re.Pattern[str] = re.compile(
-    r"^[a-z0-9][a-z0-9\-]{1,61}[a-z0-9]$"
+    r"^[a-z0-9][a-z0-9\-]{1,61}[a-z0-9]$",
 )
 
 
@@ -128,7 +128,7 @@ _BUCKET_NAME_PATTERN: re.Pattern[str] = re.compile(
 # ---------------------------------------------------------------------------
 
 
-class ExportStatus(str, Enum):
+class ExportStatus(StrEnum):
     """Lifecycle states for an export job.
 
     The state machine follows a linear progression::
@@ -145,10 +145,10 @@ class ExportStatus(str, Enum):
     ``error_message`` of ``'Cancelled by user'``.
     """
 
-    PENDING: str = "pending"
-    EXPORTING: str = "exporting"
-    COMPLETED: str = "completed"
-    FAILED: str = "failed"
+    PENDING = "pending"
+    EXPORTING = "exporting"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +210,9 @@ class ExportService:
         user_id: str,
         job_id: str,
         export_type: str,
-        target_config: Dict[str, Any],
+        target_config: dict[str, Any],
         output_format: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a new export job and dispatch it to the Provisioning Service.
 
         Validates all inputs, persists an export record with status
@@ -253,13 +253,13 @@ class ExportService:
         if export_type not in EXPORT_TYPES:
             raise ValueError(
                 f"Invalid export_type '{export_type}'. "
-                f"Must be one of {EXPORT_TYPES}."
+                f"Must be one of {EXPORT_TYPES}.",
             )
 
         if output_format not in OUTPUT_FORMATS:
             raise ValueError(
                 f"Invalid output_format '{output_format}'. "
-                f"Must be one of {OUTPUT_FORMATS}."
+                f"Must be one of {OUTPUT_FORMATS}.",
             )
 
         # Type-specific configuration validation.
@@ -268,22 +268,21 @@ class ExportService:
                 raise ValueError(
                     "Invalid database target_config. Required fields: "
                     "db_type (one of postgresql/oracle/sqlserver/hana), "
-                    "connection_string, schema, table_prefix."
+                    "connection_string, schema, table_prefix.",
                 )
-        elif export_type == "cloud_storage":
-            if not self._validate_cloud_config(target_config):
-                raise ValueError(
-                    "Invalid cloud_storage target_config. Required fields: "
-                    "cloud_provider (one of aws_s3/azure_blob/gcp_storage), "
-                    "bucket or container, path_prefix, credentials_ref."
-                )
+        elif export_type == "cloud_storage" and not self._validate_cloud_config(target_config):
+            raise ValueError(
+                "Invalid cloud_storage target_config. Required fields: "
+                "cloud_provider (one of aws_s3/azure_blob/gcp_storage), "
+                "bucket or container, path_prefix, credentials_ref.",
+            )
         # 'file_download' requires no extra target_config fields.
 
         # -- Build export document ------------------------------------------
         export_id: str = str(uuid.uuid4())
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
 
-        export_doc: Dict[str, Any] = {
+        export_doc: dict[str, Any] = {
             "export_id": export_id,
             "tenant_id": tenant_id,
             "user_id": user_id,
@@ -326,7 +325,7 @@ class ExportService:
 
         # -- Dispatch to Provisioning Service --------------------------------
         try:
-            dispatch_payload: Dict[str, Any] = {
+            dispatch_payload: dict[str, Any] = {
                 "export_id": export_id,
                 "tenant_id": tenant_id,
                 "job_id": job_id,
@@ -372,7 +371,7 @@ class ExportService:
         self,
         export_id: str,
         tenant_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve a single export record by ID with tenant isolation.
 
         Uses a cache-first strategy: checks Redis before falling back to
@@ -388,7 +387,7 @@ class ExportService:
             or the export belongs to a different tenant.
         """
         # Fast path: Redis cache lookup.
-        cached: Optional[Dict[str, Any]] = self._get_cached_status(export_id)
+        cached: dict[str, Any] | None = self._get_cached_status(export_id)
         if cached is not None:
             self.logger.debug(
                 "export_cache_hit",
@@ -400,8 +399,8 @@ class ExportService:
         # Slow path: MongoDB query with tenant filter.
         try:
             db = get_db()
-            doc: Optional[Dict[str, Any]] = db[_EXPORTS_COLLECTION].find_one(
-                {"export_id": export_id, "tenant_id": tenant_id}
+            doc: dict[str, Any] | None = db[_EXPORTS_COLLECTION].find_one(
+                {"export_id": export_id, "tenant_id": tenant_id},
             )
             if doc is not None:
                 doc.pop("_id", None)
@@ -426,11 +425,11 @@ class ExportService:
     def list_exports(
         self,
         tenant_id: str,
-        job_id: Optional[str] = None,
-        status: Optional[str] = None,
+        job_id: str | None = None,
+        status: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List export records with tenant-scoped filtering and pagination.
 
         Args:
@@ -440,7 +439,7 @@ class ExportService:
             status: Optional export status string to filter by.
             page: 1-based page number (defaults to 1).
             page_size: Number of records per page (defaults to 20,
-                clamped to 1–100).
+                clamped to 1-100).
 
         Returns:
             A dictionary with pagination metadata::
@@ -458,7 +457,7 @@ class ExportService:
         page = max(1, page)
         skip: int = (page - 1) * page_size
 
-        query: Dict[str, Any] = {"tenant_id": tenant_id}
+        query: dict[str, Any] = {"tenant_id": tenant_id}
         if job_id is not None:
             query["job_id"] = job_id
         if status is not None:
@@ -475,7 +474,7 @@ class ExportService:
                 .skip(skip)
                 .limit(page_size)
             )
-            items: List[Dict[str, Any]] = []
+            items: list[dict[str, Any]] = []
             for doc in cursor:
                 doc.pop("_id", None)
                 items.append(doc)
@@ -509,7 +508,7 @@ class ExportService:
         self,
         export_id: str,
         tenant_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve real-time export progress from Redis.
 
         Progress data is written by the Provisioning Service and cached
@@ -535,10 +534,10 @@ class ExportService:
         try:
             redis_client = get_redis()
             key: str = f"{_PROGRESS_KEY_PREFIX}:{export_id}"
-            raw: Optional[bytes] = redis_client.get(key)
+            raw: Any = redis_client.get(key)
 
             if raw is not None:
-                progress_data: Dict[str, Any] = json.loads(raw)
+                progress_data: dict[str, Any] = json.loads(raw)
                 self.logger.debug(
                     "export_progress_retrieved",
                     export_id=export_id,
@@ -573,7 +572,7 @@ class ExportService:
         self,
         export_id: str,
         tenant_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Cancel an in-progress or pending export.
 
         Only exports in ``PENDING`` or ``EXPORTING`` state may be
@@ -591,8 +590,8 @@ class ExportService:
         """
         try:
             db = get_db()
-            doc: Optional[Dict[str, Any]] = db[_EXPORTS_COLLECTION].find_one(
-                {"export_id": export_id, "tenant_id": tenant_id}
+            doc: dict[str, Any] | None = db[_EXPORTS_COLLECTION].find_one(
+                {"export_id": export_id, "tenant_id": tenant_id},
             )
 
             if doc is None:
@@ -677,7 +676,7 @@ class ExportService:
         self,
         export_id: str,
         tenant_id: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Retrieve the download URL for a completed export.
 
         For ``file_download`` exports the URL points to a platform-hosted
@@ -696,8 +695,8 @@ class ExportService:
         """
         try:
             db = get_db()
-            doc: Optional[Dict[str, Any]] = db[_EXPORTS_COLLECTION].find_one(
-                {"export_id": export_id, "tenant_id": tenant_id}
+            doc: dict[str, Any] | None = db[_EXPORTS_COLLECTION].find_one(
+                {"export_id": export_id, "tenant_id": tenant_id},
             )
 
             if doc is None:
@@ -727,7 +726,7 @@ class ExportService:
                 token_key: str = f"export:download_token:{download_token}"
                 try:
                     redis_client = get_redis()
-                    token_data: Dict[str, str] = {
+                    token_data: dict[str, str] = {
                         "export_id": export_id,
                         "tenant_id": tenant_id,
                     }
@@ -764,7 +763,7 @@ class ExportService:
             if export_type == "cloud_storage":
                 # Return the cloud storage URL stored by the Provisioning
                 # Service upon export completion.
-                cloud_url: Optional[str] = doc.get("download_url")
+                cloud_url: str | None = doc.get("download_url")
                 if cloud_url:
                     self.logger.info(
                         "export_cloud_url_retrieved",
@@ -791,7 +790,7 @@ class ExportService:
     # ================================================================== #
 
     @circuit(failure_threshold=5, recovery_timeout=30)
-    def _dispatch_export(self, export_request: Dict[str, Any]) -> Dict[str, Any]:
+    def _dispatch_export(self, export_request: dict[str, Any]) -> dict[str, Any]:
         """Dispatch an export request to the Provisioning Service.
 
         The target endpoint is determined by the ``export_type`` field in
@@ -846,7 +845,7 @@ class ExportService:
         )
         response.raise_for_status()
 
-        response_data: Dict[str, Any] = response.json()
+        response_data: dict[str, Any] = response.json()
         self.logger.info(
             "export_dispatch_completed",
             export_id=export_request.get("export_id"),
@@ -859,7 +858,7 @@ class ExportService:
     # Private Helpers — Validation
     # ================================================================== #
 
-    def _validate_database_config(self, config: Dict[str, Any]) -> bool:
+    def _validate_database_config(self, config: dict[str, Any]) -> bool:
         """Validate a database export target configuration.
 
         Required fields:
@@ -889,7 +888,7 @@ class ExportService:
 
         connection_string: Any = config.get("connection_string")
         if not isinstance(connection_string, str) or not _CONNECTION_STRING_PATTERN.match(
-            connection_string
+            connection_string,
         ):
             self.logger.warning(
                 "export_validation_invalid_connection_string",
@@ -908,7 +907,7 @@ class ExportService:
 
         return True
 
-    def _validate_cloud_config(self, config: Dict[str, Any]) -> bool:
+    def _validate_cloud_config(self, config: dict[str, Any]) -> bool:
         """Validate a cloud storage export target configuration.
 
         Required fields:
@@ -970,7 +969,7 @@ class ExportService:
     def _cache_export_status(
         self,
         export_id: str,
-        status_data: Dict[str, Any],
+        status_data: dict[str, Any],
     ) -> None:
         """Cache export status data in Redis.
 
@@ -986,7 +985,7 @@ class ExportService:
             redis_client = get_redis()
             key: str = f"{_REDIS_KEY_PREFIX}:{export_id}"
             # Ensure datetime objects are serialised as ISO strings.
-            serialisable: Dict[str, Any] = self._make_json_serialisable(status_data)
+            serialisable: dict[str, Any] = self._make_json_serialisable(status_data)
             redis_client.setex(key, _CACHE_TTL_SECONDS, json.dumps(serialisable))
         except Exception as exc:
             # Cache failures are non-fatal — log and continue.
@@ -1000,7 +999,7 @@ class ExportService:
     def _get_cached_status(
         self,
         export_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve cached export status from Redis.
 
         Args:
@@ -1013,9 +1012,10 @@ class ExportService:
         try:
             redis_client = get_redis()
             key: str = f"{_REDIS_KEY_PREFIX}:{export_id}"
-            raw: Optional[bytes] = redis_client.get(key)
+            raw: Any = redis_client.get(key)
             if raw is not None:
-                return json.loads(raw)
+                result: dict[str, Any] = json.loads(raw)
+                return result
             return None
         except Exception as exc:
             # Cache read failures are non-fatal — fall back to MongoDB.
@@ -1036,8 +1036,8 @@ class ExportService:
         export_id: str,
         tenant_id: str,
         new_status: str,
-        error_message: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        error_message: str | None = None,
+    ) -> dict[str, Any] | None:
         """Update the status of an export record in MongoDB.
 
         Args:
@@ -1050,8 +1050,8 @@ class ExportService:
             The updated export document, or ``None`` if no matching
             document was found.
         """
-        now: datetime = datetime.now(timezone.utc)
-        update_fields: Dict[str, Any] = {
+        now: datetime = datetime.now(UTC)
+        update_fields: dict[str, Any] = {
             "status": new_status,
             "updated_at": now,
         }
@@ -1092,7 +1092,7 @@ class ExportService:
     # ================================================================== #
 
     @staticmethod
-    def _sanitize_config_for_storage(config: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_config_for_storage(config: dict[str, Any]) -> dict[str, Any]:
         """Remove sensitive fields from target config before MongoDB storage.
 
         Connection strings and credential references are replaced with
@@ -1107,7 +1107,7 @@ class ExportService:
             ``'***REDACTED***'``.
         """
         sensitive_keys = {"connection_string", "credentials_ref", "password", "secret"}
-        sanitized: Dict[str, Any] = {}
+        sanitized: dict[str, Any] = {}
         for key, value in config.items():
             if key.lower() in sensitive_keys:
                 sanitized[key] = "***REDACTED***"
@@ -1116,7 +1116,7 @@ class ExportService:
         return sanitized
 
     @staticmethod
-    def _make_json_serialisable(data: Dict[str, Any]) -> Dict[str, Any]:
+    def _make_json_serialisable(data: dict[str, Any]) -> dict[str, Any]:
         """Convert non-JSON-serialisable values to strings.
 
         Handles ``datetime`` instances by converting to ISO 8601 format.
@@ -1127,7 +1127,7 @@ class ExportService:
         Returns:
             A copy of *data* with all values JSON-serialisable.
         """
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         for key, value in data.items():
             if isinstance(value, datetime):
                 result[key] = value.isoformat()
