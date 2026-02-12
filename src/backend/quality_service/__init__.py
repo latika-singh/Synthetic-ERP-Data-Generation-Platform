@@ -25,6 +25,7 @@ Subpackages:
 
 from __future__ import annotations
 
+
 __version__: str = "1.0.0"
 """Semantic version of the Quality Service package."""
 
@@ -35,12 +36,12 @@ __version__: str = "1.0.0"
 # and scorer imports should happen at point of use, not here.
 
 try:
-    from quality_service.app import create_app  # noqa: F401
+    from quality_service.app import create_app
 except ImportError:
     # app.py may not yet exist during incremental build or testing.
-    create_app = None  # type: ignore[assignment,misc]
+    create_app = None
 
 __all__: list[str] = [
-    "create_app",
     "__version__",
+    "create_app",
 ]

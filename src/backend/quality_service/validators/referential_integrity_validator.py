@@ -4,7 +4,7 @@ This module implements the :class:`ReferentialIntegrityValidator` class, one of
 three pluggable validation strategies in the Quality Service's weighted scoring
 system.  It carries a **30 % weight** in the composite quality score::
 
-    Q = 0.4 × S_statistical + 0.3 × S_business_rules + **0.3 × S_referential_integrity**
+    Q = 0.4 * S_statistical + 0.3 * S_business_rules + **0.3 * S_referential_integrity**
 
 The validator ensures that generated synthetic ERP data maintains proper foreign
 key relationships across tables and ERP modules, covering:
@@ -63,6 +63,7 @@ import pandas as pd
 
 from quality_service.validators.base import BaseValidator, ValidationResult
 from shared.logging.structured_logger import get_logger
+
 
 # Module-level structured logger for FK validation events, orphan detection,
 # cascade chain analysis, cross-module reference checks, and validation
@@ -282,127 +283,18 @@ class ReferentialIntegrityValidator(BaseValidator):
         )
 
         # --- Step 2: Validate each foreign key relationship ----------------
-        fk_scores: dict[str, float] = {}
-        total_fk_refs_checked: int = 0
-        total_valid_fk_refs: int = 0
-
-        for rel in relationships:
-            child_name: str = rel.get("child_table", "")
-            parent_name: str = rel.get("parent_table", "")
-            fk_col: str = rel.get("child_column", "")
-            pk_col: str = rel.get("parent_column", "")
-
-            if not child_name or not parent_name or not fk_col or not pk_col:
-                errors.append(
-                    f"Incomplete relationship definition: {rel}"
-                )
-                continue
-            if child_name not in generated_data:
-                warnings.append(
-                    f"Child table '{child_name}' not in generated data"
-                )
-                continue
-            if parent_name not in generated_data:
-                warnings.append(
-                    f"Parent table '{parent_name}' not in generated data"
-                )
-                continue
-
-            rel_key = f"{child_name}.{fk_col}->{parent_name}.{pk_col}"
-
-            try:
-                child_df = generated_data[child_name]
-                parent_df = generated_data[parent_name]
-
-                if fk_col not in child_df.columns:
-                    errors.append(
-                        f"FK column '{fk_col}' not found in "
-                        f"table '{child_name}'"
-                    )
-                    fk_scores[rel_key] = 0.0
-                    continue
-                if pk_col not in parent_df.columns:
-                    errors.append(
-                        f"PK column '{pk_col}' not found in "
-                        f"table '{parent_name}'"
-                    )
-                    fk_scores[rel_key] = 0.0
-                    continue
-
-                fk_score = self._validate_foreign_key(
-                    child_table=child_df,
-                    parent_table=parent_df,
-                    fk_column=fk_col,
-                    pk_column=pk_col,
-                )
-                fk_scores[rel_key] = fk_score
-
-                # Track counts for records_passed calculation
-                non_null_count = int(child_df[fk_col].notna().sum())
-                valid_count = int(
-                    child_df[fk_col]
-                    .dropna()
-                    .isin(parent_df[pk_col])
-                    .sum()
-                )
-                total_fk_refs_checked += non_null_count
-                total_valid_fk_refs += valid_count
-
-                self._validated_pairs.add(
-                    (child_name, fk_col, parent_name, pk_col)
-                )
-
-                if fk_score < 1.0:
-                    self.logger.info(
-                        "fk_validation_partial",
-                        relationship=rel_key,
-                        score=round(fk_score, 4),
-                        total_refs=non_null_count,
-                        valid_refs=valid_count,
-                    )
-            except Exception as exc:
-                errors.append(f"FK validation error for {rel_key}: {exc}")
-                fk_scores[rel_key] = 0.0
-                self.logger.error(
-                    "fk_validation_error",
-                    relationship=rel_key,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                )
+        fk_result = self._run_fk_validations(
+            generated_data, relationships, errors, warnings,
+        )
 
         # --- Step 3: Validate cardinality ----------------------------------
-        cardinality_scores: dict[str, float] = {}
-        for rel in relationships:
-            child_name = rel.get("child_table", "")
-            parent_name = rel.get("parent_table", "")
-            if (
-                child_name not in generated_data
-                or parent_name not in generated_data
-            ):
-                continue
-
-            rel_key = f"{child_name}->{parent_name}:cardinality"
-            try:
-                card_score = self._validate_cardinality(
-                    child_table=generated_data[child_name],
-                    parent_table=generated_data[parent_name],
-                    relationship=rel,
-                )
-                cardinality_scores[rel_key] = card_score
-            except Exception as exc:
-                errors.append(
-                    f"Cardinality validation error for {rel_key}: {exc}"
-                )
-                cardinality_scores[rel_key] = 0.0
-                self.logger.error(
-                    "cardinality_validation_error",
-                    relationship=rel_key,
-                    error=str(exc),
-                )
+        cardinality_scores = self._run_cardinality_validations(
+            generated_data, relationships, errors,
+        )
 
         # --- Step 4: Detect orphan records ---------------------------------
         orphan_report = self._detect_orphan_records(
-            generated_data, relationships
+            generated_data, relationships,
         )
         total_orphans = int(
             np.sum([
@@ -412,58 +304,260 @@ class ReferentialIntegrityValidator(BaseValidator):
         )
         total_records = self._count_total_records(generated_data)
         orphan_score = self._compute_orphan_score(
-            total_orphans, total_records
+            total_orphans, total_records,
         )
 
         # --- Step 5: Validate cascade chains -------------------------------
         cascade_score = self._validate_cascade_chains(
-            generated_data, relationships
+            generated_data, relationships,
         )
 
         # --- Step 6: Validate cross-module references ----------------------
         cross_module_score = self._validate_cross_module_references(
-            generated_data, relationships
+            generated_data, relationships,
         )
 
         # --- Step 7: Validate uniqueness constraints -----------------------
+        uniqueness_scores = self._run_uniqueness_validations(
+            generated_data, profile, errors,
+        )
+
+        # --- Aggregate all sub-scores and build the final result -----------
+        return self._compose_integrity_result(
+            fk_result=fk_result,
+            cardinality_scores=cardinality_scores,
+            orphan_report=orphan_report,
+            orphan_score=orphan_score,
+            cascade_score=cascade_score,
+            cross_module_score=cross_module_score,
+            uniqueness_scores=uniqueness_scores,
+            generated_data=generated_data,
+            relationships=relationships,
+            total_records=total_records,
+            total_orphans=total_orphans,
+            errors=errors,
+            warnings=warnings,
+        )
+
+    # ------------------------------------------------------------------
+    # Validate-phase helpers (extracted to reduce ``validate`` complexity)
+    # ------------------------------------------------------------------
+
+    def _run_fk_validations(
+        self,
+        tables: dict[str, pd.DataFrame],
+        relationships: list[dict[str, Any]],
+        errors: list[str],
+        warnings: list[str],
+    ) -> dict[str, Any]:
+        """Execute FK validation for every relationship.
+
+        Returns a result dict with ``fk_scores``, ``total_fk_refs_checked``,
+        and ``total_valid_fk_refs`` for downstream aggregation.
+        """
+        fk_scores: dict[str, float] = {}
+        total_fk_refs_checked: int = 0
+        total_valid_fk_refs: int = 0
+
+        for rel in relationships:
+            rel_result = self._validate_single_fk_relationship(
+                rel, tables, errors, warnings,
+            )
+            if rel_result is None:
+                continue
+
+            rel_key, score, checked, valid = rel_result
+            fk_scores[rel_key] = score
+            total_fk_refs_checked += checked
+            total_valid_fk_refs += valid
+
+        return {
+            "fk_scores": fk_scores,
+            "total_fk_refs_checked": total_fk_refs_checked,
+            "total_valid_fk_refs": total_valid_fk_refs,
+        }
+
+    def _validate_single_fk_relationship(
+        self,
+        rel: dict[str, Any],
+        tables: dict[str, pd.DataFrame],
+        errors: list[str],
+        warnings: list[str],
+    ) -> tuple[str, float, int, int] | None:
+        """Validate one FK relationship and return scoring tuple.
+
+        Returns ``(rel_key, fk_score, refs_checked, valid_refs)`` on
+        success, or ``None`` when the relationship should be skipped.
+        """
+        child_name: str = rel.get("child_table", "")
+        parent_name: str = rel.get("parent_table", "")
+        fk_col: str = rel.get("child_column", "")
+        pk_col: str = rel.get("parent_column", "")
+
+        if not child_name or not parent_name or not fk_col or not pk_col:
+            errors.append(f"Incomplete relationship definition: {rel}")
+            return None
+        if child_name not in tables:
+            warnings.append(
+                f"Child table '{child_name}' not in generated data",
+            )
+            return None
+        if parent_name not in tables:
+            warnings.append(
+                f"Parent table '{parent_name}' not in generated data",
+            )
+            return None
+
+        rel_key = f"{child_name}.{fk_col}->{parent_name}.{pk_col}"
+        child_df = tables[child_name]
+        parent_df = tables[parent_name]
+
+        if fk_col not in child_df.columns:
+            errors.append(
+                f"FK column '{fk_col}' not found in table '{child_name}'",
+            )
+            return rel_key, 0.0, 0, 0
+        if pk_col not in parent_df.columns:
+            errors.append(
+                f"PK column '{pk_col}' not found in table '{parent_name}'",
+            )
+            return rel_key, 0.0, 0, 0
+
+        try:
+            fk_score = self._validate_foreign_key(
+                child_table=child_df,
+                parent_table=parent_df,
+                fk_column=fk_col,
+                pk_column=pk_col,
+            )
+            non_null_count = int(child_df[fk_col].notna().sum())
+            valid_count = int(
+                child_df[fk_col].dropna().isin(parent_df[pk_col]).sum(),
+            )
+            self._validated_pairs.add(
+                (child_name, fk_col, parent_name, pk_col),
+            )
+            if fk_score < 1.0:
+                self.logger.info(
+                    "fk_validation_partial",
+                    relationship=rel_key,
+                    score=round(fk_score, 4),
+                    total_refs=non_null_count,
+                    valid_refs=valid_count,
+                )
+            return rel_key, fk_score, non_null_count, valid_count
+        except Exception as exc:
+            errors.append(f"FK validation error for {rel_key}: {exc}")
+            self.logger.error(
+                "fk_validation_error",
+                relationship=rel_key,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return rel_key, 0.0, 0, 0
+
+    def _run_cardinality_validations(
+        self,
+        tables: dict[str, pd.DataFrame],
+        relationships: list[dict[str, Any]],
+        errors: list[str],
+    ) -> dict[str, float]:
+        """Execute cardinality validation for every relationship."""
+        cardinality_scores: dict[str, float] = {}
+
+        for rel in relationships:
+            child_name: str = rel.get("child_table", "")
+            parent_name: str = rel.get("parent_table", "")
+            if child_name not in tables or parent_name not in tables:
+                continue
+
+            rel_key = f"{child_name}->{parent_name}:cardinality"
+            try:
+                card_score = self._validate_cardinality(
+                    child_table=tables[child_name],
+                    parent_table=tables[parent_name],
+                    relationship=rel,
+                )
+                cardinality_scores[rel_key] = card_score
+            except Exception as exc:
+                errors.append(
+                    f"Cardinality validation error for {rel_key}: {exc}",
+                )
+                cardinality_scores[rel_key] = 0.0
+                self.logger.error(
+                    "cardinality_validation_error",
+                    relationship=rel_key,
+                    error=str(exc),
+                )
+
+        return cardinality_scores
+
+    def _run_uniqueness_validations(
+        self,
+        tables: dict[str, pd.DataFrame],
+        profile: dict[str, Any],
+        errors: list[str],
+    ) -> dict[str, float]:
+        """Execute uniqueness validation for each constrained table."""
         uniqueness_constraints: dict[str, list[str]] = profile.get(
-            "uniqueness_constraints", {}
+            "uniqueness_constraints", {},
         )
         uniqueness_scores: dict[str, float] = {}
-        for table_name, unique_cols in uniqueness_constraints.items():
-            if table_name in generated_data and unique_cols:
-                try:
-                    u_score = self._validate_uniqueness_constraints(
-                        generated_data[table_name], unique_cols
-                    )
-                    uniqueness_scores[table_name] = u_score
-                except Exception as exc:
-                    errors.append(
-                        f"Uniqueness validation error for "
-                        f"'{table_name}': {exc}"
-                    )
-                    uniqueness_scores[table_name] = 0.0
-                    self.logger.error(
-                        "uniqueness_validation_error",
-                        table=table_name,
-                        error=str(exc),
-                    )
 
-        # --- Aggregate sub-scores ------------------------------------------
+        for table_name, unique_cols in uniqueness_constraints.items():
+            if table_name not in tables or not unique_cols:
+                continue
+            try:
+                u_score = self._validate_uniqueness_constraints(
+                    tables[table_name], unique_cols,
+                )
+                uniqueness_scores[table_name] = u_score
+            except Exception as exc:
+                errors.append(
+                    f"Uniqueness validation error for '{table_name}': {exc}",
+                )
+                uniqueness_scores[table_name] = 0.0
+                self.logger.error(
+                    "uniqueness_validation_error",
+                    table=table_name,
+                    error=str(exc),
+                )
+
+        return uniqueness_scores
+
+    def _compose_integrity_result(
+        self,
+        *,
+        fk_result: dict[str, Any],
+        cardinality_scores: dict[str, float],
+        orphan_report: dict[str, Any],
+        orphan_score: float,
+        cascade_score: float,
+        cross_module_score: float,
+        uniqueness_scores: dict[str, float],
+        generated_data: dict[str, pd.DataFrame],
+        relationships: list[dict[str, Any]],
+        total_records: int,
+        total_orphans: int,
+        errors: list[str],
+        warnings: list[str],
+    ) -> ValidationResult:
+        """Aggregate sub-scores and build the final ValidationResult."""
+        fk_scores: dict[str, float] = fk_result["fk_scores"]
+        total_fk_refs_checked: int = fk_result["total_fk_refs_checked"]
+        total_valid_fk_refs: int = fk_result["total_valid_fk_refs"]
+
         fk_aggregate = (
             self._aggregate_relationship_scores(fk_scores)
-            if fk_scores
-            else 1.0
+            if fk_scores else 1.0
         )
         card_aggregate = (
             self._aggregate_relationship_scores(cardinality_scores)
-            if cardinality_scores
-            else 1.0
+            if cardinality_scores else 1.0
         )
         uniqueness_aggregate = (
             float(np.mean(list(uniqueness_scores.values())))
-            if uniqueness_scores
-            else 1.0
+            if uniqueness_scores else 1.0
         )
 
         component_scores: dict[str, float] = {
@@ -475,53 +569,24 @@ class ReferentialIntegrityValidator(BaseValidator):
             "uniqueness": uniqueness_aggregate,
         }
 
-        # Compute weighted composite score via np.average with explicit
-        # weights drawn from the component weight configuration.
         scores_arr = [component_scores[k] for k in self._component_weights]
-        weights_arr = [self._component_weights[k] for k in self._component_weights]
+        weights_arr = list(self._component_weights.values())
         overall_score = float(np.average(scores_arr, weights=weights_arr))
 
-        # --- Build detailed result report ----------------------------------
-        details: dict[str, Any] = {
-            "component_scores": {
-                k: {
-                    "score": round(component_scores[k], 6),
-                    "weight": self._component_weights[k],
-                    "weighted_contribution": round(
-                        component_scores[k] * self._component_weights[k], 6
-                    ),
-                }
-                for k in self._component_weights
-            },
-            "fk_validation": fk_scores,
-            "cardinality_validation": cardinality_scores,
-            "uniqueness_validation": uniqueness_scores,
-            "orphan_report": {
-                "total_orphans": total_orphans,
-                "orphan_tolerance": self.orphan_tolerance,
-                "per_table": orphan_report,
-            },
-            "cascade_chain_score": cascade_score,
-            "cross_module_score": cross_module_score,
-            "overall_score": round(overall_score, 6),
-            "tables_validated": list(generated_data.keys()),
-            "relationships_checked": len(fk_scores),
-            "relationship_graph_summary": {
-                "num_relationships": len(relationships),
-                "root_tables": self._relationship_graph.get(
-                    "root_tables", []
-                ),
-                "leaf_tables": self._relationship_graph.get(
-                    "leaf_tables", []
-                ),
-                "has_circular_refs": self._relationship_graph.get(
-                    "has_circular_refs", False
-                ),
-            },
-        }
+        details = self._build_result_details(
+            component_scores=component_scores,
+            fk_scores=fk_scores,
+            cardinality_scores=cardinality_scores,
+            uniqueness_scores=uniqueness_scores,
+            orphan_report=orphan_report,
+            total_orphans=total_orphans,
+            cascade_score=cascade_score,
+            cross_module_score=cross_module_score,
+            overall_score=overall_score,
+            generated_data=generated_data,
+            relationships=relationships,
+        )
 
-        # Records-passed is the count of valid FK references; when no FK
-        # references exist to check, all records pass trivially.
         records_passed = min(total_valid_fk_refs, total_fk_refs_checked)
         if total_fk_refs_checked == 0:
             records_passed = total_records
@@ -550,6 +615,60 @@ class ReferentialIntegrityValidator(BaseValidator):
             records_validated=total_records,
             records_passed=records_passed,
         )
+
+    def _build_result_details(
+        self,
+        *,
+        component_scores: dict[str, float],
+        fk_scores: dict[str, float],
+        cardinality_scores: dict[str, float],
+        uniqueness_scores: dict[str, float],
+        orphan_report: dict[str, Any],
+        total_orphans: int,
+        cascade_score: float,
+        cross_module_score: float,
+        overall_score: float,
+        generated_data: dict[str, pd.DataFrame],
+        relationships: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build the detailed result dictionary for the ValidationResult."""
+        return {
+            "component_scores": {
+                k: {
+                    "score": round(component_scores[k], 6),
+                    "weight": self._component_weights[k],
+                    "weighted_contribution": round(
+                        component_scores[k] * self._component_weights[k], 6,
+                    ),
+                }
+                for k in self._component_weights
+            },
+            "fk_validation": fk_scores,
+            "cardinality_validation": cardinality_scores,
+            "uniqueness_validation": uniqueness_scores,
+            "orphan_report": {
+                "total_orphans": total_orphans,
+                "orphan_tolerance": self.orphan_tolerance,
+                "per_table": orphan_report,
+            },
+            "cascade_chain_score": cascade_score,
+            "cross_module_score": cross_module_score,
+            "overall_score": round(overall_score, 6),
+            "tables_validated": list(generated_data.keys()),
+            "relationships_checked": len(fk_scores),
+            "relationship_graph_summary": {
+                "num_relationships": len(relationships),
+                "root_tables": self._relationship_graph.get(
+                    "root_tables", [],
+                ),
+                "leaf_tables": self._relationship_graph.get(
+                    "leaf_tables", [],
+                ),
+                "has_circular_refs": self._relationship_graph.get(
+                    "has_circular_refs", False,
+                ),
+            },
+        }
 
     # ------------------------------------------------------------------
     # FK validation
@@ -667,109 +786,159 @@ class ReferentialIntegrityValidator(BaseValidator):
         if fk_values.empty:
             return 1.0
 
-        # Use groupby to compute the cardinality distribution — gives the
-        # number of child rows per distinct FK value.
+        # Build cardinality statistics used by sub-checks.
         cardinality_groups = child_table.groupby(fk_col).size()
-
-        # Also use value_counts for per-FK-value child counts
         children_per_parent = fk_values.value_counts()
+
+        # Dispatch structural check by cardinality type.
+        scores = self._structural_cardinality_scores(
+            cardinality_type, cardinality_groups, children_per_parent,
+            parent_table, pk_col, relationship,
+        )
+
+        # Append profiled distribution comparison score (if available).
+        dist_score = self._compare_cardinality_distribution(
+            children_per_parent, child_table, fk_col, relationship,
+        )
+        if dist_score is not None:
+            scores.append(dist_score)
+
+        return float(np.mean(scores)) if scores else 1.0
+
+    # -- Cardinality sub-checks -----------------------------------------
+
+    def _structural_cardinality_scores(
+        self,
+        cardinality_type: str,
+        cardinality_groups: pd.Series,
+        children_per_parent: pd.Series,
+        parent_table: pd.DataFrame,
+        pk_col: str,
+        relationship: dict[str, Any],
+    ) -> list[float]:
+        """Return structural cardinality scores based on the type.
+
+        Dispatches to a dedicated helper for each cardinality kind and
+        returns the partial score list that will later be combined with
+        the optional profiled-distribution score.
+        """
+        dispatch: dict[str, Any] = {
+            "one_to_one": lambda: self._cardinality_one_to_one(
+                cardinality_groups,
+            ),
+            "one_to_many": lambda: self._cardinality_one_to_many(
+                cardinality_groups, children_per_parent,
+                parent_table, pk_col, relationship,
+            ),
+            "many_to_many": lambda: [1.0],
+        }
+        handler = dispatch.get(cardinality_type)
+        if handler is not None:
+            result: list[float] = handler()
+            return result
+
+        self.logger.warning(
+            "unknown_cardinality_type",
+            cardinality=cardinality_type,
+        )
+        return [1.0]
+
+    @staticmethod
+    def _cardinality_one_to_one(
+        cardinality_groups: pd.Series,
+    ) -> list[float]:
+        """Score one-to-one: each parent maps to at most one child."""
+        one_to_one_violations = int((cardinality_groups > 1).sum())
+        total_groups = len(cardinality_groups)
+        if total_groups > 0:
+            compliance = 1.0 - (one_to_one_violations / total_groups)
+            return [max(0.0, compliance)]
+        return [1.0]
+
+    @staticmethod
+    def _cardinality_one_to_many(
+        cardinality_groups: pd.Series,
+        children_per_parent: pd.Series,
+        parent_table: pd.DataFrame,
+        pk_col: str,
+        relationship: dict[str, Any],
+    ) -> list[float]:
+        """Score one-to-many: validate min/max child bounds if specified."""
         scores: list[float] = []
+        min_children: int = relationship.get("min_children", 0)
+        max_children_bound = relationship.get("max_children")
 
-        # --- Structural cardinality checks --------------------------------
-
-        if cardinality_type == "one_to_one":
-            # Each parent should map to at most one child record.
-            one_to_one_violations = int((cardinality_groups > 1).sum())
-            total_groups = len(cardinality_groups)
-            if total_groups > 0:
-                compliance = 1.0 - (one_to_one_violations / total_groups)
-                scores.append(max(0.0, compliance))
-            else:
-                scores.append(1.0)
-
-        elif cardinality_type == "one_to_many":
-            # One parent may have many children — structurally always valid.
-            # Validate min/max bounds if specified.
-            min_children = relationship.get("min_children", 0)
-            max_children_bound = relationship.get("max_children")
-
-            if min_children > 0:
-                parent_pks = parent_table[pk_col].dropna().unique()
-                parents_without_enough = 0
-                for pk_val in parent_pks:
-                    child_count = (
-                        children_per_parent.get(pk_val, 0)
-                        if pk_val in children_per_parent.index
-                        else 0
-                    )
-                    if child_count < min_children:
-                        parents_without_enough += 1
-
-                total_parents = len(parent_pks)
-                if total_parents > 0:
-                    scores.append(
-                        1.0 - (parents_without_enough / total_parents)
-                    )
-                else:
-                    scores.append(1.0)
-
-            if max_children_bound is not None:
-                over_max = int(
-                    (cardinality_groups > max_children_bound).sum()
-                )
-                total_grouped = len(cardinality_groups)
-                if total_grouped > 0:
-                    scores.append(1.0 - (over_max / total_grouped))
-                else:
-                    scores.append(1.0)
-
-            if not scores:
-                # No bounds specified — structurally valid
-                scores.append(1.0)
-
-        elif cardinality_type == "many_to_many":
-            # Many-to-many uses a junction table.  Structural validity is
-            # already verified by the FK validation step; cardinality is
-            # inherently flexible.
-            scores.append(1.0)
-
-        else:
-            self.logger.warning(
-                "unknown_cardinality_type",
-                cardinality=cardinality_type,
+        if min_children > 0:
+            parent_pks = parent_table[pk_col].dropna().unique()
+            parents_without_enough = sum(
+                1 for pk_val in parent_pks
+                if (
+                    children_per_parent.get(pk_val, 0)
+                    if pk_val in children_per_parent.index
+                    else 0
+                ) < min_children
             )
-            scores.append(1.0)
+            total_parents = len(parent_pks)
+            score = (
+                1.0 - (parents_without_enough / total_parents)
+                if total_parents > 0
+                else 1.0
+            )
+            scores.append(score)
 
-        # --- Profiled distribution comparison -----------------------------
+        if max_children_bound is not None:
+            over_max = int((cardinality_groups > max_children_bound).sum())
+            total_grouped = len(cardinality_groups)
+            score = (
+                1.0 - (over_max / total_grouped)
+                if total_grouped > 0
+                else 1.0
+            )
+            scores.append(score)
+
+        # No bounds specified -- structurally valid.
+        if not scores:
+            scores.append(1.0)
+        return scores
+
+    def _compare_cardinality_distribution(
+        self,
+        children_per_parent: pd.Series,
+        child_table: pd.DataFrame,
+        fk_col: str,
+        relationship: dict[str, Any],
+    ) -> float | None:
+        """Compare generated cardinality distribution to profiled stats.
+
+        Returns a score in [0.0, 1.0] if profiled statistics are available,
+        or ``None`` when no comparison can be made.
+        """
         profiled_avg = relationship.get("profiled_avg_children")
         profiled_std = relationship.get("profiled_std_children")
 
-        if profiled_avg is not None and not children_per_parent.empty:
-            actual_avg = float(children_per_parent.mean())
-            actual_nunique = int(child_table[fk_col].nunique())
+        if profiled_avg is None or children_per_parent.empty:
+            return None
 
-            if profiled_std is not None and profiled_std > 0:
-                # Z-score deviation of actual mean from profiled mean
-                z_score = abs(actual_avg - profiled_avg) / profiled_std
-                # Score degrades linearly from 1.0 → 0.0 over 4 std devs
-                distribution_score = max(0.0, 1.0 - (z_score / 4.0))
-                scores.append(distribution_score)
-            elif profiled_avg > 0:
-                # No std available — use ratio comparison
-                ratio = min(actual_avg, profiled_avg) / max(
-                    actual_avg, profiled_avg
-                )
-                scores.append(ratio)
+        actual_avg = float(children_per_parent.mean())
+        actual_nunique = int(child_table[fk_col].nunique())
 
-            self.logger.debug(
-                "cardinality_distribution_check",
-                profiled_avg=profiled_avg,
-                profiled_std=profiled_std,
-                actual_avg=round(actual_avg, 4),
-                actual_unique_fks=actual_nunique,
+        result: float | None = None
+        if profiled_std is not None and profiled_std > 0:
+            z_score = abs(actual_avg - profiled_avg) / profiled_std
+            result = max(0.0, 1.0 - (z_score / 4.0))
+        elif profiled_avg > 0:
+            result = min(actual_avg, profiled_avg) / max(
+                actual_avg, profiled_avg
             )
 
-        return float(np.mean(scores)) if scores else 1.0
+        self.logger.debug(
+            "cardinality_distribution_check",
+            profiled_avg=profiled_avg,
+            profiled_std=profiled_std,
+            actual_avg=round(actual_avg, 4),
+            actual_unique_fks=actual_nunique,
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Orphan record detection
@@ -1267,17 +1436,17 @@ class ReferentialIntegrityValidator(BaseValidator):
         Returns:
             ``True`` if at least one cycle exists, ``False`` otherwise.
         """
-        WHITE, GRAY, BLACK = 0, 1, 2
-        colour: dict[str, int] = {name: WHITE for name in nodes}
+        state_white, state_gray, state_black = 0, 1, 2
+        colour: dict[str, int] = dict.fromkeys(nodes, state_white)
 
         for start in nodes:
-            if colour[start] != WHITE:
+            if colour[start] != state_white:
                 continue
 
             # Iterative DFS using an explicit stack of
             # (node, neighbour_iterator) pairs.
             stack: list[tuple[str, int]] = [(start, 0)]
-            colour[start] = GRAY
+            colour[start] = state_gray
 
             while stack:
                 node, idx = stack[-1]
@@ -1288,13 +1457,13 @@ class ReferentialIntegrityValidator(BaseValidator):
                     neighbour = neighbours[idx]
                     if neighbour not in colour:
                         continue
-                    if colour[neighbour] == GRAY:
+                    if colour[neighbour] == state_gray:
                         return True  # Back-edge detected — cycle exists
-                    if colour[neighbour] == WHITE:
-                        colour[neighbour] = GRAY
+                    if colour[neighbour] == state_white:
+                        colour[neighbour] = state_gray
                         stack.append((neighbour, 0))
                 else:
-                    colour[node] = BLACK
+                    colour[node] = state_black
                     stack.pop()
 
         return False

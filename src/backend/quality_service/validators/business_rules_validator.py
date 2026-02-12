@@ -11,7 +11,7 @@ rules across five rule categories:
 1. **Format rules** — regex-based field-format constraints (GL accounts,
    employee IDs, order numbers, material numbers).
 2. **Cross-field rules** — inter-field dependencies within records
-   (debit/credit balance, price × quantity = total).
+   (debit/credit balance, price x quantity = total).
 3. **Domain rules** — value membership in allowed sets (ISO 4217 currency
    codes, ISO 3166 country codes, status enumerations).
 4. **Temporal rules** — chronological ordering constraints (hire before
@@ -32,8 +32,8 @@ conforming to the Strategy pattern used by :class:`QualityScorer`.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -41,6 +41,7 @@ from pydantic import BaseModel, field_validator
 
 from quality_service.validators.base import BaseValidator, ValidationResult
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level structured logger for business-rule validation events.
@@ -68,7 +69,7 @@ _CUSTOMER_ID_PATTERN: re.Pattern = re.compile(r"^(CUST|C)[\-]?\d{5,10}$")
 # ---------------------------------------------------------------------------
 # Default category weights for rule-score aggregation.
 # ---------------------------------------------------------------------------
-_DEFAULT_CATEGORY_WEIGHTS: Dict[str, float] = {
+_DEFAULT_CATEGORY_WEIGHTS: dict[str, float] = {
     "format": 0.20,
     "cross_field": 0.25,
     "domain": 0.20,
@@ -156,7 +157,7 @@ class DomainValueConstraint(BaseModel):
     """
 
     value: str
-    allowed_values: List[str]
+    allowed_values: list[str]
 
     @field_validator("value")
     @classmethod
@@ -219,26 +220,26 @@ class BusinessRulesValidator(BaseValidator):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.weight: float = 0.3
 
         # Per-category weights for score aggregation (configurable).
-        self._category_weights: Dict[str, float] = dict(
+        self._category_weights: dict[str, float] = dict(
             self.config.get("category_weights", _DEFAULT_CATEGORY_WEIGHTS)
         )
 
         # Compiled-regex cache: pattern_string → re.Pattern.
-        self._compiled_patterns: Dict[str, re.Pattern] = {}
+        self._compiled_patterns: dict[str, re.Pattern] = {}
 
         # Rule registry: module_name → list[rule_dict].
-        self._rule_registry: Dict[str, List[Dict[str, Any]]] = {}
+        self._rule_registry: dict[str, list[dict[str, Any]]] = {}
 
         # Register built-in rules for every supported ERP module.
         self._register_all_module_rules()
 
         # Merge optional custom rules supplied via ``config``.
-        custom_rules: Dict[str, List[Dict[str, Any]]] = self.config.get(
+        custom_rules: dict[str, list[dict[str, Any]]] = self.config.get(
             "custom_rules", {}
         )
         for module_name, rules in custom_rules.items():
@@ -261,8 +262,8 @@ class BusinessRulesValidator(BaseValidator):
 
     def validate(
         self,
-        generated_data: pd.DataFrame | Dict[str, pd.DataFrame],
-        profile: Dict[str, Any],
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
+        profile: dict[str, Any],
     ) -> ValidationResult:
         """Run all business-rule checks against *generated_data*.
 
@@ -281,8 +282,8 @@ class BusinessRulesValidator(BaseValidator):
         Returns:
             A fully populated :class:`ValidationResult`.
         """
-        errors: List[str] = []
-        warnings: List[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
 
         # Resolve the ERP module name from the profile dictionary.
         module_name = self._resolve_module_name(profile)
@@ -313,8 +314,8 @@ class BusinessRulesValidator(BaseValidator):
         categorised_rules = self._get_module_rules(module_name)
 
         # Execute each rule category and collect scores.
-        rule_scores: Dict[str, Optional[float]] = {}
-        rule_details: Dict[str, Any] = {}
+        rule_scores: dict[str, float | None] = {}
+        rule_details: dict[str, Any] = {}
         total_passed: int = total_records
 
         for category, rules in categorised_rules.items():
@@ -406,11 +407,11 @@ class BusinessRulesValidator(BaseValidator):
 
     def _validate_multi_table(
         self,
-        tables: Dict[str, pd.DataFrame],
-        profile: Dict[str, Any],
+        tables: dict[str, pd.DataFrame],
+        profile: dict[str, Any],
         module_name: str,
-        errors: List[str],
-        warnings: List[str],
+        errors: list[str],
+        warnings: list[str],
     ) -> ValidationResult:
         """Validate multiple tables and aggregate their scores.
 
@@ -418,13 +419,13 @@ class BusinessRulesValidator(BaseValidator):
         composite score is the arithmetic mean across tables computed with
         :func:`numpy.mean`.
         """
-        table_scores: List[float] = []
-        table_details: Dict[str, Any] = {}
+        table_scores: list[float] = []
+        table_details: dict[str, Any] = {}
         total_records = 0
         total_passed = 0
 
         for table_name, df in tables.items():
-            table_profile: Dict[str, Any] = dict(profile)
+            table_profile: dict[str, Any] = dict(profile)
             table_profile["table_name"] = table_name
 
             sub_result: ValidationResult = self.validate(df, table_profile)
@@ -450,7 +451,7 @@ class BusinessRulesValidator(BaseValidator):
                 "module": module_name,
                 "table_scores": {
                     name: round(sc, 4)
-                    for name, sc in zip(tables.keys(), table_scores)
+                    for name, sc in zip(tables.keys(), table_scores, strict=True)
                 },
                 "table_details": table_details,
             },
@@ -467,9 +468,9 @@ class BusinessRulesValidator(BaseValidator):
     def _execute_category(
         self,
         data: pd.DataFrame,
-        rules: List[Dict[str, Any]],
+        rules: list[dict[str, Any]],
         category: str,
-    ) -> tuple[float, Dict[str, Any], List[str]]:
+    ) -> tuple[float, dict[str, Any], list[str]]:
         """Dispatch validation to the correct category handler."""
         dispatch = {
             "format": self._validate_format_rules,
@@ -490,8 +491,8 @@ class BusinessRulesValidator(BaseValidator):
     def _validate_format_rules(
         self,
         data: pd.DataFrame,
-        rules: List[Dict[str, Any]],
-    ) -> tuple[float, Dict[str, Any], List[str]]:
+        rules: list[dict[str, Any]],
+    ) -> tuple[float, dict[str, Any], list[str]]:
         """Validate field-format constraints via compiled regex patterns.
 
         Uses :meth:`pandas.Series.str.match` for vectorised regex
@@ -503,9 +504,9 @@ class BusinessRulesValidator(BaseValidator):
         if not rules:
             return 1.0, {"message": "No format rules defined"}, []
 
-        rule_results: Dict[str, Any] = {}
-        errors: List[str] = []
-        pass_rates: List[float] = []
+        rule_results: dict[str, Any] = {}
+        errors: list[str] = []
+        pass_rates: list[float] = []
         total_records: int = data.shape[0]
 
         for rule in rules:
@@ -558,8 +559,8 @@ class BusinessRulesValidator(BaseValidator):
     def _validate_cross_field_rules(
         self,
         data: pd.DataFrame,
-        rules: List[Dict[str, Any]],
-    ) -> tuple[float, Dict[str, Any], List[str]]:
+        rules: list[dict[str, Any]],
+    ) -> tuple[float, dict[str, Any], list[str]]:
         """Validate inter-field relationships within the same record.
 
         Supported *rule_type* values:
@@ -567,7 +568,7 @@ class BusinessRulesValidator(BaseValidator):
         - ``balance`` — field_a ≈ field_b (e.g. debit ≈ credit).
         - ``less_than`` — field_a < field_b.
         - ``less_than_or_equal`` — field_a ≤ field_b.
-        - ``product_equals`` — field_a × field_b ≈ target.
+        - ``product_equals`` — field_a x field_b ~ target.
         - ``sum_equals`` — Σ source_fields ≈ target_field.
         - ``mutual_exclusive_nonzero`` — at most one of two fields ≠ 0.
 
@@ -577,15 +578,15 @@ class BusinessRulesValidator(BaseValidator):
         if not rules:
             return 1.0, {"message": "No cross-field rules defined"}, []
 
-        rule_results: Dict[str, Any] = {}
-        errors: List[str] = []
-        pass_rates: List[float] = []
+        rule_results: dict[str, Any] = {}
+        errors: list[str] = []
+        pass_rates: list[float] = []
         total_records: int = data.shape[0]
 
         for rule in rules:
             rule_name: str = rule.get("name", "unknown_cross_field_rule")
             rule_type: str = rule.get("rule_type", "")
-            fields: List[str] = rule.get("fields", [])
+            fields: list[str] = rule.get("fields", [])
 
             missing = [f for f in fields if f not in data.columns]
             if missing:
@@ -620,91 +621,135 @@ class BusinessRulesValidator(BaseValidator):
         self,
         data: pd.DataFrame,
         rule_type: str,
-        rule: Dict[str, Any],
+        rule: dict[str, Any],
         total_records: int,
     ) -> float:
-        """Evaluate a single cross-field rule and return the pass rate."""
-        fields: List[str] = rule.get("fields", [])
+        """Evaluate a single cross-field rule and return the pass rate.
 
-        if rule_type == "balance":
-            if len(fields) >= 2:
-                col_a = pd.to_numeric(data[fields[0]], errors="coerce").fillna(0)
-                col_b = pd.to_numeric(data[fields[1]], errors="coerce").fillna(0)
-                balanced = np.isclose(col_a, col_b, rtol=1e-4, atol=0.01)
-                return float(np.sum(balanced)) / total_records if total_records else 0.0
-            return 1.0
-
-        if rule_type == "less_than":
-            if len(fields) >= 2:
-                col_a = pd.to_numeric(data[fields[0]], errors="coerce")
-                col_b = pd.to_numeric(data[fields[1]], errors="coerce")
-                mask = col_a.notna() & col_b.notna()
-                applicable = int(mask.sum())
-                if applicable == 0:
-                    return 1.0
-                valid = col_a[mask] < col_b[mask]
-                return float(valid.sum() / applicable)
-            return 1.0
-
-        if rule_type == "less_than_or_equal":
-            if len(fields) >= 2:
-                col_a = pd.to_numeric(data[fields[0]], errors="coerce")
-                col_b = pd.to_numeric(data[fields[1]], errors="coerce")
-                mask = col_a.notna() & col_b.notna()
-                applicable = int(mask.sum())
-                if applicable == 0:
-                    return 1.0
-                valid = col_a[mask] <= col_b[mask]
-                return float(valid.sum() / applicable)
-            return 1.0
-
-        if rule_type == "product_equals":
-            target_field: str = rule.get("target_field", "")
-            if len(fields) >= 2 and target_field in data.columns:
-                col_a = pd.to_numeric(data[fields[0]], errors="coerce").fillna(0)
-                col_b = pd.to_numeric(data[fields[1]], errors="coerce").fillna(0)
-                col_t = pd.to_numeric(data[target_field], errors="coerce").fillna(0)
-                product = col_a * col_b
-                close = np.isclose(product, col_t, rtol=1e-3, atol=0.01)
-                return float(np.sum(close)) / total_records if total_records else 0.0
-            return 1.0
-
-        if rule_type == "sum_equals":
-            source_fields: List[str] = rule.get(
-                "source_fields", fields[:-1] if fields else [],
+        Dispatches to dedicated helper methods per rule type to keep the
+        branch count manageable.
+        """
+        _dispatch: dict[str, Any] = {
+            "balance": self._cross_field_balance,
+            "less_than": self._cross_field_comparison,
+            "less_than_or_equal": self._cross_field_comparison,
+            "product_equals": self._cross_field_product,
+            "sum_equals": self._cross_field_sum,
+            "mutual_exclusive_nonzero": self._cross_field_exclusive,
+        }
+        handler = _dispatch.get(rule_type)
+        if handler is None:
+            self.logger.warning(
+                "unknown_cross_field_rule_type", rule_type=rule_type,
             )
-            target_field_se: str = rule.get(
-                "target_field", fields[-1] if fields else "",
-            )
-            valid_sources = [f for f in source_fields if f in data.columns]
-            if valid_sources and target_field_se in data.columns:
-                summed = pd.DataFrame(
-                    {
-                        f: pd.to_numeric(data[f], errors="coerce").fillna(0)
-                        for f in valid_sources
-                    }
-                ).apply(np.sum, axis=1)
-                col_t = pd.to_numeric(
-                    data[target_field_se], errors="coerce",
-                ).fillna(0)
-                close = np.isclose(summed, col_t, rtol=1e-3, atol=0.01)
-                return float(np.sum(close)) / total_records if total_records else 0.0
             return 1.0
+        result: float = float(handler(data, rule, total_records, rule_type))
+        return result
 
-        if rule_type == "mutual_exclusive_nonzero":
-            if len(fields) >= 2:
-                col_a = pd.to_numeric(data[fields[0]], errors="coerce").fillna(0)
-                col_b = pd.to_numeric(data[fields[1]], errors="coerce").fillna(0)
-                both_nonzero = (col_a != 0) & (col_b != 0)
-                violations = int(both_nonzero.sum())
-                passed = total_records - violations
-                return float(passed) / total_records if total_records else 0.0
+    # -- Cross-field sub-handlers ----------------------------------------
+
+    @staticmethod
+    def _cross_field_balance(
+        data: pd.DataFrame,
+        rule: dict[str, Any],
+        total_records: int,
+        _rule_type: str,
+    ) -> float:
+        """Check that two numeric fields are approximately equal."""
+        fields: list[str] = rule.get("fields", [])
+        if len(fields) < 2:
             return 1.0
+        col_a = pd.to_numeric(data[fields[0]], errors="coerce").fillna(0)
+        col_b = pd.to_numeric(data[fields[1]], errors="coerce").fillna(0)
+        balanced = np.isclose(col_a, col_b, rtol=1e-4, atol=0.01)
+        return float(np.sum(balanced)) / total_records if total_records else 0.0
 
-        self.logger.warning(
-            "unknown_cross_field_rule_type", rule_type=rule_type,
+    @staticmethod
+    def _cross_field_comparison(
+        data: pd.DataFrame,
+        rule: dict[str, Any],
+        _total_records: int,
+        rule_type: str,
+    ) -> float:
+        """Check ``<`` or ``<=`` between two numeric fields."""
+        fields: list[str] = rule.get("fields", [])
+        if len(fields) < 2:
+            return 1.0
+        col_a = pd.to_numeric(data[fields[0]], errors="coerce")
+        col_b = pd.to_numeric(data[fields[1]], errors="coerce")
+        mask = col_a.notna() & col_b.notna()
+        applicable = int(mask.sum())
+        if applicable == 0:
+            return 1.0
+        valid = col_a[mask] <= col_b[mask] if rule_type == "less_than_or_equal" else col_a[mask] < col_b[mask]
+        return float(valid.sum() / applicable)
+
+    @staticmethod
+    def _cross_field_product(
+        data: pd.DataFrame,
+        rule: dict[str, Any],
+        total_records: int,
+        _rule_type: str,
+    ) -> float:
+        """Check ``field_a * field_b ~ target_field``."""
+        fields: list[str] = rule.get("fields", [])
+        target_field: str = rule.get("target_field", "")
+        if len(fields) < 2 or target_field not in data.columns:
+            return 1.0
+        col_a = pd.to_numeric(data[fields[0]], errors="coerce").fillna(0)
+        col_b = pd.to_numeric(data[fields[1]], errors="coerce").fillna(0)
+        col_t = pd.to_numeric(data[target_field], errors="coerce").fillna(0)
+        product = col_a * col_b
+        close = np.isclose(product, col_t, rtol=1e-3, atol=0.01)
+        return float(np.sum(close)) / total_records if total_records else 0.0
+
+    @staticmethod
+    def _cross_field_sum(
+        data: pd.DataFrame,
+        rule: dict[str, Any],
+        total_records: int,
+        _rule_type: str,
+    ) -> float:
+        """Check ``sum(source_fields) ~ target_field``."""
+        fields: list[str] = rule.get("fields", [])
+        source_fields: list[str] = rule.get(
+            "source_fields", fields[:-1] if fields else [],
         )
-        return 1.0
+        target_field_se: str = rule.get(
+            "target_field", fields[-1] if fields else "",
+        )
+        valid_sources = [f for f in source_fields if f in data.columns]
+        if not valid_sources or target_field_se not in data.columns:
+            return 1.0
+        summed = pd.DataFrame(
+            {
+                f: pd.to_numeric(data[f], errors="coerce").fillna(0)
+                for f in valid_sources
+            }
+        ).apply(np.sum, axis=1)
+        col_t = pd.to_numeric(
+            data[target_field_se], errors="coerce",
+        ).fillna(0)
+        close = np.isclose(summed, col_t, rtol=1e-3, atol=0.01)
+        return float(np.sum(close)) / total_records if total_records else 0.0
+
+    @staticmethod
+    def _cross_field_exclusive(
+        data: pd.DataFrame,
+        rule: dict[str, Any],
+        total_records: int,
+        _rule_type: str,
+    ) -> float:
+        """Check that at most one of two fields is non-zero."""
+        fields: list[str] = rule.get("fields", [])
+        if len(fields) < 2:
+            return 1.0
+        col_a = pd.to_numeric(data[fields[0]], errors="coerce").fillna(0)
+        col_b = pd.to_numeric(data[fields[1]], errors="coerce").fillna(0)
+        both_nonzero = (col_a != 0) & (col_b != 0)
+        violations = int(both_nonzero.sum())
+        passed = total_records - violations
+        return float(passed) / total_records if total_records else 0.0
 
     # ------------------------------------------------------------------
     # 3. Domain Rules
@@ -713,8 +758,8 @@ class BusinessRulesValidator(BaseValidator):
     def _validate_domain_rules(
         self,
         data: pd.DataFrame,
-        rules: List[Dict[str, Any]],
-    ) -> tuple[float, Dict[str, Any], List[str]]:
+        rules: list[dict[str, Any]],
+    ) -> tuple[float, dict[str, Any], list[str]]:
         """Validate that field values belong to allowed domain sets.
 
         Uses Pydantic ``model_validate()`` for structured constraints
@@ -727,15 +772,15 @@ class BusinessRulesValidator(BaseValidator):
         if not rules:
             return 1.0, {"message": "No domain rules defined"}, []
 
-        rule_results: Dict[str, Any] = {}
-        errors: List[str] = []
-        pass_rates: List[float] = []
+        rule_results: dict[str, Any] = {}
+        errors: list[str] = []
+        pass_rates: list[float] = []
 
         for rule in rules:
             rule_name: str = rule.get("name", "unknown_domain_rule")
             field: str = rule.get("field", "")
-            valid_values: List[str] = rule.get("valid_values", [])
-            validation_model: Optional[str] = rule.get("validation_model")
+            valid_values: list[str] = rule.get("valid_values", [])
+            validation_model: str | None = rule.get("validation_model")
 
             if field not in data.columns:
                 rule_results[rule_name] = {
@@ -811,7 +856,7 @@ class BusinessRulesValidator(BaseValidator):
         frame = pd.DataFrame(
             {field_name: series.values}, index=series.index,
         )
-        for _idx, row in frame.iterrows():
+        for row_idx, row in frame.iterrows():
             try:
                 obj = model_class.model_validate(
                     {field_name: str(row[field_name])}
@@ -820,6 +865,11 @@ class BusinessRulesValidator(BaseValidator):
                 obj.model_dump()
                 passed += 1
             except Exception:
+                self.logger.debug(
+                    "domain_pydantic_validation_failure",
+                    field=field_name,
+                    row_index=row_idx,
+                )
                 continue
         return passed
 
@@ -830,8 +880,8 @@ class BusinessRulesValidator(BaseValidator):
     def _validate_temporal_rules(
         self,
         data: pd.DataFrame,
-        rules: List[Dict[str, Any]],
-    ) -> tuple[float, Dict[str, Any], List[str]]:
+        rules: list[dict[str, Any]],
+    ) -> tuple[float, dict[str, Any], list[str]]:
         """Validate temporal ordering and consistency.
 
         Supported *rule_type* values:
@@ -850,9 +900,9 @@ class BusinessRulesValidator(BaseValidator):
         if not rules:
             return 1.0, {"message": "No temporal rules defined"}, []
 
-        rule_results: Dict[str, Any] = {}
-        errors: List[str] = []
-        pass_rates: List[float] = []
+        rule_results: dict[str, Any] = {}
+        errors: list[str] = []
+        pass_rates: list[float] = []
 
         for rule in rules:
             rule_name: str = rule.get("name", "unknown_temporal_rule")
@@ -891,11 +941,9 @@ class BusinessRulesValidator(BaseValidator):
         self,
         data: pd.DataFrame,
         rule_type: str,
-        rule: Dict[str, Any],
+        rule: dict[str, Any],
     ) -> float:
         """Evaluate a single temporal rule and return the pass rate."""
-        total: int = data.shape[0]
-
         if rule_type == "before":
             field_before: str = rule.get("field_before", "")
             field_after: str = rule.get("field_after", "")
@@ -960,8 +1008,8 @@ class BusinessRulesValidator(BaseValidator):
             applicable = int(mask.sum())
             if applicable == 0:
                 return 1.0
-            # Use datetime.date / datetime.timedelta for boundary calc.
-            today = date.today()
+            # Use timezone-aware date for boundary calculation.
+            today = datetime.now(tz=UTC).date()
             earliest = datetime.combine(
                 today - timedelta(days=max_days),
                 datetime.min.time(),
@@ -984,8 +1032,8 @@ class BusinessRulesValidator(BaseValidator):
     def _validate_conditional_rules(
         self,
         data: pd.DataFrame,
-        rules: List[Dict[str, Any]],
-    ) -> tuple[float, Dict[str, Any], List[str]]:
+        rules: list[dict[str, Any]],
+    ) -> tuple[float, dict[str, Any], list[str]]:
         """Validate conditional logic rules (if A then B).
 
         Supported *then_check* values:
@@ -1004,9 +1052,9 @@ class BusinessRulesValidator(BaseValidator):
         if not rules:
             return 1.0, {"message": "No conditional rules defined"}, []
 
-        rule_results: Dict[str, Any] = {}
-        errors: List[str] = []
-        pass_rates: List[float] = []
+        rule_results: dict[str, Any] = {}
+        errors: list[str] = []
+        pass_rates: list[float] = []
 
         for rule in rules:
             rule_name: str = rule.get("name", "unknown_conditional_rule")
@@ -1015,7 +1063,7 @@ class BusinessRulesValidator(BaseValidator):
             condition_operator: str = rule.get("condition_operator", "equals")
             then_field: str = rule.get("then_field", "")
             then_check: str = rule.get("then_check", "not_null")
-            then_values: List[str] = rule.get("then_values", [])
+            then_values: list[str] = rule.get("then_values", [])
 
             # Verify required columns exist.
             if condition_field not in data.columns:
@@ -1079,24 +1127,28 @@ class BusinessRulesValidator(BaseValidator):
         field: str,
         operator: str,
         value: Any,
-    ) -> pd.Series:
+    ) -> pd.Series[Any]:
         """Build a boolean mask for the condition side of a conditional rule."""
+        col = data[field]
         if operator == "equals":
-            return data[field] == value
+            mask: pd.Series[Any] = pd.Series(col == value, index=data.index)
+            return mask
         if operator == "not_equals":
-            return data[field] != value
+            mask = pd.Series(col != value, index=data.index)
+            return mask
         if operator == "in":
             vals = value if isinstance(value, list) else [value]
-            return data[field].isin(vals)
+            return col.isin(vals)
         # Fallback: equality check.
-        return data[field] == value
+        mask = pd.Series(col == value, index=data.index)
+        return mask
 
     @staticmethod
     def _evaluate_then_check(
         series: pd.Series,
         check_type: str,
-        check_values: List[str],
-        rule: Dict[str, Any],
+        check_values: list[str],
+        rule: dict[str, Any],
     ) -> int:
         """Evaluate a 'then' constraint on a filtered series.
 
@@ -1144,7 +1196,7 @@ class BusinessRulesValidator(BaseValidator):
     # Module rule retrieval & registration
     # ------------------------------------------------------------------
 
-    def _resolve_module_name(self, profile: Dict[str, Any]) -> str:
+    def _resolve_module_name(self, profile: dict[str, Any]) -> str:
         """Extract the ERP module name from profile metadata.
 
         Falls back to heuristic table-name matching when no explicit
@@ -1193,7 +1245,7 @@ class BusinessRulesValidator(BaseValidator):
 
     def _get_module_rules(
         self, module_name: str,
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         """Retrieve business rules organised by category for *module_name*.
 
         Args:
@@ -1204,7 +1256,7 @@ class BusinessRulesValidator(BaseValidator):
         """
         all_rules = self._rule_registry.get(module_name, [])
 
-        categorised: Dict[str, List[Dict[str, Any]]] = {
+        categorised: dict[str, list[dict[str, Any]]] = {
             "format": [],
             "cross_field": [],
             "domain": [],
@@ -1240,7 +1292,7 @@ class BusinessRulesValidator(BaseValidator):
             self._register_material_management_rules()
         )
 
-    def _register_financial_accounting_rules(self) -> List[Dict[str, Any]]:
+    def _register_financial_accounting_rules(self) -> list[dict[str, Any]]:
         """Register Financial Accounting module business rules.
 
         Covers GL account formats, debit/credit balancing, fiscal period
@@ -1363,7 +1415,7 @@ class BusinessRulesValidator(BaseValidator):
             },
         ]
 
-    def _register_hr_rules(self) -> List[Dict[str, Any]]:
+    def _register_hr_rules(self) -> list[dict[str, Any]]:
         """Register Human Resources module business rules.
 
         Covers employee ID formats, date consistency (hire, birth,
@@ -1494,7 +1546,7 @@ class BusinessRulesValidator(BaseValidator):
             },
         ]
 
-    def _register_sales_distribution_rules(self) -> List[Dict[str, Any]]:
+    def _register_sales_distribution_rules(self) -> list[dict[str, Any]]:
         """Register Sales & Distribution module business rules.
 
         Covers order number formats, price/quantity/total consistency,
@@ -1528,7 +1580,7 @@ class BusinessRulesValidator(BaseValidator):
                 "fields": ["unit_price", "quantity"],
                 "target_field": "total_amount",
                 "description": (
-                    "Line total must equal unit_price × quantity"
+                    "Line total must equal unit_price x quantity"
                 ),
             },
             # ----- Domain rules -----
@@ -1624,7 +1676,7 @@ class BusinessRulesValidator(BaseValidator):
             },
         ]
 
-    def _register_material_management_rules(self) -> List[Dict[str, Any]]:
+    def _register_material_management_rules(self) -> list[dict[str, Any]]:
         """Register Material Management module business rules.
 
         Covers material number formats, inventory non-negative constraints,
@@ -1669,7 +1721,7 @@ class BusinessRulesValidator(BaseValidator):
                 "fields": ["unit_price", "quantity"],
                 "target_field": "total_amount",
                 "description": (
-                    "PO total must equal unit_price × quantity"
+                    "PO total must equal unit_price x quantity"
                 ),
             },
             # ----- Domain rules -----
@@ -1768,7 +1820,7 @@ class BusinessRulesValidator(BaseValidator):
 
     def _aggregate_rule_scores(
         self,
-        rule_scores: Dict[str, Optional[float]],
+        rule_scores: dict[str, float | None],
     ) -> float:
         """Compute weighted average of per-category rule scores.
 
@@ -1782,8 +1834,8 @@ class BusinessRulesValidator(BaseValidator):
         Returns:
             Composite business-rules score in [0.0, 1.0].
         """
-        scores: List[float] = []
-        weights: List[float] = []
+        scores: list[float] = []
+        weights: list[float] = []
 
         for category, score in rule_scores.items():
             if score is not None:

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 # ---------------------------------------------------------------------------
 from quality_service.validators.base import BaseValidator, ValidationResult
 
+
 # ---------------------------------------------------------------------------
 # Concrete validator imports (conditionally loaded)
 # ---------------------------------------------------------------------------
@@ -51,7 +52,7 @@ try:
 
     _StatisticalValidator = StatisticalValidator
 except ImportError:
-    StatisticalValidator = None  # type: ignore[assignment,misc]
+    StatisticalValidator = None
 
 try:
     from quality_service.validators.business_rules_validator import (
@@ -202,15 +203,12 @@ def register_validator(
 # ---------------------------------------------------------------------------
 
 __all__: list[str] = [
-    # Core abstractions
+    "VALIDATOR_REGISTRY",
     "BaseValidator",
-    "ValidationResult",
-    # Concrete validators (may be None if not yet available)
-    "StatisticalValidator",
     "BusinessRulesValidator",
     "ReferentialIntegrityValidator",
-    # Registry and factories
-    "VALIDATOR_REGISTRY",
+    "StatisticalValidator",
+    "ValidationResult",
     "get_all_validators",
     "get_validator",
     "register_validator",
