@@ -159,7 +159,8 @@ def _fetch_jwks(auth0_domain: str) -> dict[str, Any]:
 
     # Return cached data if still within TTL.
     if _jwks_cache["keys"] and (now - _jwks_cache["fetched_at"]) < JWKS_CACHE_TTL:
-        return _jwks_cache["keys"]
+        cached_keys: dict[str, Any] = _jwks_cache["keys"]
+        return cached_keys
 
     jwks_url: str = f"https://{auth0_domain}/.well-known/jwks.json"
 
@@ -197,7 +198,8 @@ def _fetch_jwks(auth0_domain: str) -> dict[str, Any]:
                 auth0_domain=auth0_domain,
                 cached_age_seconds=int(now - _jwks_cache["fetched_at"]),
             )
-            return _jwks_cache["keys"]
+            stale_keys: dict[str, Any] = _jwks_cache["keys"]
+            return stale_keys
 
         raise RuntimeError(
             f"Unable to fetch JWKS from {jwks_url} and no cached keys available"

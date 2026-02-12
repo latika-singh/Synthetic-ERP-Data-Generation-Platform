@@ -61,7 +61,7 @@ try:
     _OTEL_AVAILABLE: bool = True
 except ImportError:
     trace = None  # type: ignore[assignment]
-    StatusCode = None  # type: ignore[assignment]
+    StatusCode = None  # type: ignore[assignment,misc]
     _OTEL_AVAILABLE = False
 
 

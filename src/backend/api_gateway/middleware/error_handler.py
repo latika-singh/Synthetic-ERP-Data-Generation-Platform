@@ -831,7 +831,7 @@ class ServiceCircuitBreaker:
             """
             return func(*args, **kwargs)
 
-        return _proxy
+        return _proxy  # type: ignore[no-any-return]
 
     def call(
         self,
@@ -960,7 +960,7 @@ def with_retry(
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
-                except retryable_exceptions as exc:  # type: ignore[misc]
+                except retryable_exceptions as exc:
                     last_exception = exc
 
                     if attempt < max_retries:

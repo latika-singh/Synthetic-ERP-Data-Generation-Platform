@@ -50,15 +50,18 @@ from __future__ import annotations
 import enum
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
-from flask import current_app
 from pymongo import ASCENDING, DESCENDING, IndexModel, ReturnDocument
-from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 
 from api_gateway.extensions import get_db
+
+
+if TYPE_CHECKING:
+    from pymongo.collection import Collection
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — works with the structlog ProcessorFormatter
@@ -73,15 +76,16 @@ logger: logging.Logger = logging.getLogger(__name__)
 # ===================================================================
 
 
-class UserRole(str, enum.Enum):
+class UserRole(enum.StrEnum):
     """RBAC roles for the Synthetic ERP Data Generation Platform.
 
     Five graduated roles with increasing privilege levels as defined in
     Section 6.4 Security Architecture.  Each role maps to a deterministic
     permission set via :data:`ROLE_PERMISSIONS`.
 
-    Inherits from ``str`` so that enum values serialise cleanly to/from
-    MongoDB string fields without additional conversion.
+    Inherits from :class:`enum.StrEnum` (Python 3.11+) so that enum values
+    serialise cleanly to/from MongoDB string fields without additional
+    conversion.
 
     Attributes:
         PLATFORM_ADMIN: Full system access including user/tenant management,
@@ -102,11 +106,14 @@ class UserRole(str, enum.Enum):
     DATA_ANALYST = "data_analyst"
 
 
-class UserStatus(str, enum.Enum):
+class UserStatus(enum.StrEnum):
     """User account lifecycle states.
 
     Supports soft-delete semantics (``INACTIVE`` instead of hard deletion)
     to maintain audit trails per SOC 2 Type II compliance (C-004).
+
+    Inherits from :class:`enum.StrEnum` (Python 3.11+) for seamless
+    string serialisation to/from MongoDB.
 
     Attributes:
         ACTIVE: User can authenticate and access resources normally.
@@ -373,12 +380,12 @@ class User:
             valid_roles = [r.value for r in UserRole]
             raise ValueError(
                 f"Invalid role '{role}'. Must be one of: {valid_roles}"
-            )
+            ) from None
 
         # Compute permissions for the validated role
         permissions: list[str] = list(ROLE_PERMISSIONS.get(validated_role, []))
 
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
         user_id: str = str(uuid.uuid4())
 
         document: dict[str, Any] = {
@@ -425,7 +432,7 @@ class User:
                     "role": validated_role.value,
                 },
             )
-            existing: Optional[dict] = collection.find_one(
+            existing: dict | None = collection.find_one(
                 {"auth0_user_id": auth0_user_id}
             )
             if existing is not None:
@@ -440,7 +447,7 @@ class User:
     # ------------------------------------------------------------------
 
     @classmethod
-    def find_by_id(cls, user_id: str, tenant_id: str) -> Optional[dict]:
+    def find_by_id(cls, user_id: str, tenant_id: str) -> dict | None:
         """Find a user by platform ``user_id`` within a tenant.
 
         Enforces multi-tenant isolation (R-007) by requiring both
@@ -457,7 +464,7 @@ class User:
                 a string, or ``None`` if no matching document exists.
         """
         collection: Collection = cls.get_collection()
-        doc: Optional[dict] = collection.find_one(
+        doc: dict | None = collection.find_one(
             {"user_id": user_id, "tenant_id": tenant_id}
         )
         if doc is not None:
@@ -465,7 +472,7 @@ class User:
         return doc
 
     @classmethod
-    def find_by_auth0_id(cls, auth0_user_id: str) -> Optional[dict]:
+    def find_by_auth0_id(cls, auth0_user_id: str) -> dict | None:
         """Find a user by their Auth0 ``sub`` claim.
 
         Used during the Auth0 login callback to map an Auth0 identity to
@@ -482,7 +489,7 @@ class User:
                 the given Auth0 identity.
         """
         collection: Collection = cls.get_collection()
-        doc: Optional[dict] = collection.find_one(
+        doc: dict | None = collection.find_one(
             {"auth0_user_id": auth0_user_id}
         )
         if doc is not None:
@@ -490,7 +497,7 @@ class User:
         return doc
 
     @classmethod
-    def find_by_email(cls, email: str, tenant_id: str) -> Optional[dict]:
+    def find_by_email(cls, email: str, tenant_id: str) -> dict | None:
         """Find a user by email address within a tenant.
 
         Enforces multi-tenant isolation (R-007) by filtering on both
@@ -505,7 +512,7 @@ class User:
                 a string, or ``None`` if not found.
         """
         collection: Collection = cls.get_collection()
-        doc: Optional[dict] = collection.find_one(
+        doc: dict | None = collection.find_one(
             {"email": email, "tenant_id": tenant_id}
         )
         if doc is not None:
@@ -516,8 +523,8 @@ class User:
     def find_by_tenant(
         cls,
         tenant_id: str,
-        role: Optional[str] = None,
-        status: Optional[str] = None,
+        role: str | None = None,
+        status: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
@@ -598,7 +605,7 @@ class User:
         user_id: str,
         tenant_id: str,
         new_role: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Update a user's RBAC role and recompute permissions.
 
         Validates the new role against :class:`UserRole`, recalculates
@@ -627,13 +634,13 @@ class User:
             valid_roles = [r.value for r in UserRole]
             raise ValueError(
                 f"Invalid role '{new_role}'. Must be one of: {valid_roles}"
-            )
+            ) from None
 
         permissions: list[str] = list(ROLE_PERMISSIONS.get(validated_role, []))
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
 
         collection: Collection = cls.get_collection()
-        doc: Optional[dict] = collection.find_one_and_update(
+        doc: dict | None = collection.find_one_and_update(
             {"user_id": user_id, "tenant_id": tenant_id},
             {
                 "$set": {
@@ -659,7 +666,7 @@ class User:
         return doc
 
     @classmethod
-    def update_last_login(cls, auth0_user_id: str) -> Optional[dict]:
+    def update_last_login(cls, auth0_user_id: str) -> dict | None:
         """Record a successful login for the given Auth0 identity.
 
         Updates ``last_login`` to the current UTC timestamp, increments
@@ -675,10 +682,10 @@ class User:
                 or ``None`` if no user is registered with the given
                 Auth0 identity.
         """
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
         collection: Collection = cls.get_collection()
 
-        doc: Optional[dict] = collection.find_one_and_update(
+        doc: dict | None = collection.find_one_and_update(
             {"auth0_user_id": auth0_user_id},
             {
                 "$set": {
@@ -710,7 +717,7 @@ class User:
         user_id: str,
         tenant_id: str,
         updates: dict[str, Any],
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Update whitelisted profile fields for a user.
 
         Only the following fields may be updated via this method:
@@ -745,10 +752,10 @@ class User:
             # Nothing to update — return current document unchanged
             return cls.find_by_id(user_id, tenant_id)
 
-        filtered_updates["updated_at"] = datetime.now(timezone.utc)
+        filtered_updates["updated_at"] = datetime.now(UTC)
 
         collection: Collection = cls.get_collection()
-        doc: Optional[dict] = collection.find_one_and_update(
+        doc: dict | None = collection.find_one_and_update(
             {"user_id": user_id, "tenant_id": tenant_id},
             {"$set": filtered_updates},
             return_document=ReturnDocument.AFTER,
@@ -772,7 +779,7 @@ class User:
         return doc
 
     @classmethod
-    def deactivate(cls, user_id: str, tenant_id: str) -> Optional[dict]:
+    def deactivate(cls, user_id: str, tenant_id: str) -> dict | None:
         """Soft-delete a user by setting status to ``INACTIVE``.
 
         Does **not** remove the document from MongoDB — preserves the
@@ -789,10 +796,10 @@ class User:
                 or ``None`` if the user was not found within the
                 specified tenant.
         """
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
         collection: Collection = cls.get_collection()
 
-        doc: Optional[dict] = collection.find_one_and_update(
+        doc: dict | None = collection.find_one_and_update(
             {"user_id": user_id, "tenant_id": tenant_id},
             {
                 "$set": {
@@ -823,7 +830,7 @@ class User:
     def count_by_tenant(
         cls,
         tenant_id: str,
-        role: Optional[str] = None,
+        role: str | None = None,
     ) -> int:
         """Count users belonging to a tenant, optionally filtered by role.
 
@@ -865,7 +872,7 @@ class User:
                 Returns an empty list if the user is not found or the
                 stored role value is unrecognised.
         """
-        doc: Optional[dict] = cls.find_by_id(user_id, tenant_id)
+        doc: dict | None = cls.find_by_id(user_id, tenant_id)
         if doc is None:
             return []
 

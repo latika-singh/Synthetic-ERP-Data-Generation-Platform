@@ -232,7 +232,7 @@ def _check_rate_limit(
         return (True, rate_limit, int(now + DEFAULT_WINDOW_SIZE))
 
     key: str = f"{REDIS_KEY_PREFIX}{user_id}"
-    now: float = time.time()
+    now = time.time()
     window_start: float = now - DEFAULT_WINDOW_SIZE
 
     # Generate a unique member to prevent ZSET collisions when multiple

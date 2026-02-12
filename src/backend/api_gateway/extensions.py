@@ -249,7 +249,8 @@ def get_db() -> Database:
     """
     try:
         # Primary path: retrieve from Flask app context (fast, no singleton check).
-        return current_app.extensions["mongodb_db"]
+        db: Database = current_app.extensions["mongodb_db"]
+        return db
     except (RuntimeError, KeyError):
         # Fallback: no active Flask context or extension not registered yet.
         # This branch supports CLI utilities, background workers, and tests
@@ -289,7 +290,8 @@ def get_redis() -> redis.Redis:
     """
     try:
         # Primary path: retrieve from Flask app context (fast, no singleton check).
-        return current_app.extensions["redis"]
+        redis_client: redis.Redis = current_app.extensions["redis"]
+        return redis_client
     except (RuntimeError, KeyError):
         # Fallback: no active Flask context or extension not registered yet.
         return get_redis_client()

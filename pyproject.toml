@@ -258,6 +258,12 @@ module = [
     "google.*",
     "mongomock.*",
     "structlog.*",
+    "flask_cors",
+    "flask_cors.*",
+    "jose",
+    "jose.*",
+    "jose.jwt",
+    "jose.jwt.*",
 ]
 ignore_missing_imports = true
 
@@ -272,6 +278,7 @@ ignore_missing_imports = true
 # py.typed marker.
 [[tool.mypy.overrides]]
 module = [
+    "api_gateway.app",
     "shared.auth.*",
     "shared.middleware.*",
     "compliance_service.app",
