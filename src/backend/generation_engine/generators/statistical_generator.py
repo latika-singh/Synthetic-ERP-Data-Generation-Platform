@@ -58,7 +58,7 @@ from scipy.stats import (
     uniform,
 )
 
-from generators.base import (
+from generation_engine.generators.base import (
     BaseGenerator,
     ColumnSpec,
     GenerationConfig,
