@@ -57,7 +57,7 @@ from __future__ import annotations
 import io
 import os
 from datetime import timedelta
-from typing import Any, BinaryIO, Dict, Generator, List, Optional
+from typing import Any, BinaryIO
 
 from google.cloud import storage as gcs_storage
 from google.cloud.exceptions import Conflict, GoogleCloudError, NotFound
@@ -66,6 +66,7 @@ from google.oauth2 import service_account
 
 from provisioning_service.cloud.base import BaseCloudProvider
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — used for module-scope diagnostics only.  Each
@@ -136,7 +137,7 @@ class GCSProvider(BaseCloudProvider):
     MAX_RETRIES: int = 3
     """Maximum retry attempts for transient GCS API failures."""
 
-    SUPPORTED_STORAGE_CLASSES: List[str] = [
+    SUPPORTED_STORAGE_CLASSES: list[str] = [
         "STANDARD",
         "NEARLINE",
         "COLDLINE",
@@ -148,7 +149,7 @@ class GCSProvider(BaseCloudProvider):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialise the GCS provider with project and credential settings.
 
         Extracts GCS-specific configuration *before* calling
@@ -172,7 +173,7 @@ class GCSProvider(BaseCloudProvider):
         self._project_id: str = str(
             config.get("project_id") or os.environ.get("GCP_PROJECT_ID", "")
         )
-        self._service_account_key_path: Optional[str] = (
+        self._service_account_key_path: str | None = (
             config.get("service_account_key_path")
             or os.environ.get("GCP_SERVICE_ACCOUNT_KEY_PATH")
         )
@@ -193,9 +194,9 @@ class GCSProvider(BaseCloudProvider):
 
         # Client / bucket / credential references initialised to None;
         # _initialize_client() will populate them.
-        self._client: Optional[gcs_storage.Client] = None
-        self._bucket: Optional[gcs_storage.Bucket] = None
-        self._credentials: Optional[service_account.Credentials] = None
+        self._client: gcs_storage.Client | None = None
+        self._bucket: gcs_storage.Bucket | None = None
+        self._credentials: service_account.Credentials | None = None
 
         # Delegate to BaseCloudProvider which stores config, sets up the
         # logger, initialises metrics, and finally calls _initialize_client().
@@ -314,9 +315,9 @@ class GCSProvider(BaseCloudProvider):
         self,
         local_path: str,
         remote_key: str,
-        metadata: Optional[Dict[str, str]] = None,
-        content_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, str] | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         """Upload a local file to a GCS bucket.
 
         Files exceeding :attr:`RESUMABLE_THRESHOLD` (5 MiB) are uploaded
@@ -365,7 +366,7 @@ class GCSProvider(BaseCloudProvider):
         # Resolve content type.
         resolved_ct = content_type or self._detect_content_type(local_path)
 
-        def _do_upload() -> Dict[str, Any]:
+        def _do_upload() -> dict[str, Any]:
             blob = self._bucket.blob(full_key, chunk_size=self._chunk_size)
             blob.content_type = resolved_ct
 
@@ -385,7 +386,7 @@ class GCSProvider(BaseCloudProvider):
             self._total_bytes_uploaded += blob.size or file_size
             self._total_operations += 1
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "provider": self.PROVIDER_NAME,
                 "bucket": self._bucket_name,
                 "key": full_key,
@@ -429,10 +430,10 @@ class GCSProvider(BaseCloudProvider):
         self,
         stream: BinaryIO,
         remote_key: str,
-        content_length: Optional[int] = None,
-        metadata: Optional[Dict[str, str]] = None,
-        content_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        content_length: int | None = None,
+        metadata: dict[str, str] | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         """Upload data from a binary stream to a GCS bucket.
 
         Supports streaming uploads for large datasets that are generated
@@ -461,7 +462,7 @@ class GCSProvider(BaseCloudProvider):
         full_key = self._build_remote_key(remote_key)
         resolved_ct = content_type or "application/octet-stream"
 
-        def _do_stream_upload() -> Dict[str, Any]:
+        def _do_stream_upload() -> dict[str, Any]:
             blob = self._bucket.blob(full_key, chunk_size=self._chunk_size)
             blob.content_type = resolved_ct
 
@@ -494,7 +495,7 @@ class GCSProvider(BaseCloudProvider):
             self._total_bytes_uploaded += uploaded_size
             self._total_operations += 1
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "provider": self.PROVIDER_NAME,
                 "bucket": self._bucket_name,
                 "key": full_key,
@@ -535,7 +536,7 @@ class GCSProvider(BaseCloudProvider):
     # Download operations
     # ------------------------------------------------------------------
 
-    def download(self, remote_key: str, local_path: str) -> Dict[str, Any]:
+    def download(self, remote_key: str, local_path: str) -> dict[str, Any]:
         """Download a GCS object to a local file.
 
         Args:
@@ -563,7 +564,7 @@ class GCSProvider(BaseCloudProvider):
 
         full_key = self._build_remote_key(remote_key)
 
-        def _do_download() -> Dict[str, Any]:
+        def _do_download() -> dict[str, Any]:
             blob = self._bucket.blob(full_key)
 
             try:
@@ -686,9 +687,9 @@ class GCSProvider(BaseCloudProvider):
 
     def list_objects(
         self,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
         max_results: int = 1000,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List objects in the GCS bucket with optional prefix filtering.
 
         The configured tenant prefix is automatically combined with the
@@ -729,14 +730,14 @@ class GCSProvider(BaseCloudProvider):
         else:
             full_prefix = None
 
-        def _do_list() -> List[Dict[str, Any]]:
+        def _do_list() -> list[dict[str, Any]]:
             blobs_iter = self._client.list_blobs(
                 self._bucket,
                 prefix=full_prefix,
                 max_results=max_results,
             )
 
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             for blob in blobs_iter:
                 updated_str = ""
                 if blob.updated:
@@ -838,7 +839,7 @@ class GCSProvider(BaseCloudProvider):
                 f"GCS delete failed for '{full_key}': {exc}"
             ) from exc
 
-    def delete_many(self, remote_keys: List[str]) -> Dict[str, Any]:
+    def delete_many(self, remote_keys: list[str]) -> dict[str, Any]:
         """Delete multiple objects in a batch operation.
 
         Uses the GCS client batch context manager to group individual
@@ -868,7 +869,7 @@ class GCSProvider(BaseCloudProvider):
             return {"deleted": 0, "errors": []}
 
         deleted_count = 0
-        errors: List[Dict[str, str]] = []
+        errors: list[dict[str, str]] = []
 
         # GCS batch API supports up to 100 operations per batch request.
         batch_size = 100
@@ -943,7 +944,7 @@ class GCSProvider(BaseCloudProvider):
                 f"GCS exists check failed for '{full_key}': {exc}"
             ) from exc
 
-    def get_metadata(self, remote_key: str) -> Dict[str, Any]:
+    def get_metadata(self, remote_key: str) -> dict[str, Any]:
         """Retrieve object metadata without downloading the object body.
 
         Performs a ``blob.reload()`` (equivalent to a ``GET`` with no body)
@@ -978,7 +979,7 @@ class GCSProvider(BaseCloudProvider):
 
         full_key = self._build_remote_key(remote_key)
 
-        def _do_get_metadata() -> Dict[str, Any]:
+        def _do_get_metadata() -> dict[str, Any]:
             blob = self._bucket.blob(full_key)
             try:
                 blob.reload()
@@ -1102,7 +1103,7 @@ class GCSProvider(BaseCloudProvider):
     # Health check
     # ------------------------------------------------------------------
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Verify GCS connectivity and bucket access.
 
         Performs a lightweight ``bucket.exists()`` probe and measures the
@@ -1125,7 +1126,7 @@ class GCSProvider(BaseCloudProvider):
         # Collect operational metrics from the base-class tracker.
         metrics = self.get_metrics()
 
-        base_result: Dict[str, Any] = {
+        base_result: dict[str, Any] = {
             "status": "unhealthy",
             "provider": self.PROVIDER_NAME,
             "bucket": self._bucket_name,
