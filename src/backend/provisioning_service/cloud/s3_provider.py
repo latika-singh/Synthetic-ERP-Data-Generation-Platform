@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import io
 import os
-from typing import Any, BinaryIO, Dict, Generator, List, Optional
+from typing import Any, BinaryIO
 
 import boto3
 from boto3.s3.transfer import TransferConfig
@@ -64,6 +64,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from provisioning_service.cloud.base import BaseCloudProvider
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -132,14 +133,14 @@ class S3Provider(BaseCloudProvider):
     MAX_UPLOAD_CONCURRENCY: int = 10
     """Maximum number of parallel upload threads for multi-part transfers."""
 
-    SUPPORTED_ENCRYPTION_METHODS: List[str] = ["AES256", "aws:kms"]
+    SUPPORTED_ENCRYPTION_METHODS: list[str] = ["AES256", "aws:kms"]
     """Supported S3 server-side encryption algorithms."""
 
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialise the S3 provider with the given configuration.
 
         Extracts AWS credentials (from *config* or environment variables),
@@ -153,19 +154,31 @@ class S3Provider(BaseCloudProvider):
                 docstring for supported keys.
 
         Raises:
-            ValueError: If ``bucket_name`` is missing, or if an
-                unsupported ``encryption_method`` is supplied.
+            ValueError: If *config* is ``None`` or not a dict, if
+                ``bucket_name`` is missing, or if an unsupported
+                ``encryption_method`` is supplied.
         """
+        # Early guard — the base class also validates, but we must check
+        # before accessing dict methods to give a clear error message.
+        if config is None:
+            raise ValueError(
+                "S3Provider requires a non-None configuration dictionary."
+            )
+        if not isinstance(config, dict):
+            raise ValueError(
+                f"S3Provider config must be a dict, got {type(config).__name__}."
+            )
+
         # Extract AWS credentials — config takes precedence over env vars.
-        self._aws_access_key_id: Optional[str] = config.get(
+        self._aws_access_key_id: str | None = config.get(
             "aws_access_key_id",
             os.environ.get("AWS_ACCESS_KEY_ID"),
         )
-        self._aws_secret_access_key: Optional[str] = config.get(
+        self._aws_secret_access_key: str | None = config.get(
             "aws_secret_access_key",
             os.environ.get("AWS_SECRET_ACCESS_KEY"),
         )
-        self._aws_session_token: Optional[str] = config.get(
+        self._aws_session_token: str | None = config.get(
             "aws_session_token",
             os.environ.get("AWS_SESSION_TOKEN"),
         )
@@ -177,7 +190,7 @@ class S3Provider(BaseCloudProvider):
         )
 
         # S3-compatible endpoint URL (MinIO, LocalStack) — optional.
-        self._endpoint_url: Optional[str] = config.get(
+        self._endpoint_url: str | None = config.get(
             "endpoint_url",
             os.environ.get("AWS_S3_ENDPOINT_URL"),
         )
@@ -199,12 +212,12 @@ class S3Provider(BaseCloudProvider):
                 f"Unsupported encryption_method '{self._encryption_method}'. "
                 f"Supported: {self.SUPPORTED_ENCRYPTION_METHODS}"
             )
-        self._kms_key_id: Optional[str] = config.get("kms_key_id")
+        self._kms_key_id: str | None = config.get("kms_key_id")
 
         # boto3 objects — initialised by _initialize_client() via super().__init__.
         self._client: Any = None
         self._resource: Any = None
-        self._transfer_config: Optional[TransferConfig] = None
+        self._transfer_config: TransferConfig | None = None
 
         # Delegate to BaseCloudProvider.__init__ → _initialize_client().
         super().__init__(config)
@@ -243,7 +256,7 @@ class S3Provider(BaseCloudProvider):
             # Build a session with explicit credentials when available,
             # otherwise rely on the default credential chain (IAM role,
             # env vars, ~/.aws/credentials).
-            session_kwargs: Dict[str, Any] = {
+            session_kwargs: dict[str, Any] = {
                 "region_name": self._region,
             }
             if self._aws_access_key_id and self._aws_secret_access_key:
@@ -257,14 +270,14 @@ class S3Provider(BaseCloudProvider):
             session = boto3.Session(**session_kwargs)
 
             # Low-level S3 client for all API calls.
-            client_kwargs: Dict[str, Any] = {"config": boto_config}
+            client_kwargs: dict[str, Any] = {"config": boto_config}
             if self._endpoint_url:
                 client_kwargs["endpoint_url"] = self._endpoint_url
 
             self._client = session.client("s3", **client_kwargs)
 
             # High-level S3 resource for managed file transfers.
-            resource_kwargs: Dict[str, Any] = {}
+            resource_kwargs: dict[str, Any] = {}
             if self._endpoint_url:
                 resource_kwargs["endpoint_url"] = self._endpoint_url
             self._resource = session.resource("s3", **resource_kwargs)
@@ -307,9 +320,9 @@ class S3Provider(BaseCloudProvider):
 
     def _build_extra_args(
         self,
-        metadata: Optional[Dict[str, str]] = None,
-        content_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, str] | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         """Build the ``ExtraArgs`` dictionary for S3 upload operations.
 
         Merges server-side encryption settings, user metadata, and
@@ -324,7 +337,7 @@ class S3Provider(BaseCloudProvider):
             Dictionary of S3 extra arguments with encryption, metadata,
             and content type fields set as appropriate.
         """
-        extra_args: Dict[str, Any] = {}
+        extra_args: dict[str, Any] = {}
 
         # Server-side encryption.
         if self._encryption_enabled:
@@ -372,9 +385,9 @@ class S3Provider(BaseCloudProvider):
         self,
         local_path: str,
         remote_key: str,
-        metadata: Optional[Dict[str, str]] = None,
-        content_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, str] | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         """Upload a local file to Amazon S3.
 
         Automatically uses multi-part upload when the file size exceeds
@@ -441,7 +454,7 @@ class S3Provider(BaseCloudProvider):
         self._total_bytes_uploaded += file_size
         self._total_operations += 1
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "provider": self.PROVIDER_NAME,
             "bucket": self._bucket_name,
             "key": full_key,
@@ -467,10 +480,10 @@ class S3Provider(BaseCloudProvider):
         self,
         stream: BinaryIO,
         remote_key: str,
-        content_length: Optional[int] = None,
-        metadata: Optional[Dict[str, str]] = None,
-        content_type: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        content_length: int | None = None,
+        metadata: dict[str, str] | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         """Upload data from a binary stream to S3 using multi-part upload.
 
         When *content_length* is known and fits within the multi-part
@@ -527,7 +540,7 @@ class S3Provider(BaseCloudProvider):
         self._total_bytes_uploaded += total_uploaded
         self._total_operations += 1
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "provider": self.PROVIDER_NAME,
             "bucket": self._bucket_name,
             "key": full_key,
@@ -558,7 +571,7 @@ class S3Provider(BaseCloudProvider):
         stream: BinaryIO,
         full_key: str,
         content_length: int,
-        extra_args: Dict[str, Any],
+        extra_args: dict[str, Any],
     ) -> int:
         """Upload a stream in a single ``put_object`` call.
 
@@ -571,7 +584,7 @@ class S3Provider(BaseCloudProvider):
         Returns:
             Number of bytes uploaded.
         """
-        put_kwargs: Dict[str, Any] = {
+        put_kwargs: dict[str, Any] = {
             "Bucket": self._bucket_name,
             "Key": full_key,
             "Body": stream,
@@ -589,7 +602,7 @@ class S3Provider(BaseCloudProvider):
         self,
         stream: BinaryIO,
         full_key: str,
-        extra_args: Dict[str, Any],
+        extra_args: dict[str, Any],
     ) -> int:
         """Upload a stream via manual multi-part upload.
 
@@ -609,7 +622,7 @@ class S3Provider(BaseCloudProvider):
             RuntimeError: If the multi-part upload fails.
         """
         # Initiate multi-part upload.
-        mpu_kwargs: Dict[str, Any] = {
+        mpu_kwargs: dict[str, Any] = {
             "Bucket": self._bucket_name,
             "Key": full_key,
         }
@@ -626,7 +639,7 @@ class S3Provider(BaseCloudProvider):
         mpu_response = self._client.create_multipart_upload(**mpu_kwargs)
         upload_id: str = mpu_response["UploadId"]
 
-        parts: List[Dict[str, Any]] = []
+        parts: list[dict[str, Any]] = []
         part_number = 1
         total_bytes = 0
 
@@ -679,7 +692,7 @@ class S3Provider(BaseCloudProvider):
                     Key=full_key,
                     UploadId=upload_id,
                 )
-                put_args: Dict[str, Any] = {
+                put_args: dict[str, Any] = {
                     "Bucket": self._bucket_name,
                     "Key": full_key,
                     "Body": b"",
@@ -718,7 +731,7 @@ class S3Provider(BaseCloudProvider):
     # Download operations
     # ------------------------------------------------------------------
 
-    def download(self, remote_key: str, local_path: str) -> Dict[str, Any]:
+    def download(self, remote_key: str, local_path: str) -> dict[str, Any]:
         """Download an S3 object to a local file.
 
         Uses the ``boto3`` managed transfer which automatically selects
@@ -775,7 +788,7 @@ class S3Provider(BaseCloudProvider):
         self._total_bytes_downloaded += downloaded_size
         self._total_operations += 1
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "provider": self.PROVIDER_NAME,
             "bucket": self._bucket_name,
             "key": full_key,
@@ -822,7 +835,7 @@ class S3Provider(BaseCloudProvider):
             key=full_key,
         )
 
-        def _do_get() -> Dict[str, Any]:
+        def _do_get() -> dict[str, Any]:
             return self._client.get_object(
                 Bucket=self._bucket_name,
                 Key=full_key,
@@ -865,9 +878,9 @@ class S3Provider(BaseCloudProvider):
 
     def list_objects(
         self,
-        prefix: Optional[str] = None,
+        prefix: str | None = None,
         max_results: int = 1000,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List objects in the S3 bucket, optionally filtered by prefix.
 
         Uses the S3 ``list_objects_v2`` paginator for efficient retrieval
@@ -901,13 +914,13 @@ class S3Provider(BaseCloudProvider):
             max_results=max_results,
         )
 
-        objects: List[Dict[str, Any]] = []
+        objects: list[dict[str, Any]] = []
 
-        def _do_list() -> List[Dict[str, Any]]:
-            collected: List[Dict[str, Any]] = []
+        def _do_list() -> list[dict[str, Any]]:
+            collected: list[dict[str, Any]] = []
             paginator = self._client.get_paginator("list_objects_v2")
 
-            page_config: Dict[str, Any] = {
+            page_config: dict[str, Any] = {
                 "Bucket": self._bucket_name,
                 "MaxKeys": min(max_results, 1000),
             }
@@ -1031,7 +1044,7 @@ class S3Provider(BaseCloudProvider):
 
         return True
 
-    def delete_many(self, remote_keys: List[str]) -> Dict[str, Any]:
+    def delete_many(self, remote_keys: list[str]) -> dict[str, Any]:
         """Delete multiple S3 objects in a single batch operation.
 
         Uses S3's ``delete_objects`` API which supports up to 1000 keys
@@ -1064,20 +1077,20 @@ class S3Provider(BaseCloudProvider):
         )
 
         total_deleted = 0
-        all_errors: List[Dict[str, str]] = []
+        all_errors: list[dict[str, str]] = []
 
         # S3 delete_objects accepts a max of 1000 keys per request.
         batch_size = 1000
         for i in range(0, len(full_keys), batch_size):
             batch = full_keys[i : i + batch_size]
-            delete_payload: Dict[str, Any] = {
+            delete_payload: dict[str, Any] = {
                 "Objects": [{"Key": k} for k in batch],
                 "Quiet": False,
             }
 
             def _do_batch_delete(
-                payload: Dict[str, Any] = delete_payload,
-            ) -> Dict[str, Any]:
+                payload: dict[str, Any] = delete_payload,
+            ) -> dict[str, Any]:
                 return self._client.delete_objects(
                     Bucket=self._bucket_name,
                     Delete=payload,
@@ -1107,7 +1120,7 @@ class S3Provider(BaseCloudProvider):
 
         self._total_operations += 1
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "deleted": total_deleted,
             "errors": all_errors,
         }
@@ -1177,7 +1190,7 @@ class S3Provider(BaseCloudProvider):
                 f"S3 existence check failed for key '{full_key}': {exc}"
             ) from exc
 
-    def get_metadata(self, remote_key: str) -> Dict[str, Any]:
+    def get_metadata(self, remote_key: str) -> dict[str, Any]:
         """Retrieve metadata for an S3 object without downloading its body.
 
         Uses ``head_object`` to fetch content type, size, last-modified
@@ -1206,7 +1219,7 @@ class S3Provider(BaseCloudProvider):
             key=full_key,
         )
 
-        def _do_head() -> Dict[str, Any]:
+        def _do_head() -> dict[str, Any]:
             return self._client.head_object(
                 Bucket=self._bucket_name,
                 Key=full_key,
@@ -1280,7 +1293,7 @@ class S3Provider(BaseCloudProvider):
         full_key = self._build_remote_key(remote_key)
 
         # Map human-friendly HTTP method to S3 client method name.
-        client_method_map: Dict[str, str] = {
+        client_method_map: dict[str, str] = {
             "GET": "get_object",
             "PUT": "put_object",
         }
@@ -1334,7 +1347,7 @@ class S3Provider(BaseCloudProvider):
     # Health check
     # ------------------------------------------------------------------
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Verify S3 connectivity by performing a ``head_bucket`` call.
 
         Measures the round-trip latency and returns a structured health
@@ -1358,7 +1371,7 @@ class S3Provider(BaseCloudProvider):
 
             _, latency_ms = self._measure_latency(_do_head_bucket)
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "status": "healthy",
                 "provider": self.PROVIDER_NAME,
                 "bucket": self._bucket_name,
