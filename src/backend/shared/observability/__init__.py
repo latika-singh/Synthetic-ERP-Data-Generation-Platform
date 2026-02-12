@@ -73,7 +73,7 @@ __all__: list[str] = []
 # ---------------------------------------------------------------------------
 
 try:
-    from shared.observability.tracing import (  # noqa: F401
+    from shared.observability.tracing import (
         create_span,
         extract_trace_context,
         get_current_span_id,
@@ -86,13 +86,13 @@ try:
 
     __all__.extend(
         [
-            "init_tracing",
-            "get_tracer",
-            "inject_trace_context",
             "create_span",
             "extract_trace_context",
-            "get_current_trace_id",
             "get_current_span_id",
+            "get_current_trace_id",
+            "get_tracer",
+            "init_tracing",
+            "inject_trace_context",
             "shutdown_tracing",
         ]
     )
@@ -110,7 +110,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 try:
-    from shared.observability.metrics import (  # noqa: F401
+    from shared.observability.metrics import (
         ACTIVE_CONNECTIONS,
         COMPLIANCE_CHECK_DURATION,
         ERROR_COUNTER,
@@ -131,25 +131,22 @@ try:
 
     __all__.extend(
         [
-            # Core initialisation and Blueprint
-            "setup_metrics",
-            "metrics_blueprint",
-            "register_custom_metric",
+            "ACTIVE_CONNECTIONS",
+            "COMPLIANCE_CHECK_DURATION",
+            "ERROR_COUNTER",
+            "GENERATION_JOB_DURATION",
+            "GENERATION_JOB_THROUGHPUT",
+            "HTTP_REQUEST_DURATION",
+            "HTTP_REQUEST_IN_PROGRESS",
+            "HTTP_REQUEST_TOTAL",
+            "QUALITY_SCORE",
             "get_metrics_registry",
-            # Decorator and convenience helpers
-            "track_request_metrics",
+            "metrics_blueprint",
             "record_error",
             "record_generation_throughput",
-            # Pre-registered standard metric constants
-            "HTTP_REQUEST_DURATION",
-            "HTTP_REQUEST_TOTAL",
-            "HTTP_REQUEST_IN_PROGRESS",
-            "ACTIVE_CONNECTIONS",
-            "GENERATION_JOB_THROUGHPUT",
-            "GENERATION_JOB_DURATION",
-            "ERROR_COUNTER",
-            "QUALITY_SCORE",
-            "COMPLIANCE_CHECK_DURATION",
+            "register_custom_metric",
+            "setup_metrics",
+            "track_request_metrics",
         ]
     )
 except ImportError:
