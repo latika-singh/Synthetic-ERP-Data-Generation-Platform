@@ -703,7 +703,9 @@ def require_role(*roles: str) -> Callable[[F], F]:
         def create_job():
             ...
     """
-    allowed_roles: list[str] = [str(r) for r in roles]
+    allowed_roles: list[str] = [
+        r.value if isinstance(r, enum.Enum) else str(r) for r in roles
+    ]
 
     def decorator(fn: F) -> F:
         @functools.wraps(fn)
@@ -820,7 +822,9 @@ def require_permission(permission: str) -> Callable[[F], F]:
         def create_job():
             ...
     """
-    required_permission: str = str(permission)
+    required_permission: str = (
+        permission.value if isinstance(permission, enum.Enum) else str(permission)
+    )
 
     def decorator(fn: F) -> F:
         @functools.wraps(fn)
