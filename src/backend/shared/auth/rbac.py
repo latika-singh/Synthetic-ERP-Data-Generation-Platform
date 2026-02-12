@@ -528,7 +528,7 @@ class OPAClient:
                 status_code=response.status_code,
             )
 
-            return result.get("result", {})
+            return dict(result.get("result", {}))
 
         except requests.exceptions.Timeout:
             self._record_failure()
