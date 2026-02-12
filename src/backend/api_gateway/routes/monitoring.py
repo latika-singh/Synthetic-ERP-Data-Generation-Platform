@@ -345,6 +345,11 @@ def _safe_check_service(service: Dict[str, Any]) -> Dict[str, Any]:
     except http_requests.exceptions.RequestException as exc:
         result["status"] = "unhealthy"
         result["detail"] = f"Request error: {exc}"
+        record_error(
+            service="api-gateway",
+            error_type="service_health_check_request_error",
+            endpoint=f"/health/{service['name']}",
+        )
         logger.error(
             "service_health_check_request_error",
             service_name=service["name"],
@@ -356,6 +361,11 @@ def _safe_check_service(service: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as exc:
         result["status"] = "unhealthy"
         result["detail"] = f"Unexpected error: {type(exc).__name__}"
+        record_error(
+            service="api-gateway",
+            error_type="service_health_check_unexpected_error",
+            endpoint=f"/health/{service['name']}",
+        )
         logger.error(
             "service_health_check_unexpected_error",
             service_name=service["name"],
@@ -517,7 +527,9 @@ def prometheus_metrics() -> Response:
             }
         )
     except Exception:
-        pass  # Non-critical — INFO metric is best-effort.
+        # Non-critical: INFO metric update is best-effort; the static
+        # metadata set at module load time is still valid.
+        logger.debug("service_info_metric_update_skipped")
 
     metrics_output: bytes = generate_latest(REGISTRY)
     return Response(
@@ -583,9 +595,10 @@ def system_status() -> tuple[Response, int]:
     app_version: str = current_app.config.get("APP_VERSION", "1.0.0")
     environment: str = current_app.config.get("FLASK_ENV", "production")
 
-    # Attempt to read approximate request/error counts from shared metrics.
+    # Attempt to read approximate request/error/latency counts from shared metrics.
     total_requests: float = 0.0
     total_errors: float = 0.0
+    avg_latency_seconds: float = 0.0
     try:
         if HTTP_REQUEST_TOTAL is not None:
             # Sum across all label combinations for the api-gateway service.
@@ -609,6 +622,25 @@ def system_status() -> tuple[Response, int]:
     except Exception:
         pass
 
+    # Aggregate average request latency from the shared duration histogram.
+    try:
+        if HTTP_REQUEST_DURATION is not None:
+            total_duration_sum: float = 0.0
+            total_duration_count: float = 0.0
+            for metric in HTTP_REQUEST_DURATION.collect():
+                for sample in metric.samples:
+                    if sample.labels.get("service") == "api-gateway":
+                        if sample.name.endswith("_sum"):
+                            total_duration_sum += sample.value
+                        elif sample.name.endswith("_count"):
+                            total_duration_count += sample.value
+            if total_duration_count > 0:
+                avg_latency_seconds = round(
+                    total_duration_sum / total_duration_count, 6
+                )
+    except Exception:
+        pass
+
     error_rate: float = round(
         (total_errors / total_requests * 100) if total_requests > 0 else 0.0,
         2,
@@ -622,6 +654,7 @@ def system_status() -> tuple[Response, int]:
         "request_count": total_requests,
         "error_count": total_errors,
         "error_rate_percent": error_rate,
+        "avg_latency_seconds": avg_latency_seconds,
     }
 
     # --- MongoDB status ---
