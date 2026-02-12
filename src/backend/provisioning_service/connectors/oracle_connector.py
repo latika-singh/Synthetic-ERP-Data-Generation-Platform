@@ -61,13 +61,14 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jaydebeapi
 
 from provisioning_service.connectors.base import BaseConnector
-from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level fallback logger for environments where structlog is not
@@ -81,7 +82,7 @@ _fallback_logger: logging.Logger = logging.getLogger(__name__)
 # Oracle Column-Type Mapping
 # ---------------------------------------------------------------------------
 
-_ORACLE_TYPE_MAP: Dict[str, str] = {
+_ORACLE_TYPE_MAP: dict[str, str] = {
     "STRING": "VARCHAR2(4000)",
     "INTEGER": "NUMBER(10)",
     "BIGINT": "NUMBER(19)",
@@ -111,7 +112,7 @@ _ORACLE_TYPE_MAP: Dict[str, str] = {
 
 
 class OracleConnector(BaseConnector):
-    """Oracle JDBC provisioning connector (19c – 23ai).
+    """Oracle JDBC provisioning connector (19c - 23ai).
 
     Extends :class:`~provisioning_service.connectors.base.BaseConnector` to
     provide full Oracle database provisioning capabilities including table
@@ -163,7 +164,7 @@ class OracleConnector(BaseConnector):
     DRIVER_CLASS: str = "oracle.jdbc.OracleDriver"
     """Fully-qualified Java class name for the Oracle JDBC thin driver."""
 
-    SUPPORTED_VERSIONS: List[str] = ["19c", "21c", "23ai"]
+    SUPPORTED_VERSIONS: list[str] = ["19c", "21c", "23ai"]
     """Oracle Database versions explicitly supported by this connector."""
 
     DEFAULT_PORT: int = 1521
@@ -176,7 +177,7 @@ class OracleConnector(BaseConnector):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialise the Oracle connector with connection and pool settings.
 
         Validates required configuration, resolves the JDBC driver JAR
@@ -227,9 +228,9 @@ class OracleConnector(BaseConnector):
             )
 
         # Oracle-specific connection attributes.
-        self._service_name: Optional[str] = config.get("service_name")
-        self._sid: Optional[str] = config.get("sid")
-        self._tns_entry: Optional[str] = config.get("tns_entry")
+        self._service_name: str | None = config.get("service_name")
+        self._sid: str | None = config.get("sid")
+        self._tns_entry: str | None = config.get("tns_entry")
 
         # Tablespace for multi-tenant table isolation.
         self._tablespace: str = str(
@@ -237,14 +238,14 @@ class OracleConnector(BaseConnector):
         )
 
         # Session timezone override (e.g. "UTC", "US/Eastern").
-        self._timezone: Optional[str] = config.get("timezone")
+        self._timezone: str | None = config.get("timezone")
 
         # Oracle Wallet authentication support.
         self._use_wallet: bool = bool(config.get("use_wallet", False))
-        self._wallet_location: Optional[str] = config.get("wallet_location")
+        self._wallet_location: str | None = config.get("wallet_location")
 
         # Oracle version hint for feature gating (e.g. IS JSON on 21c+).
-        self._oracle_version: Optional[str] = config.get("oracle_version")
+        self._oracle_version: str | None = config.get("oracle_version")
 
         # Resolve the JDBC driver JAR path from config → env → default path.
         self._jdbc_driver_path: str = self._resolve_jdbc_driver_path(config)
@@ -261,6 +262,30 @@ class OracleConnector(BaseConnector):
             tablespace=self._tablespace,
             jdbc_url=self._jdbc_url,
         )
+
+    # ------------------------------------------------------------------
+    # Connection Guard
+    # ------------------------------------------------------------------
+
+    def _require_connection(self) -> Any:
+        """Return the active JDBC connection or raise :class:`ConnectionError`.
+
+        This helper narrows ``self._connection`` from ``Any | None`` to
+        ``Any``, preventing repeated ``is None`` checks in every method
+        and satisfying mypy's strict optional analysis.
+
+        Returns:
+            The active JDBC connection object.
+
+        Raises:
+            ConnectionError: If the connector is not connected.
+        """
+        conn = self._connection
+        if conn is None:
+            raise ConnectionError(
+                "OracleConnector is not connected. Call connect() first."
+            )
+        return conn
 
     # ------------------------------------------------------------------
     # Abstract Method Implementations
@@ -377,7 +402,7 @@ class OracleConnector(BaseConnector):
     def create_table(
         self,
         table_name: str,
-        columns: List[Dict[str, Any]],
+        columns: list[dict[str, Any]],
         if_not_exists: bool = True,
     ) -> None:
         """Create a table in the Oracle database with Oracle-specific DDL.
@@ -410,7 +435,7 @@ class OracleConnector(BaseConnector):
 
         # Build column definitions using the base class helper which
         # invokes _map_column_type() for Oracle type resolution.
-        col_defs: List[str] = [
+        col_defs: list[str] = [
             self._build_column_definition(col) for col in columns
         ]
         col_defs_sql: str = ",\n    ".join(col_defs)
@@ -447,10 +472,11 @@ class OracleConnector(BaseConnector):
         else:
             sql_to_execute = create_sql
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             cursor.execute(sql_to_execute)
-            self._connection.commit()
+            conn.commit()
             self._total_queries_executed += 1
 
             self._logger.info(
@@ -461,7 +487,7 @@ class OracleConnector(BaseConnector):
                 if_not_exists=if_not_exists,
             )
         except Exception as exc:
-            self._connection.rollback()
+            conn.rollback()
             ora_code = self._extract_ora_code(str(exc))
             self._logger.error(
                 "oracle_create_table_failed",
@@ -476,8 +502,8 @@ class OracleConnector(BaseConnector):
     def batch_insert(
         self,
         table_name: str,
-        columns: List[str],
-        data: List[Tuple],
+        columns: list[str],
+        data: list[tuple],
         batch_size: int = 10000,
     ) -> int:
         """Insert rows into an Oracle table using batched array binding.
@@ -526,7 +552,7 @@ class OracleConnector(BaseConnector):
         )
         col_names: str = ", ".join(columns)
         insert_sql: str = (
-            f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"
+            f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})"  # noqa: S608
         )
 
         self._logger.info(
@@ -537,13 +563,16 @@ class OracleConnector(BaseConnector):
             column_count=len(columns),
         )
 
+        # Obtain the active connection once for the loop.
+        conn = self._require_connection()
+
         # Process data in batch chunks.
         for batch_start in range(0, total_rows, batch_size):
             batch_end: int = min(batch_start + batch_size, total_rows)
-            batch_data: List[Tuple] = data[batch_start:batch_end]
+            batch_data: list[tuple] = data[batch_start:batch_end]
             batch_num: int = (batch_start // batch_size) + 1
 
-            cursor = self._connection.cursor()
+            cursor = conn.cursor()
             try:
                 if len(batch_data) <= 100:
                     # Small batch: use INSERT ALL for reduced round-trips.
@@ -554,7 +583,7 @@ class OracleConnector(BaseConnector):
                     # Standard Oracle array binding via executemany.
                     cursor.executemany(insert_sql, batch_data)
 
-                self._connection.commit()
+                conn.commit()
                 rows_in_batch: int = len(batch_data)
                 total_inserted += rows_in_batch
 
@@ -570,7 +599,7 @@ class OracleConnector(BaseConnector):
                 # Roll back the failed batch; previously committed batches
                 # remain durable.
                 try:
-                    self._connection.rollback()
+                    conn.rollback()
                 except Exception as rb_exc:
                     self._logger.warning(
                         "oracle_rollback_error",
@@ -612,8 +641,8 @@ class OracleConnector(BaseConnector):
     def execute_query(
         self,
         query: str,
-        params: Optional[Tuple] = None,
-    ) -> List[Dict[str, Any]]:
+        params: tuple | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute an arbitrary SQL query against the Oracle database.
 
         For ``SELECT`` statements, fetches all results and returns them as
@@ -637,9 +666,10 @@ class OracleConnector(BaseConnector):
             Exception: Propagates Oracle query errors.
         """
         self.ensure_connected()
+        conn = self._require_connection()
 
         start_time: float = time.time()
-        cursor = self._connection.cursor()
+        cursor = conn.cursor()
 
         try:
             if params:
@@ -650,14 +680,14 @@ class OracleConnector(BaseConnector):
             # Determine whether this is a SELECT query by checking for
             # cursor.description (populated only for queries returning rows).
             if cursor.description is not None:
-                column_names: List[str] = [
+                column_names: list[str] = [
                     desc[0] for desc in cursor.description
                 ]
                 raw_rows = cursor.fetchall()
 
-                results: List[Dict[str, Any]] = []
+                results: list[dict[str, Any]] = []
                 for row in raw_rows:
-                    row_dict: Dict[str, Any] = {}
+                    row_dict: dict[str, Any] = {}
                     for idx, value in enumerate(row):
                         # Handle CLOB/BLOB columns that return Java objects
                         # with a .read() method through jaydebeapi.
@@ -677,7 +707,7 @@ class OracleConnector(BaseConnector):
                 return results
 
             # Non-SELECT statement — commit and return empty list.
-            self._connection.commit()
+            conn.commit()
             self._total_queries_executed += 1
 
             elapsed_ms = (time.time() - start_time) * 1000.0
@@ -703,7 +733,7 @@ class OracleConnector(BaseConnector):
         finally:
             cursor.close()
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Verify Oracle database connectivity and return a health status.
 
         Performs a lightweight ``SELECT 1 FROM DUAL`` probe to measure
@@ -725,7 +755,7 @@ class OracleConnector(BaseConnector):
             * ``port`` — Target database port.
             * ``tablespace`` — Configured tablespace.
         """
-        health: Dict[str, Any] = {
+        health: dict[str, Any] = {
             "status": "unhealthy",
             "version": "unknown",
             "active_sessions": -1,
@@ -738,11 +768,12 @@ class OracleConnector(BaseConnector):
 
         try:
             self.ensure_connected()
+            conn = self._require_connection()
 
             # Measure round-trip latency with SELECT 1 FROM DUAL using
             # the base class _measure_latency helper for consistent timing.
             def _ping_dual() -> None:
-                ping_cursor = self._connection.cursor()
+                ping_cursor = conn.cursor()
                 try:
                     ping_cursor.execute("SELECT 1 FROM DUAL")
                     ping_cursor.fetchone()
@@ -755,7 +786,7 @@ class OracleConnector(BaseConnector):
 
             # Retrieve Oracle server version from V$VERSION.
             try:
-                version_cursor = self._connection.cursor()
+                version_cursor = conn.cursor()
                 try:
                     version_cursor.execute(
                         "SELECT BANNER FROM V$VERSION WHERE ROWNUM = 1"
@@ -778,7 +809,7 @@ class OracleConnector(BaseConnector):
 
             # Retrieve active session count from V$SESSION.
             try:
-                session_cursor = self._connection.cursor()
+                session_cursor = conn.cursor()
                 try:
                     session_cursor.execute(
                         "SELECT COUNT(*) FROM V$SESSION WHERE STATUS = 'ACTIVE'"
@@ -843,7 +874,7 @@ class OracleConnector(BaseConnector):
             ValueError: If *generic_type* is not recognised.
         """
         normalised: str = generic_type.strip().upper()
-        oracle_type: Optional[str] = _ORACLE_TYPE_MAP.get(normalised)
+        oracle_type: str | None = _ORACLE_TYPE_MAP.get(normalised)
 
         if oracle_type is None:
             raise ValueError(
@@ -891,7 +922,7 @@ class OracleConnector(BaseConnector):
             Exception: Propagates Oracle DDL errors (except ORA-01543
                 when the tablespace already exists).
         """
-        self.ensure_connected()
+        conn = self._require_connection()
 
         # Build CREATE TABLESPACE statement.
         create_ts_sql: str = (
@@ -917,10 +948,10 @@ class OracleConnector(BaseConnector):
             "END;"
         )
 
-        cursor = self._connection.cursor()
+        cursor = conn.cursor()
         try:
             cursor.execute(plsql_block)
-            self._connection.commit()
+            conn.commit()
             self._total_queries_executed += 1
 
             self._logger.info(
@@ -932,7 +963,7 @@ class OracleConnector(BaseConnector):
                 max_size=max_size,
             )
         except Exception as exc:
-            self._connection.rollback()
+            conn.rollback()
             ora_code = self._extract_ora_code(str(exc))
             self._logger.error(
                 "oracle_tablespace_management_failed",
@@ -1006,7 +1037,7 @@ class OracleConnector(BaseConnector):
         optionally overrides the session timezone.  All ``ALTER SESSION``
         commands are executed through a single cursor for efficiency.
         """
-        session_commands: List[str] = [
+        session_commands: list[str] = [
             "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'",
             "ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF6'",
             "ALTER SESSION SET NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF6 TZR'",
@@ -1017,7 +1048,8 @@ class OracleConnector(BaseConnector):
                 f"ALTER SESSION SET TIME_ZONE = '{self._timezone}'"
             )
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             for cmd in session_commands:
                 cursor.execute(cmd)
@@ -1038,7 +1070,7 @@ class OracleConnector(BaseConnector):
         finally:
             cursor.close()
 
-    def _resolve_jdbc_driver_path(self, config: Dict[str, Any]) -> str:
+    def _resolve_jdbc_driver_path(self, config: dict[str, Any]) -> str:
         """Resolve the path to the Oracle JDBC driver JAR file.
 
         Resolution order:
@@ -1064,7 +1096,7 @@ class OracleConnector(BaseConnector):
                 filesystem.
         """
         # Priority 1: Explicit config key.
-        jar_path: Optional[str] = config.get("jdbc_driver_path")
+        jar_path: str | None = config.get("jdbc_driver_path")
 
         # Priority 2: Oracle-specific environment variable.
         if not jar_path:
@@ -1072,7 +1104,7 @@ class OracleConnector(BaseConnector):
 
         # Priority 3: Generic JDBC driver directory + ojdbc11.jar.
         if not jar_path:
-            driver_dir: Optional[str] = os.environ.get("JDBC_DRIVER_PATH")
+            driver_dir: str | None = os.environ.get("JDBC_DRIVER_PATH")
             if driver_dir:
                 jar_path = os.path.join(driver_dir, "ojdbc11.jar")
 
@@ -1098,8 +1130,8 @@ class OracleConnector(BaseConnector):
         self,
         cursor: Any,
         table_name: str,
-        columns: List[str],
-        data: List[Tuple],
+        columns: list[str],
+        data: list[tuple],
     ) -> None:
         """Execute an Oracle INSERT ALL statement for small batches.
 
@@ -1118,11 +1150,11 @@ class OracleConnector(BaseConnector):
             data: List of row tuples to insert (≤100 rows).
         """
         col_names: str = ", ".join(columns)
-        parts: List[str] = ["INSERT ALL"]
+        parts: list[str] = ["INSERT ALL"]
 
         for row in data:
             # Build value literals with proper Oracle quoting.
-            values: List[str] = []
+            values: list[str] = []
             for val in row:
                 if val is None:
                     values.append("NULL")
@@ -1152,7 +1184,7 @@ class OracleConnector(BaseConnector):
     def _build_json_constraints(
         self,
         table_name: str,
-        columns: List[Dict[str, Any]],
+        columns: list[dict[str, Any]],
     ) -> str:
         """Build IS JSON check constraints for JSON-typed columns.
 
@@ -1174,7 +1206,7 @@ class OracleConnector(BaseConnector):
             empty string if no JSON columns are present.
         """
         # Generate IS JSON constraints for columns typed as JSON.
-        json_cols: List[str] = [
+        json_cols: list[str] = [
             col["name"]
             for col in columns
             if col.get("type", "").upper() == "JSON"
@@ -1185,7 +1217,7 @@ class OracleConnector(BaseConnector):
 
         # Oracle 19c supports IS JSON, so we do not gate on version.
         # The constraint is advisory and helps with query optimisation.
-        constraint_ddls: List[str] = []
+        constraint_ddls: list[str] = []
         for col_name in json_cols:
             constraint_name: str = (
                 f"CHK_{table_name}_{col_name}_JSON"[:30]  # Oracle 19c: max 30-char identifiers
@@ -1214,7 +1246,7 @@ class OracleConnector(BaseConnector):
         return sql.replace("'", "''")
 
     @staticmethod
-    def _extract_ora_code(error_message: str) -> Optional[str]:
+    def _extract_ora_code(error_message: str) -> str | None:
         """Extract an Oracle error code (ORA-XXXXX) from an error message.
 
         Scans the error message for the standard Oracle error code
@@ -1227,8 +1259,6 @@ class OracleConnector(BaseConnector):
             The Oracle error code string (e.g. ``"ORA-00955"``), or
             ``None`` if no code is found.
         """
-        import re
-
         match = re.search(r"ORA-\d{5}", error_message)
         return match.group(0) if match else None
 
