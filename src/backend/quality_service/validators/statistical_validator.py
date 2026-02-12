@@ -43,6 +43,10 @@ from scipy import stats
 
 from great_expectations.core import ExpectationSuite
 from great_expectations.data_context import EphemeralDataContext
+from great_expectations.data_context.types.base import (
+    DataContextConfig,
+    InMemoryStoreBackendDefaults,
+)
 
 from quality_service.validators.base import BaseValidator, ValidationResult
 from shared.logging.structured_logger import get_logger
@@ -200,7 +204,10 @@ class StatisticalValidator(BaseValidator):
         raising so that statistical validation can proceed without GE.
         """
         try:
-            self._ge_context = EphemeralDataContext()
+            ge_config = DataContextConfig(
+                store_backend_defaults=InMemoryStoreBackendDefaults(),
+            )
+            self._ge_context = EphemeralDataContext(project_config=ge_config)
             self.logger.info("great_expectations_context_initialized")
         except Exception as exc:
             self.logger.warning(
