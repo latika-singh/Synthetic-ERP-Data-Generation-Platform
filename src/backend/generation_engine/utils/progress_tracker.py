@@ -11,8 +11,8 @@ Key capabilities:
 - **Percentage completion & record counts** — stored in a Redis hash and
   published after every batch so the Job Monitoring screen can render live
   progress bars.
-- **Throughput measurement** — records/second computed per-batch with an
-  Exponential Moving Average (EMA, α = 0.3) to smooth out burst noise.
+- **Throughput measurement** -- records/second computed per-batch with an
+  Exponential Moving Average (EMA, alpha = 0.3) to smooth out burst noise.
 - **Estimated time remaining** — derived from the smoothed throughput and
   remaining record count.
 - **Update throttling** — Redis Pub/Sub publications are rate-limited to at
@@ -57,7 +57,7 @@ import datetime
 import json
 import math
 import time
-from typing import Any, Optional
+from typing import Any
 
 import redis.exceptions
 
@@ -67,6 +67,7 @@ from shared.database.redis_client import (
     publish_progress,
 )
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -203,7 +204,7 @@ class ProgressTracker:
         self._start_time = time.time()
         self._last_batch_time = self._start_time
         self._last_update_time = self._start_time
-        timestamp: str = datetime.datetime.utcnow().isoformat() + "Z"
+        timestamp: str = datetime.datetime.now(tz=datetime.UTC).isoformat().replace("+00:00", "Z")
 
         # Baseline progress state stored as a Redis hash.  All values are
         # JSON-encoded strings so that retrieval via HGETALL + json.loads()
@@ -353,7 +354,7 @@ class ProgressTracker:
         cleanup, and publishes a ``completed`` event.
 
         Args:
-            quality_score: Optional composite quality score (0.0 – 1.0)
+            quality_score: Optional composite quality score (0.0 - 1.0)
                 computed by the Quality Service.
             output_metadata: Optional dictionary describing generated output
                 (file paths, row counts per table, etc.).
@@ -368,7 +369,7 @@ class ProgressTracker:
             if total_duration > 0
             else 0.0
         )
-        timestamp: str = datetime.datetime.utcnow().isoformat() + "Z"
+        timestamp: str = datetime.datetime.now(tz=datetime.UTC).isoformat().replace("+00:00", "Z")
 
         summary: dict[str, Any] = {
             "job_id": self._job_id,
@@ -462,7 +463,7 @@ class ProgressTracker:
         elapsed: float = (
             failure_time - self._start_time if self._start_time else 0.0
         )
-        timestamp: str = datetime.datetime.utcnow().isoformat() + "Z"
+        timestamp: str = datetime.datetime.now(tz=datetime.UTC).isoformat().replace("+00:00", "Z")
 
         failure_summary: dict[str, Any] = {
             "job_id": self._job_id,
@@ -585,12 +586,12 @@ class ProgressTracker:
         handling from the main progress accumulation logic.
 
         Args:
-            percentage: Current completion percentage (0.0 – 100.0).
+            percentage: Current completion percentage (0.0 - 100.0).
             smoothed_throughput: EMA-smoothed throughput (records/second).
             estimated_remaining: Estimated seconds to completion, or ``None``.
             batch_metadata: Optional caller-supplied batch context.
         """
-        timestamp: str = datetime.datetime.utcnow().isoformat() + "Z"
+        timestamp: str = datetime.datetime.now(tz=datetime.UTC).isoformat().replace("+00:00", "Z")
 
         try:
             # Atomic hash update for the mutable progress fields.
@@ -715,7 +716,7 @@ def cancel_job_progress(job_id: str) -> bool:
             )
             return False
 
-        timestamp: str = datetime.datetime.utcnow().isoformat() + "Z"
+        timestamp: str = datetime.datetime.now(tz=datetime.UTC).isoformat().replace("+00:00", "Z")
 
         # Atomically update the status and cancellation timestamp.
         client.hset(
