@@ -294,16 +294,18 @@ const ThroughputChart: React.FC<ThroughputChartProps> = ({
   // Memoised Y-axis domain — ensures the chart captures the full data
   // range plus a small headroom buffer for visual breathing room.
   // ------------------------------------------------------------------
-  const yDomain = useMemo<[number, string]>(() => {
+  const yDomain = useMemo<[number, number | string]>(() => {
     if (formattedData.length === 0) {
       return [0, 'auto'];
     }
     const maxVal = Math.max(...formattedData.map((d) => d[metric]));
+    // Compute a ceiling with 10% headroom that also accounts for the
+    // target reference line so it is never clipped.
     const ceiling = targetThroughput
       ? Math.max(maxVal, targetThroughput) * 1.1
       : maxVal * 1.1;
-    // Return 0 as the floor and a rounded ceiling to keep ticks clean
-    return [0, 'auto'];
+    // Return 0 as the floor and the rounded ceiling to keep ticks clean
+    return [0, Math.ceil(ceiling)];
   }, [formattedData, metric, targetThroughput]);
 
   // ------------------------------------------------------------------
