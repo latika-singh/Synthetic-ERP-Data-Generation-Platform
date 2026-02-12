@@ -67,14 +67,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from compliance_service.detectors.nlp_detector import NLPDetector, NLPDetectionResult
+from compliance_service.detectors.nlp_detector import NLPDetectionResult, NLPDetector
 from compliance_service.detectors.pattern_detector import (
-    PatternDetector,
     PatternDetectionResult,
+    PatternDetector,
 )
 from shared.logging.structured_logger import get_logger
 
@@ -459,11 +459,7 @@ class PIIDetector:
         start_time: float = time.perf_counter()
 
         # Normalise input: wrap single dict in a list for uniform processing.
-        records: list[dict[str, Any]]
-        if isinstance(data, dict):
-            records = [data]
-        else:
-            records = list(data)
+        records: list[dict[str, Any]] = [data] if isinstance(data, dict) else list(data)
 
         # Obtain detector instances (lazy-init if needed).
         nlp: NLPDetector = self._get_nlp_detector()
@@ -476,11 +472,11 @@ class PIIDetector:
 
         for record in records:
             # Determine which fields to scan for this record.
-            target_fields: list[str]
-            if field_names is not None:
-                target_fields = [f for f in field_names if f in record]
-            else:
-                target_fields = list(record.keys())
+            target_fields: list[str] = (
+                [f for f in field_names if f in record]
+                if field_names is not None
+                else list(record.keys())
+            )
 
             for field_name in target_fields:
                 value = record.get(field_name)
@@ -584,8 +580,7 @@ class PIIDetector:
         """
         start_time: float = time.perf_counter()
 
-        if batch_size < 1:
-            batch_size = 1
+        batch_size = max(batch_size, 1)
 
         total_records: int = len(records)
         total_batches: int = (total_records + batch_size - 1) // batch_size if total_records > 0 else 0
