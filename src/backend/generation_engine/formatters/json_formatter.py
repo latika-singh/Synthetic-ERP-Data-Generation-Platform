@@ -46,17 +46,20 @@ import base64
 import io
 import json
 import uuid
-from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field
 
 from generation_engine.formatters.base import BaseFormatter
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 # ======================================================================
@@ -165,7 +168,7 @@ class JSONFormatterConfig(BaseModel):
         default=False,
         description="Serialize Decimal as string to preserve financial precision.",
     )
-    null_value: Optional[str] = Field(
+    null_value: str | None = Field(
         default=None,
         description="Null representation.  None produces JSON null.",
     )
@@ -176,7 +179,7 @@ class JSONFormatterConfig(BaseModel):
             "(table_name, record_count, generated_at, format_version)."
         ),
     )
-    root_key: Optional[str] = Field(
+    root_key: str | None = Field(
         default=None,
         description="Wrap records array under a named key (e.g. 'records').",
     )
@@ -219,7 +222,7 @@ class SyntheticDataEncoder(json.JSONEncoder):
     """
 
     def __init__(
-        self, config: Optional[JSONFormatterConfig] = None, **kwargs: Any
+        self, config: JSONFormatterConfig | None = None, **kwargs: Any
     ) -> None:
         """Initialize the encoder with formatter configuration.
 
@@ -240,10 +243,8 @@ class SyntheticDataEncoder(json.JSONEncoder):
         serializable (``str``, ``int``, ``float``, ``list``, ``dict``,
         ``bool``, ``None``).
 
-        Type checking order matters:
-            1. ``pd.Timestamp`` before ``datetime`` (Timestamp extends datetime).
-            2. ``datetime`` before ``date`` (datetime extends date).
-            3. ``np.floating`` with NaN check before generic float.
+        Type checking order matters — pandas NaT must be checked before
+        ``datetime`` since ``isinstance(pd.NaT, datetime)`` is ``True``.
 
         Args:
             obj: The Python object to serialize.
@@ -255,50 +256,25 @@ class SyntheticDataEncoder(json.JSONEncoder):
             TypeError: If *obj* is not a recognized type — delegates to
                 the parent encoder which raises ``TypeError``.
         """
-        # -- pandas Timestamp (subclass of datetime) ----------------------
+        # -- pandas NaT (singleton, subclass of datetime.datetime) ---------
+        if obj is pd.NaT:
+            return self._config.null_value
+
+        # -- Temporal types (Timestamp → datetime → date) ------------------
         if isinstance(obj, pd.Timestamp):
-            if pd.isna(obj):
-                return self._config.null_value
-            if self._config.datetime_format == "epoch":
-                return obj.timestamp()
-            return obj.isoformat()
-
-        # -- datetime (subclass of date) ----------------------------------
+            return self._encode_timestamp(obj)
         if isinstance(obj, datetime):
-            if self._config.datetime_format == "epoch":
-                return obj.timestamp()
-            return obj.isoformat()
-
-        # -- date ---------------------------------------------------------
+            return self._encode_datetime(obj)
         if isinstance(obj, date):
-            if self._config.date_format == "epoch":
-                epoch_dt = datetime.combine(obj, datetime.min.time())
-                return int(epoch_dt.timestamp())
-            return obj.isoformat()
+            return self._encode_date(obj)
 
         # -- Decimal — preserve ERP financial precision -------------------
         if isinstance(obj, Decimal):
-            if self._config.decimal_as_string:
-                return str(obj)
-            return float(obj)
+            return str(obj) if self._config.decimal_as_string else float(obj)
 
-        # -- numpy integer types ------------------------------------------
-        if isinstance(obj, np.integer):
-            return int(obj)
-
-        # -- numpy floating types -----------------------------------------
-        if isinstance(obj, np.floating):
-            if np.isnan(obj):
-                return self._config.null_value
-            return float(obj)
-
-        # -- numpy boolean ------------------------------------------------
-        if isinstance(obj, np.bool_):
-            return bool(obj)
-
-        # -- numpy array --------------------------------------------------
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
+        # -- numpy types ---------------------------------------------------
+        if isinstance(obj, (np.integer, np.floating, np.bool_, np.ndarray)):
+            return self._encode_numpy(obj)
 
         # -- bytes / bytearray → base64 ----------------------------------
         if isinstance(obj, (bytes, bytearray)):
@@ -310,6 +286,40 @@ class SyntheticDataEncoder(json.JSONEncoder):
 
         # Delegate to parent (raises TypeError for truly unsupported types)
         return super().default(obj)
+
+    # -- Encoder sub-helpers (extracted to reduce branch count) -----------
+
+    def _encode_timestamp(self, obj: pd.Timestamp) -> Any:
+        """Encode a pandas Timestamp value."""
+        if pd.isna(obj):
+            return self._config.null_value
+        if self._config.datetime_format == "epoch":
+            return obj.timestamp()
+        return obj.isoformat()
+
+    def _encode_datetime(self, obj: datetime) -> str | float:
+        """Encode a standard datetime value."""
+        if self._config.datetime_format == "epoch":
+            return obj.timestamp()
+        return obj.isoformat()
+
+    def _encode_date(self, obj: date) -> str | int:
+        """Encode a standard date value."""
+        if self._config.date_format == "epoch":
+            epoch_dt = datetime.combine(obj, datetime.min.time())
+            return int(epoch_dt.timestamp())
+        return obj.isoformat()
+
+    def _encode_numpy(self, obj: Any) -> Any:
+        """Encode numpy scalar and array types."""
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return self._config.null_value if np.isnan(obj) else float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        # np.ndarray
+        return obj.tolist()
 
 
 # ======================================================================
@@ -342,16 +352,38 @@ class JSONFormatter(BaseFormatter):
         result = formatter.format(df, "hr_employees")
     """
 
-    def __init__(self, config: Optional[JSONFormatterConfig] = None) -> None:
+    def __init__(
+        self,
+        config: JSONFormatterConfig | dict | None = None,
+    ) -> None:
         """Initialize the JSON formatter with configuration.
 
+        Accepts a :class:`JSONFormatterConfig` instance, a plain ``dict``
+        of configuration values (automatically converted to
+        :class:`JSONFormatterConfig`), or ``None`` for defaults.
+
         Args:
-            config: Optional formatter configuration.  Defaults to a
-                fresh :class:`JSONFormatterConfig` with all defaults.
+            config: Optional formatter configuration.  May be a
+                :class:`JSONFormatterConfig` instance, a ``dict`` whose
+                keys match :class:`JSONFormatterConfig` field names, or
+                ``None`` for a fresh default configuration.
+
+        Raises:
+            TypeError: If *config* is not ``None``, a ``dict``, or a
+                :class:`JSONFormatterConfig` instance.
+            ValidationError: If dict values fail Pydantic validation.
         """
-        self._config: JSONFormatterConfig = (
-            config if config is not None else JSONFormatterConfig()
-        )
+        if config is None:
+            self._config: JSONFormatterConfig = JSONFormatterConfig()
+        elif isinstance(config, dict):
+            self._config = JSONFormatterConfig(**config)
+        elif isinstance(config, JSONFormatterConfig):
+            self._config = config
+        else:
+            raise TypeError(
+                f"config must be JSONFormatterConfig, dict, or None; "
+                f"got {type(config).__name__}"
+            )
         self._encoder: SyntheticDataEncoder = SyntheticDataEncoder(
             config=self._config
         )
@@ -499,18 +531,12 @@ class JSONFormatter(BaseFormatter):
         _write = self._get_stream_writer(output)
         indent = self._config.indent if self._config.pretty_print else None
         total_rows: int = 0
-        first_record: bool = True
-
-        has_envelope = (
-            self._config.include_metadata
-            or self._config.root_key is not None
-        )
 
         # Collect all records across batches for metadata wrapper
         # (metadata needs total record_count which is only known after
         # processing all batches).  For very large datasets the caller
         # should prefer format_to_stream with a single concatenated DF.
-        all_records: List[Dict[str, Any]] = []
+        all_records: list[dict[str, Any]] = []
 
         for batch in data_batches:
             for _, row in batch.iterrows():
@@ -547,7 +573,7 @@ class JSONFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Optional[dict] = None,
+        column_definitions: dict | None = None,
     ) -> str:
         """Generate standard JSON array output.
 
@@ -563,7 +589,7 @@ class JSONFormatter(BaseFormatter):
         Returns:
             Complete JSON string.
         """
-        records: List[Dict[str, Any]] = [
+        records: list[dict[str, Any]] = [
             self._row_to_dict(row, column_definitions)
             for _, row in data.iterrows()
         ]
@@ -588,7 +614,7 @@ class JSONFormatter(BaseFormatter):
     def _format_json_lines(
         self,
         data: pd.DataFrame,
-        column_definitions: Optional[dict] = None,
+        column_definitions: dict | None = None,
     ) -> str:
         """Generate JSON Lines (NDJSON) output.
 
@@ -604,7 +630,7 @@ class JSONFormatter(BaseFormatter):
             JSONL string with one JSON object per line, terminated by
             a trailing newline.
         """
-        lines: List[str] = []
+        lines: list[str] = []
         for _, row in data.iterrows():
             record = self._row_to_dict(row, column_definitions)
             line = json.dumps(
@@ -625,7 +651,7 @@ class JSONFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        column_definitions: Optional[dict],
+        column_definitions: dict | None,
         output: io.IOBase,
     ) -> None:
         """Stream JSON array output to a writable stream.
@@ -650,36 +676,8 @@ class JSONFormatter(BaseFormatter):
             or self._config.root_key is not None
         )
 
-        # ---- Opening structure ----
-        records_key = self._config.root_key or "records"
-
-        if self._config.include_metadata:
-            meta: Dict[str, Any] = {
-                "table_name": table_name,
-                "record_count": total_rows,
-                "generated_at": datetime.utcnow().isoformat() + "Z",
-                "format_version": "1.0",
-            }
-            if pretty:
-                _write("{\n")
-                pad = " " * self._config.indent
-                for key, val in meta.items():
-                    _write(f'{pad}"{key}": {json.dumps(val)},\n')
-                _write(f'{pad}"{records_key}": [\n')
-            else:
-                prefix_parts = ", ".join(
-                    f'"{k}": {json.dumps(v)}' for k, v in meta.items()
-                )
-                _write(f'{{{prefix_parts}, "{records_key}": [')
-        elif self._config.root_key:
-            if pretty:
-                _write("{\n")
-                pad = " " * self._config.indent
-                _write(f'{pad}"{self._config.root_key}": [\n')
-            else:
-                _write(f'{{"{self._config.root_key}": [')
-        else:
-            _write("[\n" if pretty else "[")
+        # ---- Opening structure (delegated to helper) ----
+        self._write_array_opening(_write, table_name, total_rows, pretty)
 
         # ---- Stream records in chunks ----
         first_record = True
@@ -710,7 +708,68 @@ class JSONFormatter(BaseFormatter):
                 else:
                     _write(record_json)
 
-        # ---- Closing structure ----
+        # ---- Closing structure (delegated to helper) ----
+        self._write_array_closing(_write, pretty)
+
+    # -- Streaming structure helpers (reduce branch count) ---------------
+
+    def _write_array_opening(
+        self,
+        _write: Any,
+        table_name: str,
+        total_rows: int,
+        pretty: bool,
+    ) -> None:
+        """Write the opening structure for a streamed JSON array.
+
+        Handles three cases: metadata envelope, root-key envelope, or
+        plain array.
+
+        Args:
+            _write: Callable that writes a string to the output stream.
+            table_name: ERP table name for the metadata envelope.
+            total_rows: Total number of records (for metadata).
+            pretty: Whether to emit pretty-printed output.
+        """
+        records_key = self._config.root_key or "records"
+
+        if self._config.include_metadata:
+            meta: dict[str, Any] = {
+                "table_name": table_name,
+                "record_count": total_rows,
+                "generated_at": datetime.now(tz=UTC).isoformat(),
+                "format_version": "1.0",
+            }
+            if pretty:
+                _write("{\n")
+                pad = " " * self._config.indent
+                for key, val in meta.items():
+                    _write(f'{pad}"{key}": {json.dumps(val)},\n')
+                _write(f'{pad}"{records_key}": [\n')
+            else:
+                prefix_parts = ", ".join(
+                    f'"{k}": {json.dumps(v)}' for k, v in meta.items()
+                )
+                _write(f'{{{prefix_parts}, "{records_key}": [')
+        elif self._config.root_key:
+            if pretty:
+                _write("{\n")
+                pad = " " * self._config.indent
+                _write(f'{pad}"{self._config.root_key}": [\n')
+            else:
+                _write(f'{{"{self._config.root_key}": [')
+        else:
+            _write("[\n" if pretty else "[")
+
+    def _write_array_closing(self, _write: Any, pretty: bool) -> None:
+        """Write the closing structure for a streamed JSON array.
+
+        Matches the opening written by :meth:`_write_array_opening`.
+
+        Args:
+            _write: Callable that writes a string to the output stream.
+            pretty: Whether to emit pretty-printed output.
+        """
         if self._config.include_metadata or self._config.root_key:
             if pretty:
                 pad = " " * self._config.indent
@@ -723,7 +782,7 @@ class JSONFormatter(BaseFormatter):
     def _stream_json_lines(
         self,
         data: pd.DataFrame,
-        column_definitions: Optional[dict],
+        column_definitions: dict | None,
         output: io.IOBase,
     ) -> None:
         """Stream JSON Lines output to a writable stream.
@@ -762,8 +821,8 @@ class JSONFormatter(BaseFormatter):
     def _row_to_dict(
         self,
         row: pd.Series,
-        column_definitions: Optional[dict] = None,
-    ) -> Dict[str, Any]:
+        column_definitions: dict | None = None,
+    ) -> dict[str, Any]:
         """Convert a DataFrame row to a dictionary with type handling.
 
         Iterates over each column value, resolves the column's ERP type
@@ -780,9 +839,9 @@ class JSONFormatter(BaseFormatter):
         Returns:
             A dictionary with column names as keys and serialized values.
         """
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         for col_name, value in row.items():
-            col_type: Optional[str] = None
+            col_type: str | None = None
             if column_definitions and col_name in column_definitions:
                 col_meta = column_definitions[col_name]
                 if isinstance(col_meta, dict):
@@ -794,9 +853,9 @@ class JSONFormatter(BaseFormatter):
 
     def _add_metadata_wrapper(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         table_name: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Wrap records with a metadata envelope.
 
         Creates a JSON object containing metadata fields (table name,
@@ -815,7 +874,7 @@ class JSONFormatter(BaseFormatter):
         return {
             "table_name": table_name,
             "record_count": len(records),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": datetime.now(tz=UTC).isoformat(),
             "format_version": "1.0",
             records_key: records,
         }
@@ -823,7 +882,7 @@ class JSONFormatter(BaseFormatter):
     def _serialize_value(
         self,
         value: Any,
-        column_type: Optional[str] = None,
+        column_type: str | None = None,
     ) -> Any:
         """Serialize an individual value with type-aware conversion.
 
@@ -831,6 +890,11 @@ class JSONFormatter(BaseFormatter):
         values.  Handles null / NaN / NaT detection, datetime
         formatting, Decimal precision, numpy type coercion, bytes
         encoding, and UUID stringification.
+
+        When *column_type* is provided (from the ERP schema metadata),
+        it is used to resolve ambiguous cases — e.g. a Python ``float``
+        that the schema says is ``DECIMAL`` can be forced through
+        :pyattr:`decimal_as_string` serialization.
 
         Type checking order is significant:
             1. ``None`` and ``pd.NaT`` first (fast singleton checks).
@@ -842,6 +906,8 @@ class JSONFormatter(BaseFormatter):
             value: The raw value from the DataFrame cell.
             column_type: Optional ERP column type hint (e.g.
                 ``"DECIMAL"``, ``"TIMESTAMP"``, ``"VARCHAR"``).
+                Used to influence serialization when the Python type
+                alone is ambiguous.
 
         Returns:
             A JSON-serializable value (``str``, ``int``, ``float``,
@@ -854,69 +920,74 @@ class JSONFormatter(BaseFormatter):
         if value is pd.NaT:
             return self._config.null_value
 
+        # Normalise column_type for case-insensitive comparison.
+        _col_type_upper = column_type.upper() if column_type else None
+
         # -- pandas Timestamp (extends datetime) -------------------------
         if isinstance(value, pd.Timestamp):
-            if pd.isna(value):
-                return self._config.null_value
-            if self._config.datetime_format == "epoch":
-                return value.timestamp()
-            return value.isoformat()
+            return self._serialize_temporal(value)
 
         # -- datetime (extends date) -------------------------------------
         if isinstance(value, datetime):
-            if self._config.datetime_format == "epoch":
-                return value.timestamp()
-            return value.isoformat()
+            return self._serialize_temporal(value)
 
         # -- date --------------------------------------------------------
         if isinstance(value, date):
-            if self._config.date_format == "epoch":
-                epoch_dt = datetime.combine(value, datetime.min.time())
-                return int(epoch_dt.timestamp())
-            return value.isoformat()
+            return self._serialize_date(value)
 
         # -- Decimal — financial precision for ERP systems ---------------
         if isinstance(value, Decimal):
-            if self._config.decimal_as_string:
-                return str(value)
-            return float(value)
+            return self._serialize_decimal(value)
 
-        # -- numpy integer types → Python int ----------------------------
-        if isinstance(value, np.integer):
-            return int(value)
+        # -- ERP schema hints: coerce float → Decimal serialization ------
+        if (
+            _col_type_upper in {"DECIMAL", "NUMERIC", "NUMBER", "CURRENCY"}
+            and isinstance(value, (float, int))
+            and not isinstance(value, bool)
+        ):
+            return self._serialize_decimal(Decimal(str(value)))
 
-        # -- numpy floating types → Python float (with NaN guard) --------
-        if isinstance(value, np.floating):
-            if np.isnan(value):
-                return self._config.null_value
-            return float(value)
-
-        # -- numpy boolean → Python bool ---------------------------------
-        if isinstance(value, np.bool_):
-            return bool(value)
-
-        # -- numpy array → Python list -----------------------------------
-        if isinstance(value, np.ndarray):
-            return value.tolist()
+        # -- numpy types (int, float, bool, ndarray) ----------------------
+        if isinstance(value, (np.integer, np.floating, np.bool_, np.ndarray)):
+            return self._encode_numpy(value)
 
         # -- Python float NaN → null (after numpy checks) ----------------
         if isinstance(value, float) and np.isnan(value):
             return self._config.null_value
 
-        # -- bytes → base64 string (for ERP BLOBs) ----------------------
+        # -- bytes / UUID / containers -----------------------------------
         if isinstance(value, (bytes, bytearray)):
             return base64.b64encode(value).decode("ascii")
-
-        # -- UUID → string -----------------------------------------------
         if isinstance(value, uuid.UUID):
             return str(value)
-
-        # -- Nested structures (hierarchical ERP data) pass through ------
         if isinstance(value, (dict, list)):
             return value
 
         # -- Basic JSON-native types (str, int, float, bool) -------------
         return value
+
+    # -- Serialization sub-helpers (reduce branch count in main method) --
+
+    def _serialize_temporal(self, value: pd.Timestamp | datetime) -> Any:
+        """Serialize a datetime or Timestamp value."""
+        if isinstance(value, pd.Timestamp) and pd.isna(value):
+            return self._config.null_value
+        if self._config.datetime_format == "epoch":
+            return value.timestamp()
+        return value.isoformat()
+
+    def _serialize_date(self, value: date) -> Any:
+        """Serialize a date value."""
+        if self._config.date_format == "epoch":
+            epoch_dt = datetime.combine(value, datetime.min.time())
+            return int(epoch_dt.timestamp())
+        return value.isoformat()
+
+    def _serialize_decimal(self, value: Decimal) -> str | float:
+        """Serialize a Decimal value respecting config."""
+        if self._config.decimal_as_string:
+            return str(value)
+        return float(value)
 
     # ------------------------------------------------------------------
     # Utility helpers

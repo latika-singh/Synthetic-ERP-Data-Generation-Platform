@@ -84,16 +84,27 @@ class FormatterRegistry:
     :meth:`get_formatter` which instantiates the correct class with optional
     configuration.
 
+    Each registration may include a *default_config* dictionary that is
+    automatically applied when the caller does not supply explicit config.
+    This allows the same formatter class to serve multiple output formats
+    with different default behaviours — e.g. :class:`JSONFormatter` is
+    registered for both ``JSON`` (default: ``output_mode='json'``) and
+    ``JSONL`` (default: ``output_mode='jsonl'``).
+
     This class is not meant to be instantiated — all methods are class-level.
     """
 
-    _registry: dict[OutputFormat, type[BaseFormatter]] = {}
+    _registry: dict[
+        OutputFormat,
+        tuple[type[BaseFormatter], dict[str, Any] | None],
+    ] = {}
 
     @classmethod
     def register(
         cls,
         format_type: OutputFormat,
         formatter_class: type[BaseFormatter],
+        default_config: dict[str, Any] | None = None,
     ) -> None:
         """Register a concrete formatter class for a given output format.
 
@@ -101,6 +112,10 @@ class FormatterRegistry:
             format_type: The :class:`OutputFormat` member to associate.
             formatter_class: The class (not an instance) that implements
                 :class:`BaseFormatter`.
+            default_config: Optional dictionary of default configuration
+                values that will be passed to the formatter constructor
+                when no explicit *config* is supplied by the caller.
+                Caller-supplied config keys take precedence over defaults.
 
         Raises:
             TypeError: If *formatter_class* is not a subclass of
@@ -109,8 +124,13 @@ class FormatterRegistry:
         if not (isinstance(formatter_class, type) and issubclass(formatter_class, BaseFormatter)):
             msg = f"{formatter_class!r} is not a BaseFormatter subclass"
             raise TypeError(msg)
-        cls._registry[format_type] = formatter_class
-        logger.debug("Registered formatter %s for %s", formatter_class.__name__, format_type.value)
+        cls._registry[format_type] = (formatter_class, default_config)
+        logger.debug(
+            "Registered formatter %s for %s (default_config=%r)",
+            formatter_class.__name__,
+            format_type.value,
+            default_config,
+        )
 
     @classmethod
     def get_formatter(
@@ -120,10 +140,16 @@ class FormatterRegistry:
     ) -> BaseFormatter:
         """Instantiate and return a configured formatter for *format_type*.
 
+        Default configuration values registered with :meth:`register` are
+        merged first, then any caller-supplied *config* values override them.
+        This ensures that, for example, requesting ``JSONL`` without config
+        still produces a formatter in JSON-Lines mode.
+
         Args:
             format_type: The desired :class:`OutputFormat`.
             config: Optional dictionary of configuration values forwarded
-                to the formatter's constructor.
+                to the formatter's constructor.  Overrides any defaults
+                registered for *format_type*.
 
         Returns:
             A fully-configured :class:`BaseFormatter` instance.
@@ -133,12 +159,24 @@ class FormatterRegistry:
         """
         if format_type not in cls._registry:
             available = ", ".join(f.value for f in cls._registry)
-            msg = f"No formatter registered for {format_type.value!r}. Available formats: {available}"
+            msg = (
+                f"No formatter registered for {format_type.value!r}. "
+                f"Available formats: {available}"
+            )
             raise KeyError(msg)
 
-        formatter_cls = cls._registry[format_type]
+        formatter_cls, default_config = cls._registry[format_type]
+
+        # Merge default config with caller-supplied config.
+        # Caller values take precedence over defaults.
+        effective_config: dict[str, Any] = {}
+        if default_config:
+            effective_config.update(default_config)
         if config:
-            return formatter_cls(config=config)  # type: ignore[call-arg]
+            effective_config.update(config)
+
+        if effective_config:
+            return formatter_cls(config=effective_config)  # type: ignore[call-arg]
         return formatter_cls()
 
     @classmethod
@@ -240,7 +278,11 @@ try:
     from .json_formatter import JSONFormatter
 
     FormatterRegistry.register(OutputFormat.JSON, JSONFormatter)
-    FormatterRegistry.register(OutputFormat.JSONL, JSONFormatter)
+    FormatterRegistry.register(
+        OutputFormat.JSONL,
+        JSONFormatter,
+        default_config={"output_mode": "jsonl"},
+    )
     __all__.append("JSONFormatter")
 except ImportError:  # pragma: no cover
     logger.debug("JSONFormatter not available — skipping registration")
