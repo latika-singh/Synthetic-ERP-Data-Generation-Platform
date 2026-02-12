@@ -54,6 +54,7 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import tempfile
@@ -64,6 +65,7 @@ import jaydebeapi
 
 from provisioning_service.connectors.base import BaseConnector
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level fallback logger for early-bootstrap or test environments
@@ -90,7 +92,7 @@ _SQLSERVER_TYPE_MAP: dict[str, str] = {
     "UUID": "UNIQUEIDENTIFIER",
     "BINARY": "VARBINARY(MAX)",
 }
-"""Mapping of generic column type tokens to their SQL Server–native equivalents.
+"""Mapping of generic column type tokens to their SQL Server-native equivalents.
 
 ``DECIMAL`` is listed without precision/scale here; callers should supply
 ``precision`` and ``scale`` column-spec keys, which
@@ -104,10 +106,10 @@ _SQLSERVER_TYPE_MAP: dict[str, str] = {
 
 
 class SQLServerConnector(BaseConnector):
-    """JDBC provisioning connector for Microsoft SQL Server 2019–2022.
+    """JDBC provisioning connector for Microsoft SQL Server 2019-2022.
 
     ``SQLServerConnector`` extends :class:`BaseConnector` and implements every
-    abstract method defined in the base class.  It adds SQL Server–specific
+    abstract method defined in the base class.  It adds SQL Server-specific
     features such as BCP-style ``BULK INSERT``, schema-qualified DDL with
     bracket-quoted identifiers, and ``SET IDENTITY_INSERT`` for identity
     columns.
@@ -270,12 +272,13 @@ class SQLServerConnector(BaseConnector):
             # Use the inherited _execute_with_retry helper for resilient
             # connection establishment (exponential backoff on transient
             # network/server errors).
-            self._connection = self._execute_with_retry(
+            connection = self._execute_with_retry(
                 self._establish_jdbc_connection,
             )
+            self._connection = connection
 
             # Apply session-level settings for deterministic T-SQL behaviour.
-            cursor = self._connection.cursor()
+            cursor = connection.cursor()
             try:
                 cursor.execute("SET ANSI_NULLS ON")
                 cursor.execute("SET QUOTED_IDENTIFIER ON")
@@ -347,7 +350,7 @@ class SQLServerConnector(BaseConnector):
         """Create a table in SQL Server with schema-qualified naming.
 
         Generates a ``CREATE TABLE [{schema}].[{table}]`` DDL statement
-        with SQL Server–native column types resolved via
+        with SQL Server-native column types resolved via
         :meth:`_map_column_type`.  Primary keys use ``CLUSTERED`` indexing.
 
         Args:
@@ -413,7 +416,7 @@ class SQLServerConnector(BaseConnector):
             safe_table: str = table_name.replace("'", "''")
             safe_schema: str = self._schema.replace("'", "''")
             create_sql = (
-                f"IF NOT EXISTS (\n"
+                f"IF NOT EXISTS (\n"  # noqa: S608
                 f"    SELECT * FROM sys.tables t\n"
                 f"    JOIN sys.schemas s ON t.schema_id = s.schema_id\n"
                 f"    WHERE t.name = N'{safe_table}'\n"
@@ -424,10 +427,11 @@ class SQLServerConnector(BaseConnector):
                 f"END"
             )
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             cursor.execute(create_sql)
-            self._connection.commit()
+            conn.commit()
             self._logger.info(
                 "sqlserver_table_created",
                 table=full_table,
@@ -435,10 +439,8 @@ class SQLServerConnector(BaseConnector):
                 if_not_exists=if_not_exists,
             )
         except Exception as exc:
-            try:
-                self._connection.rollback()
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                conn.rollback()
             self._logger.error(
                 "sqlserver_create_table_failed",
                 table=full_table,
@@ -484,7 +486,7 @@ class SQLServerConnector(BaseConnector):
         cols_quoted: str = ", ".join(f"[{c}]" for c in columns)
         placeholders: str = ", ".join("?" for _ in columns)
         insert_sql: str = (
-            f"INSERT INTO {full_table} ({cols_quoted}) VALUES ({placeholders})"
+            f"INSERT INTO {full_table} ({cols_quoted}) VALUES ({placeholders})"  # noqa: S608
         )
 
         total_inserted: int = 0
@@ -499,15 +501,17 @@ class SQLServerConnector(BaseConnector):
             total_batches=total_batches,
         )
 
+        conn = self._require_connection()
+
         for batch_idx in range(total_batches):
             batch_start: int = batch_idx * batch_size
             batch_end: int = min(batch_start + batch_size, len(data))
             batch_data: list[tuple] = data[batch_start:batch_end]
 
-            cursor = self._connection.cursor()
+            cursor = conn.cursor()
             try:
                 cursor.executemany(insert_sql, batch_data)
-                self._connection.commit()
+                conn.commit()
                 rows_in_batch: int = len(batch_data)
                 total_inserted += rows_in_batch
 
@@ -520,10 +524,8 @@ class SQLServerConnector(BaseConnector):
                     total_inserted=total_inserted,
                 )
             except Exception as exc:
-                try:
-                    self._connection.rollback()
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    conn.rollback()
                 self._logger.error(
                     "sqlserver_batch_insert_failed",
                     table=full_table,
@@ -592,25 +594,24 @@ class SQLServerConnector(BaseConnector):
         )
 
         try:
-            # Write data to a temporary BCP-format file.
-            tmp_file = tempfile.NamedTemporaryFile(
+            # Write data to a temporary BCP-format file using a context manager.
+            with tempfile.NamedTemporaryFile(
                 mode="w",
                 suffix=".bcp",
                 delete=False,
                 encoding="utf-8",
-            )
-            tmp_path = tmp_file.name
+            ) as tmp_file:
+                tmp_path = tmp_file.name
 
-            for row in data:
-                # Convert each value to its string representation.
-                # NULL is represented as an empty string in BCP format.
-                str_vals: list[str] = [
-                    "" if v is None else str(v) for v in row
-                ]
-                tmp_file.write(
-                    self._FIELD_TERMINATOR.join(str_vals) + self._ROW_TERMINATOR
-                )
-            tmp_file.close()
+                for row in data:
+                    # Convert each value to its string representation.
+                    # NULL is represented as an empty string in BCP format.
+                    str_vals: list[str] = [
+                        "" if v is None else str(v) for v in row
+                    ]
+                    tmp_file.write(
+                        self._FIELD_TERMINATOR.join(str_vals) + self._ROW_TERMINATOR
+                    )
 
             # Build the BULK INSERT T-SQL statement.
             safe_path: str = tmp_path.replace("'", "''")
@@ -625,10 +626,11 @@ class SQLServerConnector(BaseConnector):
                 f")"
             )
 
-            cursor = self._connection.cursor()
+            conn = self._require_connection()
+            cursor = conn.cursor()
             try:
                 cursor.execute(bulk_sql)
-                self._connection.commit()
+                conn.commit()
             finally:
                 cursor.close()
 
@@ -694,9 +696,10 @@ class SQLServerConnector(BaseConnector):
             Exception: Propagates SQL Server query errors.
         """
         self.ensure_connected()
+        conn = self._require_connection()
 
         start_time: float = time.time()
-        cursor = self._connection.cursor()
+        cursor = conn.cursor()
 
         try:
             if params:
@@ -706,11 +709,9 @@ class SQLServerConnector(BaseConnector):
 
             # Determine if this is a result-returning statement.
             if cursor.description is None:
-                # DML / DDL — no result set.
-                try:
-                    self._connection.commit()
-                except Exception:
-                    pass
+                # DML / DDL - no result set.
+                with contextlib.suppress(Exception):
+                    conn.commit()
                 return []
 
             col_names: list[str] = [
@@ -827,7 +828,7 @@ class SQLServerConnector(BaseConnector):
         return result
 
     def _map_column_type(self, generic_type: str) -> str:
-        """Map a generic column type to its SQL Server–native equivalent.
+        """Map a generic column type to its SQL Server-native equivalent.
 
         Args:
             generic_type: One of the keys in ``GENERIC_COLUMN_TYPES``
@@ -852,7 +853,7 @@ class SQLServerConnector(BaseConnector):
         return native_type
 
     # ------------------------------------------------------------------
-    # SQL Server–specific public methods
+    # SQL Server-specific public methods
     # ------------------------------------------------------------------
 
     def _create_schema_if_not_exists(self, schema_name: str) -> None:
@@ -872,25 +873,24 @@ class SQLServerConnector(BaseConnector):
         safe_schema: str = schema_name.replace("'", "''")
         safe_schema_bracket: str = schema_name.replace("]", "]]")
         ddl_sql: str = (
-            f"IF NOT EXISTS (\n"
+            f"IF NOT EXISTS (\n"  # noqa: S608
             f"    SELECT * FROM sys.schemas WHERE name = N'{safe_schema}'\n"
             f")\n"
             f"EXEC('CREATE SCHEMA [{safe_schema_bracket}]')"
         )
 
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             cursor.execute(ddl_sql)
-            self._connection.commit()
+            conn.commit()
             self._logger.info(
                 "sqlserver_schema_ensured",
                 schema=schema_name,
             )
         except Exception as exc:
-            try:
-                self._connection.rollback()
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                conn.rollback()
             self._logger.error(
                 "sqlserver_schema_creation_failed",
                 schema=schema_name,
@@ -947,6 +947,25 @@ class SQLServerConnector(BaseConnector):
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _require_connection(self) -> Any:
+        """Return the active JDBC connection or raise :class:`ConnectionError`.
+
+        This helper narrows ``self._connection`` from ``Any | None`` to
+        ``Any``, preventing repeated ``is None`` checks in every method.
+
+        Returns:
+            The active JDBC connection object.
+
+        Raises:
+            ConnectionError: If the connector is not connected.
+        """
+        conn = self._connection
+        if conn is None:
+            raise ConnectionError(
+                "SQLServerConnector is not connected. Call connect() first."
+            )
+        return conn
+
     def _establish_jdbc_connection(self) -> Any:
         """Create a raw JDBC connection via ``jaydebeapi.connect()``.
 
@@ -971,7 +990,8 @@ class SQLServerConnector(BaseConnector):
 
     def _ping(self) -> None:
         """Execute ``SELECT 1`` to verify connectivity (used by health_check)."""
-        cursor = self._connection.cursor()
+        conn = self._require_connection()
+        cursor = conn.cursor()
         try:
             cursor.execute("SELECT 1")
             cursor.fetchall()
