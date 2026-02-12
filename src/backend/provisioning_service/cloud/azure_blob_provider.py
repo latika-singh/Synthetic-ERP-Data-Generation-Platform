@@ -52,8 +52,9 @@ from __future__ import annotations
 
 import io
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Any, BinaryIO, Dict, Generator, List, Optional  # noqa: F401
+from collections.abc import Generator  # noqa: F401
+from datetime import UTC, datetime, timedelta
+from typing import Any, BinaryIO
 
 from azure.core.exceptions import (
     AzureError,
@@ -66,7 +67,7 @@ from azure.storage.blob import (
     BlobSasPermissions,
     BlobServiceClient,
     BlobType,  # noqa: F401 — used for type reference in metadata
-    ContainerClient,  # noqa: F401 — referenced in type annotations
+    ContainerClient,
     ContentSettings,
     StandardBlobTier,  # noqa: F401 — available for tier management
     generate_blob_sas,
@@ -74,6 +75,7 @@ from azure.storage.blob import (
 
 from provisioning_service.cloud.base import BaseCloudProvider
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger for non-instance contexts (e.g. module-load errors).
@@ -188,7 +190,7 @@ class AzureBlobProvider(BaseCloudProvider):
         if not isinstance(config, dict):
             raise ValueError(
                 "AzureBlobProvider requires a non-null configuration "
-                "dictionary.  Received: {!r}".format(type(config).__name__)
+                f"dictionary.  Received: {type(config).__name__!r}"
             )
 
         # ---- Azure-specific config extraction ----------------------------
@@ -752,8 +754,7 @@ class AzureBlobProvider(BaseCloudProvider):
                 name_starts_with=full_prefix,
                 results_per_page=max_results,
             )
-            count = 0
-            for blob in blob_iter:
+            for count, blob in enumerate(blob_iter):
                 if count >= max_results:
                     break
                 blob_content_type = (
@@ -780,7 +781,6 @@ class AzureBlobProvider(BaseCloudProvider):
                         ),
                     }
                 )
-                count += 1
             return results
 
         results: list[dict[str, Any]] = self._execute_with_retry(_do_list)
@@ -891,8 +891,7 @@ class AzureBlobProvider(BaseCloudProvider):
                     delete_snapshots="include",
                 )
                 # Iterate responses to detect per-blob errors.
-                idx = 0
-                for response in responses:
+                for idx, response in enumerate(responses):
                     blob_key = (
                         blob_names[idx] if idx < len(blob_names) else "unknown"
                     )
@@ -912,7 +911,6 @@ class AzureBlobProvider(BaseCloudProvider):
                     else:
                         # No status_code attribute — assume success.
                         deleted_count += 1
-                    idx += 1
             except AzureError as exc:
                 # Batch API not supported or other failure — fall back to
                 # sequential individual deletes.
@@ -1107,7 +1105,7 @@ class AzureBlobProvider(BaseCloudProvider):
                 "could not be determined from config or service client."
             )
 
-        start_time = datetime.now(tz=timezone.utc)
+        start_time = datetime.now(tz=UTC)
         expiry_time = start_time + timedelta(hours=expiration_hours)
 
         # Build permissions from the provided string.
