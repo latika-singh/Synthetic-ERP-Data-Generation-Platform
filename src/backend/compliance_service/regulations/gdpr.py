@@ -41,9 +41,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
-
-from shared.logging.structured_logger import get_logger
+from typing import Any
 
 # The __init__.py imports this module for auto-registration *after* it has
 # defined the base symbols.  Python's partial-module caching guarantees that
@@ -55,6 +53,8 @@ from compliance_service.regulations import (
     RegulationType,
     Severity,
 )
+from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -93,7 +93,7 @@ class GDPRArticle(Enum):
 # GDPR Personal Data Categories (Art. 4)
 # ---------------------------------------------------------------------------
 
-GDPR_PERSONAL_DATA_CATEGORIES: Dict[str, List[str]] = {
+GDPR_PERSONAL_DATA_CATEGORIES: dict[str, list[str]] = {
     "name": [
         "first_name",
         "last_name",
@@ -253,7 +253,7 @@ GDPR_PERSONAL_DATA_CATEGORIES: Dict[str, List[str]] = {
 # GDPR Special Categories of Data (Art. 9)
 # ---------------------------------------------------------------------------
 
-GDPR_SPECIAL_CATEGORIES: List[str] = [
+GDPR_SPECIAL_CATEGORIES: list[str] = [
     "racial_ethnic_origin",
     "political_opinions",
     "religious_philosophical_beliefs",
@@ -266,7 +266,7 @@ GDPR_SPECIAL_CATEGORIES: List[str] = [
 
 # Internal mapping from special category identifiers to detection keywords
 # used for cross-referencing PII scan results with Art. 9 categories.
-_SPECIAL_CATEGORY_KEYWORDS: Dict[str, List[str]] = {
+_SPECIAL_CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "racial_ethnic_origin": [
         "race",
         "ethnicity",
@@ -347,7 +347,7 @@ _SPECIAL_CATEGORY_KEYWORDS: Dict[str, List[str]] = {
 # GDPR Data Minimization Rules (Art. 5(1)(c))
 # ---------------------------------------------------------------------------
 
-GDPR_DATA_MINIMIZATION_RULES: Dict[str, Dict[str, Any]] = {
+GDPR_DATA_MINIMIZATION_RULES: dict[str, dict[str, Any]] = {
     "personal_identifiers": {
         "max_retention_days": 90,
         "requires_purpose": True,
@@ -430,8 +430,8 @@ class _PersonalDataMatch:
 
 
 def _build_category_patterns(
-    categories: Dict[str, List[str]],
-) -> Dict[str, re.Pattern[str]]:
+    categories: dict[str, list[str]],
+) -> dict[str, re.Pattern[str]]:
     """Compile regex patterns from personal data category keyword lists.
 
     For each category, builds a single compiled regex that matches any of
@@ -444,7 +444,7 @@ def _build_category_patterns(
     Returns:
         Mapping of category name to compiled ``re.Pattern``.
     """
-    compiled: Dict[str, re.Pattern[str]] = {}
+    compiled: dict[str, re.Pattern[str]] = {}
     for category, keywords in categories.items():
         escaped = [re.escape(kw) for kw in keywords]
         pattern_str = "|".join(escaped)
@@ -453,8 +453,8 @@ def _build_category_patterns(
 
 
 def _build_special_category_patterns(
-    keywords: Dict[str, List[str]],
-) -> Dict[str, re.Pattern[str]]:
+    keywords: dict[str, list[str]],
+) -> dict[str, re.Pattern[str]]:
     """Compile regex patterns for Art. 9 special category detection.
 
     Args:
@@ -463,7 +463,7 @@ def _build_special_category_patterns(
     Returns:
         Mapping of special category to compiled ``re.Pattern``.
     """
-    compiled: Dict[str, re.Pattern[str]] = {}
+    compiled: dict[str, re.Pattern[str]] = {}
     for category, kw_list in keywords.items():
         escaped = [re.escape(kw) for kw in kw_list]
         pattern_str = "|".join(escaped)
@@ -472,10 +472,10 @@ def _build_special_category_patterns(
 
 
 # Module-level pre-compiled patterns (computed once at import time).
-_PERSONAL_DATA_PATTERNS: Dict[str, re.Pattern[str]] = _build_category_patterns(
+_PERSONAL_DATA_PATTERNS: dict[str, re.Pattern[str]] = _build_category_patterns(
     GDPR_PERSONAL_DATA_CATEGORIES
 )
-_SPECIAL_CATEGORY_PATTERNS: Dict[str, re.Pattern[str]] = (
+_SPECIAL_CATEGORY_PATTERNS: dict[str, re.Pattern[str]] = (
     _build_special_category_patterns(_SPECIAL_CATEGORY_KEYWORDS)
 )
 
@@ -488,7 +488,7 @@ _SPECIAL_CATEGORY_PATTERNS: Dict[str, re.Pattern[str]] = (
 def _match_column_to_personal_data(
     column_name: str,
     column_type: str,
-) -> Optional[str]:
+) -> str | None:
     """Map a dataset column to a GDPR personal data category.
 
     Checks the column name (and optionally its data type) against the
@@ -507,16 +507,38 @@ def _match_column_to_personal_data(
     normalised_name = column_name.lower().strip()
     normalised_type = column_type.lower().strip() if column_type else ""
 
+    # ------------------------------------------------------------------
+    # Two-pass matching: prefer the MOST SPECIFIC match.
+    # Pass 1 - check every category for a full-string / exact match first
+    #          (the column name IS one of the known keywords).
+    # Pass 2 - fall back to substring search, picking the category whose
+    #          matching keyword is the longest (most specific).
+    # ------------------------------------------------------------------
+
+    # Pass 1: exact full-string match across ALL categories.
+    for category, keywords in GDPR_PERSONAL_DATA_CATEGORIES.items():
+        if normalised_name in [kw.lower() for kw in keywords]:
+            return category
+
+    # Pass 2: substring search - collect ALL matching categories with the
+    # length of the longest matching keyword, then pick the best.
+    best_category: str | None = None
+    best_keyword_len: int = 0
+
     for category, pattern in _PERSONAL_DATA_PATTERNS.items():
-        # Primary: attempt exact match on the full column name first
-        if pattern.match(normalised_name):
-            return category
-        # Secondary: search for keyword within a longer column name
-        if pattern.search(normalised_name):
-            return category
-        # Tertiary: column type may hint at personal data in some ERP schemas
-        if normalised_type and pattern.search(normalised_type):
-            return category
+        m = pattern.search(normalised_name)
+        if m and len(m.group()) > best_keyword_len:
+            best_keyword_len = len(m.group())
+            best_category = category
+
+    if best_category is not None:
+        return best_category
+
+    # Pass 3: column type may hint at personal data in some ERP schemas.
+    if normalised_type:
+        for category, pattern in _PERSONAL_DATA_PATTERNS.items():
+            if pattern.search(normalised_type):
+                return category
 
     return None
 
@@ -543,11 +565,10 @@ def _is_special_category(pii_type: str) -> bool:
         return True
 
     # Check against special category keyword patterns.
-    for _category, pattern in _SPECIAL_CATEGORY_PATTERNS.items():
-        if pattern.search(normalised):
-            return True
-
-    return False
+    return any(
+        pattern.search(normalised)
+        for _category, pattern in _SPECIAL_CATEGORY_PATTERNS.items()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -614,10 +635,10 @@ class GDPRRegulationChecker(BaseRegulationChecker):
         and Art. 9 special categories.
         """
         self._logger = get_logger(__name__)
-        self.personal_data_patterns: Dict[str, re.Pattern[str]] = (
+        self.personal_data_patterns: dict[str, re.Pattern[str]] = (
             _PERSONAL_DATA_PATTERNS
         )
-        self.special_category_patterns: Dict[str, re.Pattern[str]] = (
+        self.special_category_patterns: dict[str, re.Pattern[str]] = (
             _SPECIAL_CATEGORY_PATTERNS
         )
 
@@ -640,8 +661,8 @@ class GDPRRegulationChecker(BaseRegulationChecker):
 
     def check_compliance(
         self,
-        dataset_metadata: Dict[str, Any],
-        scan_results: Dict[str, Any],
+        dataset_metadata: dict[str, Any],
+        scan_results: dict[str, Any],
     ) -> ComplianceResult:
         """Execute the full GDPR compliance check for a synthetic dataset.
 
@@ -678,18 +699,18 @@ class GDPRRegulationChecker(BaseRegulationChecker):
             pii_fields_detected=scan_results.get("pii_fields_count", 0),
         )
 
-        columns: List[Dict[str, Any]] = dataset_metadata.get("columns", [])
-        generation_profile: Dict[str, Any] = dataset_metadata.get(
+        columns: list[dict[str, Any]] = dataset_metadata.get("columns", [])
+        generation_profile: dict[str, Any] = dataset_metadata.get(
             "generation_profile", {}
         )
 
         # Enrich scan_results with generation_profile so that
         # check_special_categories can access justification data.
-        enriched_scan: Dict[str, Any] = {**scan_results}
+        enriched_scan: dict[str, Any] = {**scan_results}
         if "generation_profile" not in enriched_scan:
             enriched_scan["generation_profile"] = generation_profile
 
-        all_violations: List[ComplianceViolation] = []
+        all_violations: list[ComplianceViolation] = []
 
         # 1. Art. 4 — Personal data categories
         art4_violations = self.check_personal_data_categories(
@@ -803,9 +824,9 @@ class GDPRRegulationChecker(BaseRegulationChecker):
 
     def check_personal_data_categories(
         self,
-        columns: List[Dict[str, Any]],
-        scan_results: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        columns: list[dict[str, Any]],
+        scan_results: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Check for personal data categories per GDPR Art. 4.
 
         Iterates through all dataset columns and cross-references them
@@ -831,8 +852,8 @@ class GDPRRegulationChecker(BaseRegulationChecker):
             where PII was detected in a personal data category field.
             Severity is ``Severity.HIGH``, article ``'Art. 4 GDPR'``.
         """
-        violations: List[ComplianceViolation] = []
-        field_pii_mapping: Dict[str, List[str]] = scan_results.get(
+        violations: list[ComplianceViolation] = []
+        field_pii_mapping: dict[str, list[str]] = scan_results.get(
             "field_pii_mapping", {}
         )
 
@@ -852,7 +873,7 @@ class GDPRRegulationChecker(BaseRegulationChecker):
                 continue
 
             # Check if PII was actually detected in this field
-            detected_pii_types: List[str] = field_pii_mapping.get(
+            detected_pii_types: list[str] = field_pii_mapping.get(
                 column_name, []
             )
 
@@ -903,9 +924,9 @@ class GDPRRegulationChecker(BaseRegulationChecker):
 
     def check_special_categories(
         self,
-        columns: List[Dict[str, Any]],
-        scan_results: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        columns: list[dict[str, Any]],
+        scan_results: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Check for special category data per GDPR Art. 9.
 
         Art. 9 special categories (racial/ethnic origin, political opinions,
@@ -932,17 +953,17 @@ class GDPRRegulationChecker(BaseRegulationChecker):
             ``severity=Severity.CRITICAL`` for unjustified special
             categories.
         """
-        violations: List[ComplianceViolation] = []
-        field_pii_mapping: Dict[str, List[str]] = scan_results.get(
+        violations: list[ComplianceViolation] = []
+        field_pii_mapping: dict[str, list[str]] = scan_results.get(
             "field_pii_mapping", {}
         )
 
         # Retrieve generation profile from scan_results (injected by
         # check_compliance) or fall back to empty dict.
-        generation_profile: Dict[str, Any] = scan_results.get(
+        generation_profile: dict[str, Any] = scan_results.get(
             "generation_profile", {}
         )
-        justifications: Dict[str, str] = generation_profile.get(
+        justifications: dict[str, str] = generation_profile.get(
             "special_category_justifications", {}
         )
 
@@ -954,7 +975,7 @@ class GDPRRegulationChecker(BaseRegulationChecker):
                 continue
 
             # Determine which special category (if any) this column maps to
-            matched_special_category: Optional[str] = None
+            matched_special_category: str | None = None
 
             for category, pattern in self.special_category_patterns.items():
                 if pattern.search(column_name.lower()):
@@ -1027,8 +1048,8 @@ class GDPRRegulationChecker(BaseRegulationChecker):
 
     def check_data_minimization(
         self,
-        dataset_metadata: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Verify data minimization principles per GDPR Art. 5(1)(c).
 
         Ensures that only necessary fields are included in the generated
@@ -1050,12 +1071,12 @@ class GDPRRegulationChecker(BaseRegulationChecker):
             List of ``ComplianceViolation`` instances with
             ``severity=Severity.MEDIUM`` for minimization violations.
         """
-        violations: List[ComplianceViolation] = []
-        columns: List[Dict[str, Any]] = dataset_metadata.get("columns", [])
-        generation_profile: Dict[str, Any] = dataset_metadata.get(
+        violations: list[ComplianceViolation] = []
+        columns: list[dict[str, Any]] = dataset_metadata.get("columns", [])
+        generation_profile: dict[str, Any] = dataset_metadata.get(
             "generation_profile", {}
         )
-        field_purposes: Dict[str, str] = generation_profile.get(
+        field_purposes: dict[str, str] = generation_profile.get(
             "field_purposes", {}
         )
         overall_purpose: str = generation_profile.get("purpose", "")
@@ -1087,7 +1108,7 @@ class GDPRRegulationChecker(BaseRegulationChecker):
             )
 
         # Check 2: Each personal data column needs a field-level purpose
-        undeclared_fields: List[str] = []
+        undeclared_fields: list[str] = []
         for column in columns:
             col_name: str = column.get("name", "")
             col_type: str = column.get("type", "")
@@ -1162,8 +1183,8 @@ class GDPRRegulationChecker(BaseRegulationChecker):
 
     def check_right_to_erasure(
         self,
-        dataset_metadata: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Verify right to erasure compliance per GDPR Art. 17.
 
         Ensures that the generated synthetic dataset supports deletion
@@ -1185,14 +1206,14 @@ class GDPRRegulationChecker(BaseRegulationChecker):
             List of ``ComplianceViolation`` instances with
             ``severity=Severity.HIGH`` for erasure compliance violations.
         """
-        violations: List[ComplianceViolation] = []
-        generation_profile: Dict[str, Any] = dataset_metadata.get(
+        violations: list[ComplianceViolation] = []
+        generation_profile: dict[str, Any] = dataset_metadata.get(
             "generation_profile", {}
         )
         erasure_supported: bool = generation_profile.get(
             "erasure_supported", False
         )
-        retention_period_days: Optional[int] = generation_profile.get(
+        retention_period_days: int | None = generation_profile.get(
             "retention_period_days"
         )
         dataset_id: str = dataset_metadata.get("dataset_id", "unknown")
@@ -1314,8 +1335,8 @@ class GDPRRegulationChecker(BaseRegulationChecker):
 
     def check_data_portability(
         self,
-        dataset_metadata: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Verify data portability requirements per GDPR Art. 20.
 
         Ensures that the generated synthetic data supports machine-readable,
@@ -1336,11 +1357,11 @@ class GDPRRegulationChecker(BaseRegulationChecker):
             List of ``ComplianceViolation`` instances with
             ``severity=Severity.MEDIUM`` for portability violations.
         """
-        violations: List[ComplianceViolation] = []
-        generation_profile: Dict[str, Any] = dataset_metadata.get(
+        violations: list[ComplianceViolation] = []
+        generation_profile: dict[str, Any] = dataset_metadata.get(
             "generation_profile", {}
         )
-        export_formats: List[str] = generation_profile.get(
+        export_formats: list[str] = generation_profile.get(
             "export_formats", []
         )
         export_enabled: bool = generation_profile.get("export_enabled", True)
@@ -1455,8 +1476,8 @@ class GDPRRegulationChecker(BaseRegulationChecker):
 # ---------------------------------------------------------------------------
 
 __all__ = [
-    "GDPRRegulationChecker",
+    "GDPR_DATA_MINIMIZATION_RULES",
     "GDPR_PERSONAL_DATA_CATEGORIES",
     "GDPR_SPECIAL_CATEGORIES",
-    "GDPR_DATA_MINIMIZATION_RULES",
+    "GDPRRegulationChecker",
 ]
