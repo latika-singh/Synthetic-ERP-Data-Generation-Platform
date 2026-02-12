@@ -46,6 +46,25 @@ can import directly from the package root::
 """
 
 # ---------------------------------------------------------------------------
+# Authentication domain models
+# ---------------------------------------------------------------------------
+from .auth import (
+    LoginResponse,
+    TokenRefreshRequest,
+    TokenRefreshResponse,
+    UserProfile,
+)
+
+# ---------------------------------------------------------------------------
+# Export / provisioning domain models
+# ---------------------------------------------------------------------------
+from .export import (
+    ExportRequest,
+    ExportResponse,
+    ProvisioningConfig,
+)
+
+# ---------------------------------------------------------------------------
 # Generation domain models
 # ---------------------------------------------------------------------------
 from .generation import (
@@ -79,50 +98,26 @@ from .template import (
     TemplateResponse,
 )
 
-# ---------------------------------------------------------------------------
-# Authentication domain models
-# ---------------------------------------------------------------------------
-from .auth import (
-    LoginResponse,
-    TokenRefreshRequest,
-    TokenRefreshResponse,
-    UserProfile,
-)
-
-# ---------------------------------------------------------------------------
-# Export / provisioning domain models
-# ---------------------------------------------------------------------------
-from .export import (
-    ExportRequest,
-    ExportResponse,
-    ProvisioningConfig,
-)
 
 # ---------------------------------------------------------------------------
 # Public API surface
 # ---------------------------------------------------------------------------
 __all__: list[str] = [
-    # Generation
+    "ExportRequest",
+    "ExportResponse",
     "GenerationJobRequest",
     "GenerationJobResponse",
     "JobStatus",
-    # Profiling
+    "LoginResponse",
     "ProfileRequest",
     "ProfileResponse",
-    "StatisticalSummary",
-    # Schema discovery
-    "SchemaDiscoveryRequest",
+    "ProvisioningConfig",
     "SchemaDefinition",
-    # Templates
+    "SchemaDiscoveryRequest",
+    "StatisticalSummary",
     "TemplateRequest",
     "TemplateResponse",
-    # Authentication
-    "LoginResponse",
-    "UserProfile",
     "TokenRefreshRequest",
     "TokenRefreshResponse",
-    # Export / provisioning
-    "ExportRequest",
-    "ExportResponse",
-    "ProvisioningConfig",
+    "UserProfile",
 ]
