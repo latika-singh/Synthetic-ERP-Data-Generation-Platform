@@ -124,10 +124,7 @@ class ModelLoadError(Exception):
         self.model_id = model_id
         self.version = version or "unknown"
         self.details = details
-        message = (
-            f"Failed to load model '{model_id}' version '{self.version}': "
-            f"{details}"
-        )
+        message = f"Failed to load model '{model_id}' version '{self.version}': {details}"
         super().__init__(message)
 
 
@@ -149,10 +146,7 @@ class ModelRegistrationError(Exception):
         self.model_id = model_id
         self.version = version or "unknown"
         self.details = details
-        message = (
-            f"Failed to register model '{model_id}' version "
-            f"'{self.version}': {details}"
-        )
+        message = f"Failed to register model '{model_id}' version '{self.version}': {details}"
         super().__init__(message)
 
 
@@ -191,11 +185,7 @@ class ModelMetadata:
     file_path: str
     file_size_bytes: int = 0
     checksum: str = ""
-    created_at: str = field(
-        default_factory=lambda: datetime.datetime.now(
-            datetime.UTC
-        ).isoformat()
-    )
+    created_at: str = field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
     metadata: dict[str, Any] = field(default_factory=dict)
     device: str = "cpu"
 
@@ -270,10 +260,7 @@ class ModelRegistry:
         device: str | None = None,
     ) -> None:
         # Resolve model directory from parameter → env var → default
-        self._model_dir: str = (
-            model_dir
-            or os.environ.get("MODEL_PATH", _DEFAULT_MODEL_DIR)
-        )
+        self._model_dir: str = model_dir or os.environ.get("MODEL_PATH", _DEFAULT_MODEL_DIR)
         self._cache_size: int = max(cache_size, 1)
 
         # Auto-detect device
@@ -285,19 +272,13 @@ class ModelRegistry:
                 "1",
                 "yes",
             )
-            if (
-                gpu_enabled
-                and _TORCH_AVAILABLE
-                and torch.cuda.is_available()
-            ):
+            if gpu_enabled and _TORCH_AVAILABLE and torch.cuda.is_available():
                 self._device = "cuda:0"
             else:
                 self._device = "cpu"
 
         # Manifest file path
-        self._manifest_path: str = os.path.join(
-            self._model_dir, "manifest.json"
-        )
+        self._manifest_path: str = os.path.join(self._model_dir, "manifest.json")
 
         # Thread-safe reentrant lock for all mutable state
         self._lock: threading.RLock = threading.RLock()
@@ -323,9 +304,7 @@ class ModelRegistry:
             model_dir=self._model_dir,
             cache_size=self._cache_size,
             device=self._device,
-            registered_models=sum(
-                len(versions) for versions in self._manifest.values()
-            ),
+            registered_models=sum(len(versions) for versions in self._manifest.values()),
         )
 
     # ------------------------------------------------------------------
@@ -389,16 +368,11 @@ class ModelRegistry:
                         "TensorFlow is not installed in this environment.",
                     )
                 if framework_lower not in ("pytorch", "tensorflow"):
-                    raise ValueError(
-                        f"Unsupported framework '{framework}'. "
-                        "Use 'pytorch' or 'tensorflow'."
-                    )
+                    raise ValueError(f"Unsupported framework '{framework}'. Use 'pytorch' or 'tensorflow'.")
 
                 # Build artifact directory using Path.joinpath for
                 # object-oriented path construction
-                artifact_path = Path(self._model_dir).joinpath(
-                    model_id, version
-                )
+                artifact_path = Path(self._model_dir).joinpath(model_id, version)
                 artifact_path.mkdir(parents=True, exist_ok=True)
                 artifact_dir = str(artifact_path)
 
@@ -412,14 +386,12 @@ class ModelRegistry:
 
                 # Compute checksum and file size
                 checksum = self._compute_checksum(file_path)
-                file_size_bytes = os.path.getsize(file_path) if os.path.isfile(
-                    file_path
-                ) else self._compute_dir_size(file_path)
+                file_size_bytes = (
+                    os.path.getsize(file_path) if os.path.isfile(file_path) else self._compute_dir_size(file_path)
+                )
 
                 # Build metadata record
-                now = datetime.datetime.now(
-                    datetime.UTC
-                ).isoformat()
+                now = datetime.datetime.now(datetime.UTC).isoformat()
                 meta = ModelMetadata(
                     model_id=model_id,
                     model_type=model_type.lower(),
@@ -561,10 +533,7 @@ class ModelRegistry:
             raise ModelLoadError(
                 model_id,
                 version,
-                (
-                    f"Checksum mismatch — expected {meta.checksum}, "
-                    f"got {current_checksum}. Artifact may be corrupted."
-                ),
+                (f"Checksum mismatch — expected {meta.checksum}, got {current_checksum}. Artifact may be corrupted."),
             )
 
         self._logger.info(
@@ -798,9 +767,7 @@ class ModelRegistry:
                 )
                 return False
 
-            versions_to_delete: list[str] = (
-                [version] if version is not None else list(model_versions.keys())
-            )
+            versions_to_delete: list[str] = [version] if version is not None else list(model_versions.keys())
 
             deleted_any = False
             for ver in versions_to_delete:
@@ -838,9 +805,7 @@ class ModelRegistry:
             # Persist manifest and notify
             if deleted_any:
                 self._save_manifest()
-                self._publish_invalidation(
-                    model_id, version or "all", action="delete"
-                )
+                self._publish_invalidation(model_id, version or "all", action="delete")
 
             return deleted_any
 
@@ -1005,11 +970,7 @@ class ModelRegistry:
         )
 
         # Attempt to free GPU memory for PyTorch models
-        if (
-            _TORCH_AVAILABLE
-            and torch.cuda.is_available()
-            and hasattr(evicted_model, "parameters")
-        ):
+        if _TORCH_AVAILABLE and torch.cuda.is_available() and hasattr(evicted_model, "parameters"):
             try:
                 # Move model to CPU before deletion to free GPU mem
                 evicted_model.cpu()
@@ -1023,9 +984,7 @@ class ModelRegistry:
     # Internal — PyTorch Serialization
     # ------------------------------------------------------------------
 
-    def _save_pytorch_model(
-        self, model_artifact: Any, file_path: str
-    ) -> None:
+    def _save_pytorch_model(self, model_artifact: Any, file_path: str) -> None:
         """Serialize a PyTorch model to disk.
 
         Attempts to save the ``state_dict()`` first (preferred for
@@ -1040,9 +999,7 @@ class ModelRegistry:
             ModelRegistrationError: If serialization fails.
         """
         if not _TORCH_AVAILABLE:
-            raise ModelRegistrationError(
-                "unknown", None, "PyTorch is not installed."
-            )
+            raise ModelRegistrationError("unknown", None, "PyTorch is not installed.")
 
         try:
             if hasattr(model_artifact, "state_dict"):
@@ -1057,9 +1014,7 @@ class ModelRegistry:
                 f"PyTorch serialization failed: {exc}",
             ) from exc
 
-    def _load_pytorch_model(
-        self, file_path: str, device: str
-    ) -> Any:
+    def _load_pytorch_model(self, file_path: str, device: str) -> Any:
         """Deserialize a PyTorch model from disk.
 
         Loads the saved artifact with ``map_location`` set to the target
@@ -1074,9 +1029,7 @@ class ModelRegistry:
             The loaded PyTorch model in evaluation mode.
         """
         if not _TORCH_AVAILABLE:
-            raise ModelLoadError(
-                "unknown", None, "PyTorch is not installed."
-            )
+            raise ModelLoadError("unknown", None, "PyTorch is not installed.")
 
         target = torch.device(device)
         model = torch.load(
@@ -1097,9 +1050,7 @@ class ModelRegistry:
     # Internal — TensorFlow Serialization
     # ------------------------------------------------------------------
 
-    def _save_tensorflow_model(
-        self, model_artifact: Any, file_path: str
-    ) -> None:
+    def _save_tensorflow_model(self, model_artifact: Any, file_path: str) -> None:
         """Serialize a TensorFlow/Keras model to disk.
 
         Uses ``tf.keras.models.save_model()`` to persist in the
@@ -1114,9 +1065,7 @@ class ModelRegistry:
             ModelRegistrationError: If serialization fails.
         """
         if not _TF_AVAILABLE:
-            raise ModelRegistrationError(
-                "unknown", None, "TensorFlow is not installed."
-            )
+            raise ModelRegistrationError("unknown", None, "TensorFlow is not installed.")
 
         try:
             if hasattr(model_artifact, "save"):
@@ -1130,9 +1079,7 @@ class ModelRegistry:
                 f"TensorFlow serialization failed: {exc}",
             ) from exc
 
-    def _load_tensorflow_model(
-        self, file_path: str, device: str
-    ) -> Any:
+    def _load_tensorflow_model(self, file_path: str, device: str) -> Any:
         """Deserialize a TensorFlow/Keras model from disk.
 
         Loads the model within a ``tf.device()`` context to place
@@ -1146,9 +1093,7 @@ class ModelRegistry:
             The loaded TensorFlow/Keras model.
         """
         if not _TF_AVAILABLE:
-            raise ModelLoadError(
-                "unknown", None, "TensorFlow is not installed."
-            )
+            raise ModelLoadError("unknown", None, "TensorFlow is not installed.")
 
         # Map common device strings to TensorFlow device names
         tf_device = self._map_tf_device(device)
@@ -1292,9 +1237,7 @@ class ModelRegistry:
                     "model_id": model_id,
                     "version": version,
                     "action": action,
-                    "timestamp": datetime.datetime.now(
-                        datetime.UTC
-                    ).isoformat(),
+                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
                 }
             )
             client.publish(_REDIS_INVALIDATE_CHANNEL, message)

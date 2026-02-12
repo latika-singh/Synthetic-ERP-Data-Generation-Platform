@@ -162,10 +162,7 @@ class CSVFormatterConfig(BaseModel):
     )
     escapechar: str | None = Field(
         default=None,
-        description=(
-            "Escape character for QUOTE_NONE mode. "
-            "None means the quotechar is doubled."
-        ),
+        description=("Escape character for QUOTE_NONE mode. None means the quotechar is doubled."),
     )
     quoting: CSVQuoting = Field(
         default=CSVQuoting.MINIMAL,
@@ -207,17 +204,12 @@ class CSVFormatterConfig(BaseModel):
     )
     column_order: list[str] | None = Field(
         default=None,
-        description=(
-            "Explicit column ordering. Columns not listed follow in "
-            "their original DataFrame order."
-        ),
+        description=("Explicit column ordering. Columns not listed follow in their original DataFrame order."),
     )
     max_rows_per_file: int | None = Field(
         default=None,
         ge=1,
-        description=(
-            "Maximum data rows per output file. None disables file splitting."
-        ),
+        description=("Maximum data rows per output file. None disables file splitting."),
     )
 
 
@@ -315,9 +307,7 @@ class CSVFormatter(BaseFormatter):
                 ``None``, a default configuration producing standard
                 RFC 4180 CSV output is used.
         """
-        self.config: CSVFormatterConfig = (
-            config if config is not None else CSVFormatterConfig()
-        )
+        self.config: CSVFormatterConfig = config if config is not None else CSVFormatterConfig()
 
     # ------------------------------------------------------------------
     # BaseFormatter abstract method implementations
@@ -353,9 +343,7 @@ class CSVFormatter(BaseFormatter):
             ValueError: If *data* is not a :class:`pandas.DataFrame`.
         """
         if not isinstance(data, pd.DataFrame):
-            raise ValueError(
-                f"Expected pandas DataFrame, got {type(data).__name__}"
-            )
+            raise ValueError(f"Expected pandas DataFrame, got {type(data).__name__}")
 
         # Parameters required by BaseFormatter interface; retained for
         # logging/diagnostics and future type-aware formatting.
@@ -406,9 +394,7 @@ class CSVFormatter(BaseFormatter):
             IOError: If writing to *output* fails.
         """
         if not isinstance(data, pd.DataFrame):
-            raise ValueError(
-                f"Expected pandas DataFrame, got {type(data).__name__}"
-            )
+            raise ValueError(f"Expected pandas DataFrame, got {type(data).__name__}")
 
         # Parameters required by BaseFormatter interface; retained for
         # logging/diagnostics and future type-aware formatting.
@@ -423,11 +409,7 @@ class CSVFormatter(BaseFormatter):
             self._add_bom(output)
 
         # Create a text-compatible write target for csv.writer
-        text_target: Any = (
-            _BinaryStreamTextProxy(output, self.config.encoding)
-            if is_binary
-            else output
-        )
+        text_target: Any = _BinaryStreamTextProxy(output, self.config.encoding) if is_binary else output
         writer = self._get_csv_writer(text_target)
 
         if self.config.include_header:
@@ -501,11 +483,7 @@ class CSVFormatter(BaseFormatter):
         if self.config.include_bom:
             self._add_bom(output)
 
-        text_target: Any = (
-            _BinaryStreamTextProxy(output, self.config.encoding)
-            if is_binary
-            else output
-        )
+        text_target: Any = _BinaryStreamTextProxy(output, self.config.encoding) if is_binary else output
         writer = self._get_csv_writer(text_target)
 
         total_rows: int = 0
@@ -563,9 +541,7 @@ class CSVFormatter(BaseFormatter):
             OSError: If directory creation or file writing fails.
         """
         if not isinstance(data, pd.DataFrame):
-            raise ValueError(
-                f"Expected pandas DataFrame, got {type(data).__name__}"
-            )
+            raise ValueError(f"Expected pandas DataFrame, got {type(data).__name__}")
 
         data = self._apply_column_order(data)
         output_path = Path(output_dir)
@@ -577,10 +553,7 @@ class CSVFormatter(BaseFormatter):
         # Sanitise table_name for use as a filename component
         safe_name = table_name.replace("/", "_").replace("\\", "_")
 
-        if (
-            self.config.max_rows_per_file is None
-            or len(data) <= self.config.max_rows_per_file
-        ):
+        if self.config.max_rows_per_file is None or len(data) <= self.config.max_rows_per_file:
             # Single output file
             file_path = output_path / f"{safe_name}{extension}"
             self._write_single_file(data, str(file_path))
@@ -588,14 +561,10 @@ class CSVFormatter(BaseFormatter):
         else:
             # Split into multiple files
             total_rows = len(data)
-            for file_index, start in enumerate(
-                range(0, total_rows, self.config.max_rows_per_file)
-            ):
+            for file_index, start in enumerate(range(0, total_rows, self.config.max_rows_per_file)):
                 end = min(start + self.config.max_rows_per_file, total_rows)
                 chunk = data.iloc[start:end]
-                file_path = (
-                    output_path / f"{safe_name}_{file_index:04d}{extension}"
-                )
+                file_path = output_path / f"{safe_name}_{file_index:04d}{extension}"
                 self._write_single_file(chunk, str(file_path))
                 generated_files.append(str(file_path))
 
@@ -661,9 +630,7 @@ class CSVFormatter(BaseFormatter):
     # Private helper methods
     # ------------------------------------------------------------------
 
-    def _write_header(
-        self, writer: Any, columns: list[str]
-    ) -> None:
+    def _write_header(self, writer: Any, columns: list[str]) -> None:
         """Write the column header row to the CSV writer.
 
         Args:
@@ -701,18 +668,13 @@ class CSVFormatter(BaseFormatter):
             end = min(start + chunk_size, total_rows)
             chunk = data.iloc[start:end]
             for row in chunk.itertuples(index=False, name=None):
-                formatted_row: list[str] = [
-                    self._format_value(val, col)
-                    for val, col in zip(row, columns, strict=True)
-                ]
+                formatted_row: list[str] = [self._format_value(val, col) for val, col in zip(row, columns, strict=True)]
                 writer.writerow(formatted_row)
                 row_count += 1
 
         return row_count
 
-    def _format_value(
-        self, value: Any, column_name: str | None = None
-    ) -> str:
+    def _format_value(self, value: Any, column_name: str | None = None) -> str:
         """Format an individual cell value for CSV output.
 
         Handles ``None``, ``NaN``, ``NaT``, dates, datetimes, decimals,
@@ -798,13 +760,9 @@ class CSVFormatter(BaseFormatter):
             return data
 
         # Columns from the ordering that actually exist in the DataFrame
-        ordered: list[str] = [
-            col for col in self.config.column_order if col in data.columns
-        ]
+        ordered: list[str] = [col for col in self.config.column_order if col in data.columns]
         # Remaining columns not mentioned in column_order
-        remaining: list[str] = [
-            col for col in data.columns if col not in self.config.column_order
-        ]
+        remaining: list[str] = [col for col in data.columns if col not in self.config.column_order]
         final_order: list[str] = ordered + remaining
 
         if final_order == list(data.columns):
@@ -846,9 +804,7 @@ class CSVFormatter(BaseFormatter):
         else:
             output.write(_UTF8_BOM_CHAR)
 
-    def _write_single_file(
-        self, data: pd.DataFrame, file_path: str
-    ) -> None:
+    def _write_single_file(self, data: pd.DataFrame, file_path: str) -> None:
         """Write a single CSV file to disk.
 
         Opens the file in text mode with the configured encoding,

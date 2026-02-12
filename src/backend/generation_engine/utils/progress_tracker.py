@@ -166,9 +166,7 @@ class ProgressTracker:
         update_interval: int = DEFAULT_UPDATE_INTERVAL,
     ) -> None:
         if total_records < 1:
-            raise ValueError(
-                f"total_records must be >= 1, got {total_records}"
-            )
+            raise ValueError(f"total_records must be >= 1, got {total_records}")
 
         self._job_id: str = job_id
         self._total_records: int = total_records
@@ -185,10 +183,7 @@ class ProgressTracker:
         self._redis = get_redis_client()
         self._logger = get_logger(__name__)
         self._progress_key: str = f"{PROGRESS_KEY_PREFIX}{job_id}"
-        self._channel: str = (
-            create_progress_channel(job_id)
-            or f"{PROGRESS_CHANNEL_PREFIX}{job_id}"
-        )
+        self._channel: str = create_progress_channel(job_id) or f"{PROGRESS_CHANNEL_PREFIX}{job_id}"
 
     # ------------------------------------------------------------------ #
     # Public lifecycle methods
@@ -300,9 +295,7 @@ class ProgressTracker:
                 self._throughput_samples.append(current_throughput)
                 # Trim to sliding window size
                 if len(self._throughput_samples) > _MAX_THROUGHPUT_SAMPLES:
-                    self._throughput_samples = self._throughput_samples[
-                        -_MAX_THROUGHPUT_SAMPLES:
-                    ]
+                    self._throughput_samples = self._throughput_samples[-_MAX_THROUGHPUT_SAMPLES:]
         self._last_batch_time = current_time
 
         # ----- Smoothed (EMA) throughput ------------------------------ #
@@ -364,11 +357,7 @@ class ProgressTracker:
         """
         end_time: float = time.time()
         total_duration: float = end_time - (self._start_time or end_time)
-        average_throughput: float = (
-            self._records_generated / total_duration
-            if total_duration > 0
-            else 0.0
-        )
+        average_throughput: float = self._records_generated / total_duration if total_duration > 0 else 0.0
         timestamp: str = datetime.datetime.now(tz=datetime.UTC).isoformat().replace("+00:00", "Z")
 
         summary: dict[str, Any] = {
@@ -392,12 +381,8 @@ class ProgressTracker:
                     "status": json.dumps("completed"),
                     "percentage": json.dumps(100.0),
                     "records_generated": json.dumps(self._records_generated),
-                    "total_duration_seconds": json.dumps(
-                        round(total_duration, 2)
-                    ),
-                    "average_throughput": json.dumps(
-                        round(average_throughput, 1)
-                    ),
+                    "total_duration_seconds": json.dumps(round(total_duration, 2)),
+                    "average_throughput": json.dumps(round(average_throughput, 1)),
                     "quality_score": json.dumps(quality_score),
                     "completed_at": json.dumps(timestamp),
                 },
@@ -460,9 +445,7 @@ class ProgressTracker:
             number of records generated before the failure.
         """
         failure_time: float = time.time()
-        elapsed: float = (
-            failure_time - self._start_time if self._start_time else 0.0
-        )
+        elapsed: float = failure_time - self._start_time if self._start_time else 0.0
         timestamp: str = datetime.datetime.now(tz=datetime.UTC).isoformat().replace("+00:00", "Z")
 
         failure_summary: dict[str, Any] = {
@@ -483,9 +466,7 @@ class ProgressTracker:
                     "error": json.dumps(error),
                     "error_code": json.dumps(error_code),
                     "failed_at": json.dumps(timestamp),
-                    "records_generated_at_failure": json.dumps(
-                        self._records_generated
-                    ),
+                    "records_generated_at_failure": json.dumps(self._records_generated),
                 },
             )
             self._redis.expire(self._progress_key, PROGRESS_TTL)
@@ -600,12 +581,8 @@ class ProgressTracker:
                 mapping={
                     "records_generated": json.dumps(self._records_generated),
                     "percentage": json.dumps(round(percentage, 2)),
-                    "throughput_records_per_second": json.dumps(
-                        round(smoothed_throughput, 1)
-                    ),
-                    "estimated_remaining_seconds": json.dumps(
-                        estimated_remaining
-                    ),
+                    "throughput_records_per_second": json.dumps(round(smoothed_throughput, 1)),
+                    "estimated_remaining_seconds": json.dumps(estimated_remaining),
                     "last_updated": json.dumps(timestamp),
                 },
             )
@@ -618,9 +595,7 @@ class ProgressTracker:
                     "records_generated": self._records_generated,
                     "total_records": self._total_records,
                     "percentage": round(percentage, 2),
-                    "throughput_records_per_second": round(
-                        smoothed_throughput, 1
-                    ),
+                    "throughput_records_per_second": round(smoothed_throughput, 1),
                     "estimated_remaining_seconds": estimated_remaining,
                     "batch_metadata": batch_metadata,
                     "timestamp": timestamp,
@@ -731,10 +706,7 @@ def cancel_job_progress(job_id: str) -> bool:
         client.expire(progress_key, PROGRESS_TTL)
 
         # Publish a cancellation event to the Pub/Sub channel.
-        channel: str = (
-            create_progress_channel(job_id)
-            or f"{PROGRESS_CHANNEL_PREFIX}{job_id}"
-        )
+        channel: str = create_progress_channel(job_id) or f"{PROGRESS_CHANNEL_PREFIX}{job_id}"
         publish_progress(
             channel,
             {

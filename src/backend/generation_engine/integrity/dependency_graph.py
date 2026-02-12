@@ -103,12 +103,14 @@ _ERP_MODULE_MAPS: dict[str, dict[str, str]] = {
     "dynamics": _DYNAMICS_MODULE_PREFIXES,
 }
 
-_VALID_ERP_MODULES: frozenset[str] = frozenset({
-    "financial_accounting",
-    "hr",
-    "sales_distribution",
-    "material_management",
-})
+_VALID_ERP_MODULES: frozenset[str] = frozenset(
+    {
+        "financial_accounting",
+        "hr",
+        "sales_distribution",
+        "material_management",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -240,12 +242,14 @@ class DependencyGraph:
         graph = DependencyGraph()
         graph.add_table(TableNode(table_name="customers"))
         graph.add_table(TableNode(table_name="orders"))
-        graph.add_dependency(DependencyEdge(
-            parent_table="customers",
-            child_table="orders",
-            fk_column="customer_id",
-            pk_column="id",
-        ))
+        graph.add_dependency(
+            DependencyEdge(
+                parent_table="customers",
+                child_table="orders",
+                fk_column="customer_id",
+                pk_column="id",
+            )
+        )
         order = graph.get_topological_order()
         # order == ["customers", "orders"]
     """
@@ -258,9 +262,7 @@ class DependencyGraph:
         self._edges: dict[tuple[str, str], DependencyEdge] = {}
         self._topological_order: list[str] | None = None
         self._is_dirty: bool = True
-        self._cycle_resolution_strategy: CycleResolutionStrategy = (
-            CycleResolutionStrategy.NULLABLE_EDGE_RELAXATION
-        )
+        self._cycle_resolution_strategy: CycleResolutionStrategy = CycleResolutionStrategy.NULLABLE_EDGE_RELAXATION
         self._relaxed_edges: list[DependencyEdge] = []
         self._logger = get_logger(__name__)
 
@@ -355,9 +357,9 @@ class DependencyGraph:
                         "columns": [...],
                         "primary_keys": ["account_id"],
                         "row_count_estimate": 5000,
-                        "metadata": {}
+                        "metadata": {},
                     },
-                    ...
+                    ...,
                 ],
                 "foreign_keys": [
                     {
@@ -365,10 +367,10 @@ class DependencyGraph:
                         "child_table": "sap.fi.journal_entries",
                         "fk_column": "account_id",
                         "pk_column": "account_id",
-                        "is_nullable": false
+                        "is_nullable": false,
                     },
-                    ...
-                ]
+                    ...,
+                ],
             }
 
         Args:
@@ -397,11 +399,7 @@ class DependencyGraph:
 
             # Auto-detect primary keys from column metadata when not explicit.
             if not primary_keys:
-                primary_keys = [
-                    col["name"]
-                    for col in columns
-                    if col.get("is_pk", False)
-                ]
+                primary_keys = [col["name"] for col in columns if col.get("is_pk", False)]
 
             erp_module = tbl.get("erp_module", "")
             if not erp_module:
@@ -445,9 +443,7 @@ class DependencyGraph:
             )
             self.add_dependency(edge)
 
-        cross_module_count = sum(
-            1 for e in self._edges.values() if e.is_cross_module
-        )
+        cross_module_count = sum(1 for e in self._edges.values() if e.is_cross_module)
         self._logger.info(
             "schema_imported",
             erp_system=erp_system,
@@ -553,9 +549,7 @@ class DependencyGraph:
             # Reduce in-degree for each child; enqueue newly-unblocked.
             child_list: list[str] = sorted(
                 self._adjacency_list.get(node, set()),
-                key=lambda t: self._nodes[t].generation_priority
-                if t in self._nodes
-                else 0,
+                key=lambda t: self._nodes[t].generation_priority if t in self._nodes else 0,
             )
             for child in child_list:
                 if child not in in_degree:
@@ -693,7 +687,8 @@ class DependencyGraph:
     # ------------------------------------------------------------------
 
     def resolve_cycles(
-        self, strategy: CycleResolutionStrategy | None = None,
+        self,
+        strategy: CycleResolutionStrategy | None = None,
     ) -> list[DependencyEdge]:
         """Apply a cycle-resolution strategy to make the graph acyclic.
 
@@ -743,7 +738,8 @@ class DependencyGraph:
         return relaxed_edges
 
     def _resolve_nullable_relaxation(
-        self, cyclic_sccs: list[list[str]],
+        self,
+        cyclic_sccs: list[list[str]],
     ) -> list[DependencyEdge]:
         """Break cycles by removing nullable FK edges from the graph.
 
@@ -757,11 +753,7 @@ class DependencyGraph:
         for scc in cyclic_sccs:
             scc_set = set(scc)
             # Collect edges internal to this SCC.
-            internal_edges = [
-                e
-                for (p, c), e in self._edges.items()
-                if p in scc_set and c in scc_set
-            ]
+            internal_edges = [e for (p, c), e in self._edges.items() if p in scc_set and c in scc_set]
             # Prefer nullable edges; sort by weight (ascending) so that
             # cheaper edges are relaxed first.
             nullable_edges = sorted(
@@ -790,11 +782,7 @@ class DependencyGraph:
                     )
                     # Check whether the SCC is broken.
                     remaining_sccs = self.find_strongly_connected_components()
-                    still_cyclic = any(
-                        len(s) > 1
-                        and scc_set.intersection(s)
-                        for s in remaining_sccs
-                    )
+                    still_cyclic = any(len(s) > 1 and scc_set.intersection(s) for s in remaining_sccs)
                     if not still_cyclic:
                         break
 
@@ -802,7 +790,8 @@ class DependencyGraph:
         return relaxed
 
     def _resolve_deferred_constraint(
-        self, cyclic_sccs: list[list[str]],
+        self,
+        cyclic_sccs: list[list[str]],
     ) -> list[DependencyEdge]:
         """Mark cycle edges for deferred constraint checking.
 
@@ -823,23 +812,22 @@ class DependencyGraph:
                     # DEFERRED for the corresponding FK.
                     if c in self._nodes:
                         deferred_fks: list[str] = self._nodes[c].metadata.setdefault(
-                            "deferred_fk_columns", [],
+                            "deferred_fk_columns",
+                            [],
                         )
                         deferred_fks.append(edge.fk_column)
                     deferred.append(edge)
                     # Remove enough edges to break the cycle.
                     remaining_sccs = self.find_strongly_connected_components()
-                    still_cyclic = any(
-                        len(s) > 1 and scc_set.intersection(s)
-                        for s in remaining_sccs
-                    )
+                    still_cyclic = any(len(s) > 1 and scc_set.intersection(s) for s in remaining_sccs)
                     if not still_cyclic:
                         break
         self._is_dirty = True
         return deferred
 
     def _resolve_scc_batch(
-        self, cyclic_sccs: list[list[str]],
+        self,
+        cyclic_sccs: list[list[str]],
     ) -> list[DependencyEdge]:
         """Group SCC tables for coordinated batch generation.
 
@@ -866,7 +854,8 @@ class DependencyGraph:
         return batched_edges
 
     def _resolve_manual_ordering(
-        self, cyclic_sccs: list[list[str]],
+        self,
+        cyclic_sccs: list[list[str]],
     ) -> list[DependencyEdge]:
         """Break cycles by using ``generation_priority`` to pick cut edges.
 
@@ -877,11 +866,7 @@ class DependencyGraph:
         cut_edges: list[DependencyEdge] = []
         for scc in cyclic_sccs:
             scc_set = set(scc)
-            internal_edges = [
-                ((p, c), e)
-                for (p, c), e in self._edges.items()
-                if p in scc_set and c in scc_set
-            ]
+            internal_edges = [((p, c), e) for (p, c), e in self._edges.items() if p in scc_set and c in scc_set]
             if not internal_edges:
                 continue
 
@@ -899,10 +884,7 @@ class DependencyGraph:
                     del self._edges[key]
                     cut_edges.append(edge)
                     remaining_sccs = self.find_strongly_connected_components()
-                    still_cyclic = any(
-                        len(s) > 1 and scc_set.intersection(s)
-                        for s in remaining_sccs
-                    )
+                    still_cyclic = any(len(s) > 1 and scc_set.intersection(s) for s in remaining_sccs)
                     if not still_cyclic:
                         break
         self._is_dirty = True
@@ -1003,10 +985,7 @@ class DependencyGraph:
             if current in ancestors:
                 continue
             ancestors.add(current)
-            queue.extend(
-                p for p in self._reverse_adjacency.get(current, set())
-                if p not in ancestors
-            )
+            queue.extend(p for p in self._reverse_adjacency.get(current, set()) if p not in ancestors)
         return ancestors
 
     def get_all_descendants(self, table_name: str) -> set[str]:
@@ -1033,10 +1012,7 @@ class DependencyGraph:
             if current in descendants:
                 continue
             descendants.add(current)
-            queue.extend(
-                c for c in self._adjacency_list.get(current, set())
-                if c not in descendants
-            )
+            queue.extend(c for c in self._adjacency_list.get(current, set()) if c not in descendants)
         return descendants
 
     # ------------------------------------------------------------------
@@ -1076,11 +1052,7 @@ class DependencyGraph:
         subgraph._cycle_resolution_strategy = self._cycle_resolution_strategy
 
         # Collect module-local tables.
-        module_tables: set[str] = {
-            name
-            for name, node in self._nodes.items()
-            if node.erp_module == erp_module
-        }
+        module_tables: set[str] = {name for name, node in self._nodes.items() if node.erp_module == erp_module}
 
         # Include cross-module parents so ordering is valid.
         extra_parents: set[str] = set()
@@ -1096,15 +1068,17 @@ class DependencyGraph:
 
         for (p, c), edge in self._edges.items():
             if p in all_tables and c in all_tables:
-                subgraph.add_dependency(DependencyEdge(
-                    parent_table=edge.parent_table,
-                    child_table=edge.child_table,
-                    fk_column=edge.fk_column,
-                    pk_column=edge.pk_column,
-                    is_nullable=edge.is_nullable,
-                    is_cross_module=edge.is_cross_module,
-                    weight=edge.weight,
-                ))
+                subgraph.add_dependency(
+                    DependencyEdge(
+                        parent_table=edge.parent_table,
+                        child_table=edge.child_table,
+                        fk_column=edge.fk_column,
+                        pk_column=edge.pk_column,
+                        is_nullable=edge.is_nullable,
+                        is_cross_module=edge.is_cross_module,
+                        weight=edge.weight,
+                    )
+                )
 
         self._logger.info(
             "module_subgraph_extracted",
@@ -1136,19 +1110,9 @@ class DependencyGraph:
         Returns:
             Dictionary of statistics.
         """
-        root_tables = [
-            name
-            for name in self._nodes
-            if not self._reverse_adjacency.get(name, set())
-        ]
-        leaf_tables = [
-            name
-            for name in self._nodes
-            if not self._adjacency_list.get(name, set())
-        ]
-        cross_module_count = sum(
-            1 for e in self._edges.values() if e.is_cross_module
-        )
+        root_tables = [name for name in self._nodes if not self._reverse_adjacency.get(name, set())]
+        leaf_tables = [name for name in self._nodes if not self._adjacency_list.get(name, set())]
+        cross_module_count = sum(1 for e in self._edges.values() if e.is_cross_module)
 
         sccs = self.find_strongly_connected_components()
         cycle_count = sum(1 for scc in sccs if len(scc) > 1)
@@ -1187,7 +1151,9 @@ class DependencyGraph:
         }
 
     def get_edge(
-        self, parent: str, child: str,
+        self,
+        parent: str,
+        child: str,
     ) -> DependencyEdge | None:
         """Return the edge between *parent* and *child*, or ``None``.
 
@@ -1245,15 +1211,15 @@ class DependencyGraph:
         """
         key = (parent, child)
         if key not in self._edges:
-            raise KeyError(
-                f"No dependency edge from '{parent}' to '{child}'."
-            )
+            raise KeyError(f"No dependency edge from '{parent}' to '{child}'.")
         del self._edges[key]
         self._adjacency_list[parent].discard(child)
         self._reverse_adjacency[child].discard(parent)
         self._is_dirty = True
         self._logger.debug(
-            "dependency_removed", parent=parent, child=child,
+            "dependency_removed",
+            parent=parent,
+            child=child,
         )
 
     # ------------------------------------------------------------------
@@ -1279,41 +1245,26 @@ class DependencyGraph:
         # Check edge endpoints.
         for (parent, child), _edge in self._edges.items():
             if parent not in self._nodes:
-                issues.append(
-                    f"Edge references non-existent parent table '{parent}'."
-                )
+                issues.append(f"Edge references non-existent parent table '{parent}'.")
             if child not in self._nodes:
-                issues.append(
-                    f"Edge references non-existent child table '{child}'."
-                )
+                issues.append(f"Edge references non-existent child table '{child}'.")
             if parent == child:
-                issues.append(
-                    f"Self-loop detected on table '{parent}'."
-                )
+                issues.append(f"Self-loop detected on table '{parent}'.")
 
         # Check for orphan adjacency entries.
         for name in list(self._adjacency_list.keys()):
             if name not in self._nodes:
-                issues.append(
-                    f"Adjacency entry for non-existent table '{name}'."
-                )
+                issues.append(f"Adjacency entry for non-existent table '{name}'.")
         for name in list(self._reverse_adjacency.keys()):
             if name not in self._nodes:
-                issues.append(
-                    f"Reverse adjacency entry for non-existent table '{name}'."
-                )
+                issues.append(f"Reverse adjacency entry for non-existent table '{name}'.")
 
         # Cycles are warnings, not hard errors.
         cycles = self.detect_cycles()
         for cycle in cycles:
-            issues.append(
-                f"Cycle detected (resolvable): {' → '.join(cycle)}"
-            )
+            issues.append(f"Cycle detected (resolvable): {' → '.join(cycle)}")
 
-        is_valid = all(
-            "non-existent" not in issue and "Self-loop" not in issue
-            for issue in issues
-        )
+        is_valid = all("non-existent" not in issue and "Self-loop" not in issue for issue in issues)
 
         self._logger.info(
             "graph_validated",
@@ -1373,7 +1324,8 @@ class DependencyGraph:
         graph = cls()
 
         strategy_value = data.get(
-            "cycle_resolution_strategy", "nullable_edge_relaxation",
+            "cycle_resolution_strategy",
+            "nullable_edge_relaxation",
         )
         graph._cycle_resolution_strategy = CycleResolutionStrategy(strategy_value)
 
@@ -1436,7 +1388,7 @@ class DependencyGraph:
         prefixes_to_strip = [f"{erp_system}.", f"{erp_system}_"]
         for prefix in prefixes_to_strip:
             if lower_name.startswith(prefix):
-                lower_name = lower_name[len(prefix):]
+                lower_name = lower_name[len(prefix) :]
                 break
 
         module_map = _ERP_MODULE_MAPS.get(erp_system, {})
@@ -1445,7 +1397,8 @@ class DependencyGraph:
             # For "legacy" or unknown systems, try all maps.
             for _sys_map in _ERP_MODULE_MAPS.values():
                 for mod_prefix, module_name in sorted(
-                    _sys_map.items(), key=lambda kv: -len(kv[0]),
+                    _sys_map.items(),
+                    key=lambda kv: -len(kv[0]),
                 ):
                     if lower_name.startswith((f"{mod_prefix}.", f"{mod_prefix}_")):
                         return module_name
@@ -1453,7 +1406,8 @@ class DependencyGraph:
 
         # Match against the system-specific prefix map, longest prefix first.
         for mod_prefix, module_name in sorted(
-            module_map.items(), key=lambda kv: -len(kv[0]),
+            module_map.items(),
+            key=lambda kv: -len(kv[0]),
         ):
             if lower_name.startswith((f"{mod_prefix}.", f"{mod_prefix}_")):
                 return module_name

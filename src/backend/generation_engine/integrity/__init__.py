@@ -69,19 +69,23 @@ __all__: list[str] = [
 ]
 
 # Mapping from public symbol name to (module_path, attribute_name).
-_DEPENDENCY_GRAPH_SYMBOLS: frozenset[str] = frozenset({
-    "DependencyGraph",
-    "TableNode",
-    "DependencyEdge",
-    "CycleResolutionStrategy",
-})
+_DEPENDENCY_GRAPH_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "DependencyGraph",
+        "TableNode",
+        "DependencyEdge",
+        "CycleResolutionStrategy",
+    }
+)
 
-_RELATIONSHIP_MANAGER_SYMBOLS: frozenset[str] = frozenset({
-    "RelationshipManager",
-    "ForeignKeyRelationship",
-    "GeneratedKeyMapping",
-    "IntegrityViolation",
-})
+_RELATIONSHIP_MANAGER_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "RelationshipManager",
+        "ForeignKeyRelationship",
+        "GeneratedKeyMapping",
+        "IntegrityViolation",
+    }
+)
 
 
 def __getattr__(name: str) -> object:
@@ -103,17 +107,13 @@ def __getattr__(name: str) -> object:
     if name in _DEPENDENCY_GRAPH_SYMBOLS:
         import importlib  # noqa: PLC0415
 
-        _mod = importlib.import_module(
-            "generation_engine.integrity.dependency_graph"
-        )
+        _mod = importlib.import_module("generation_engine.integrity.dependency_graph")
         return getattr(_mod, name)
 
     if name in _RELATIONSHIP_MANAGER_SYMBOLS:
         import importlib  # noqa: PLC0415
 
-        _mod = importlib.import_module(
-            "generation_engine.integrity.relationship_manager"
-        )
+        _mod = importlib.import_module("generation_engine.integrity.relationship_manager")
         return getattr(_mod, name)
 
     raise AttributeError(f"module 'generation_engine.integrity' has no attribute {name!r}")

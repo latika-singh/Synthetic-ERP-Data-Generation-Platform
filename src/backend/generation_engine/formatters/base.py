@@ -17,6 +17,7 @@ Typical usage::
 
     from generation_engine.formatters.base import BaseFormatter
 
+
     class CSVFormatter(BaseFormatter):
         def format(self, data, table_name, column_definitions=None):
             return data.to_csv(index=False)
@@ -68,8 +69,7 @@ class BaseFormatter(ABC):
                 def format(self, data, table_name, column_definitions=None):
                     return data.to_string()
 
-                def format_to_stream(self, data, table_name,
-                                     column_definitions, output):
+                def format_to_stream(self, data, table_name, column_definitions, output):
                     output.write(data.to_string().encode("utf-8"))
 
                 def get_file_extension(self):

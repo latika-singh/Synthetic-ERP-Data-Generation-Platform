@@ -1,7 +1,7 @@
 """Foreign key relationship tracking and enforcement for synthetic data generation.
 
 This module is the referential-integrity backbone of the Generation Engine.
-During batch generation it maintains a live registry of every parent–child
+During batch generation it maintains a live registry of every parent-child
 foreign-key relationship discovered from ERP schema metadata, tracks all
 primary key values produced so far, and resolves valid foreign-key values
 for child tables on demand.
@@ -53,13 +53,14 @@ import hashlib
 from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import numpy as np
 from pydantic import BaseModel, Field
 
 from generation_engine.integrity.dependency_graph import DependencyGraph, TableNode
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # ERP Module Constants
@@ -77,18 +78,20 @@ ERP_MODULE_SALES_DISTRIBUTION: str = "sales_distribution"
 ERP_MODULE_MATERIAL_MANAGEMENT: str = "material_management"
 """Canonical identifier for the Material Management ERP module (inventory, PO)."""
 
-_VALID_ERP_MODULES: frozenset[str] = frozenset({
-    ERP_MODULE_FINANCIAL_ACCOUNTING,
-    ERP_MODULE_HR,
-    ERP_MODULE_SALES_DISTRIBUTION,
-    ERP_MODULE_MATERIAL_MANAGEMENT,
-})
+_VALID_ERP_MODULES: frozenset[str] = frozenset(
+    {
+        ERP_MODULE_FINANCIAL_ACCOUNTING,
+        ERP_MODULE_HR,
+        ERP_MODULE_SALES_DISTRIBUTION,
+        ERP_MODULE_MATERIAL_MANAGEMENT,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Module Table Prefix Mapping
 # ---------------------------------------------------------------------------
 
-MODULE_TABLE_PREFIXES: Dict[str, Dict[str, str]] = {
+MODULE_TABLE_PREFIXES: dict[str, dict[str, str]] = {
     "sap": {
         "fi": ERP_MODULE_FINANCIAL_ACCOUNTING,
         "co": ERP_MODULE_FINANCIAL_ACCOUNTING,
@@ -132,7 +135,7 @@ MODULE_TABLE_PREFIXES: Dict[str, Dict[str, str]] = {
 # Cross-Module Relationship Definitions
 # ---------------------------------------------------------------------------
 
-CROSS_MODULE_RELATIONSHIPS: List[Dict[str, str]] = [
+CROSS_MODULE_RELATIONSHIPS: list[dict[str, str]] = [
     # HR → Financial Accounting: payroll entries reference GL accounts
     {
         "source_module": ERP_MODULE_HR,
@@ -329,19 +332,19 @@ class RelationshipManager:
                 for ordering and cycle validation.  A new empty instance
                 is created when ``None``.
         """
-        self._relationships: Dict[str, ForeignKeyRelationship] = {}
-        self._key_mappings: Dict[str, GeneratedKeyMapping] = {}
-        self._fk_value_pools: Dict[str, list] = defaultdict(list)
-        self._cross_module_refs: Dict[str, Dict[str, list]] = defaultdict(
+        self._relationships: dict[str, ForeignKeyRelationship] = {}
+        self._key_mappings: dict[str, GeneratedKeyMapping] = {}
+        self._fk_value_pools: dict[str, list] = defaultdict(list)
+        self._cross_module_refs: dict[str, dict[str, list]] = defaultdict(
             lambda: defaultdict(list),
         )
         self._violations: list[IntegrityViolation] = []
         self._dependency_graph: DependencyGraph = (
             dependency_graph if dependency_graph is not None else DependencyGraph()
         )
-        self._erp_module_registry: Dict[str, list[str]] = defaultdict(list)
+        self._erp_module_registry: dict[str, list[str]] = defaultdict(list)
         self._lock: RLock = RLock()
-        self._sequential_counters: Dict[str, int] = defaultdict(int)
+        self._sequential_counters: dict[str, int] = defaultdict(int)
         self.logger = get_logger(__name__)
 
     # ------------------------------------------------------------------
@@ -369,10 +372,7 @@ class RelationshipManager:
         # Duplicate-check: same ID must reference the same tables.
         if rel_id in self._relationships:
             existing = self._relationships[rel_id]
-            if (
-                existing.parent_table != relationship.parent_table
-                or existing.child_table != relationship.child_table
-            ):
+            if existing.parent_table != relationship.parent_table or existing.child_table != relationship.child_table:
                 raise ValueError(
                     f"Relationship '{rel_id}' already registered with "
                     f"different endpoints: "
@@ -386,21 +386,21 @@ class RelationshipManager:
 
         # Register in cross-module map when appropriate.
         if relationship.cross_module:
-            target_key = (
-                f"{relationship.parent_table}.{relationship.parent_column}"
-            )
+            target_key = f"{relationship.parent_table}.{relationship.parent_column}"
             self._cross_module_refs[relationship.erp_module][target_key] = []
 
         # Register ERP module associations.
         if relationship.erp_module:
             if relationship.child_table not in self._erp_module_registry.get(
-                relationship.erp_module, [],
+                relationship.erp_module,
+                [],
             ):
                 self._erp_module_registry[relationship.erp_module].append(
                     relationship.child_table,
                 )
             if relationship.parent_table not in self._erp_module_registry.get(
-                relationship.erp_module, [],
+                relationship.erp_module,
+                [],
             ):
                 self._erp_module_registry[relationship.erp_module].append(
                     relationship.parent_table,
@@ -427,9 +427,12 @@ class RelationshipManager:
             )
 
         # Import DependencyEdge lazily to avoid circular import at module load.
-        from generation_engine.integrity.dependency_graph import DependencyEdge
+        import contextlib  # noqa: PLC0415
 
-        try:
+        from generation_engine.integrity.dependency_graph import DependencyEdge  # noqa: PLC0415
+
+        with contextlib.suppress(ValueError):
+            # Edge may already exist if graph was pre-populated.
             self._dependency_graph.add_dependency(
                 DependencyEdge(
                     parent_table=relationship.parent_table,
@@ -440,9 +443,6 @@ class RelationshipManager:
                     is_cross_module=relationship.cross_module,
                 ),
             )
-        except ValueError:
-            # Edge may already exist if graph was pre-populated.
-            pass
 
         # Validate that no circular FK references were introduced.
         cycles = self._dependency_graph.detect_cycles()
@@ -495,7 +495,8 @@ class RelationshipManager:
         erp_system: str = schema_definition.get("erp_system", "legacy").lower()
         tables: list[dict[str, Any]] = schema_definition.get("tables", [])
         foreign_keys: list[dict[str, Any]] = schema_definition.get(
-            "foreign_keys", [],
+            "foreign_keys",
+            [],
         )
 
         if not tables and not foreign_keys:
@@ -506,7 +507,7 @@ class RelationshipManager:
             return 0
 
         # Build a quick lookup of table names to detect ERP module.
-        table_module_map: Dict[str, str] = {}
+        table_module_map: dict[str, str] = {}
         for tbl in tables:
             tbl_name: str = tbl.get("name", "")
             if not tbl_name:
@@ -523,11 +524,7 @@ class RelationshipManager:
                 columns: list[dict[str, Any]] = tbl.get("columns", [])
                 primary_keys: list[str] = tbl.get("primary_keys", [])
                 if not primary_keys:
-                    primary_keys = [
-                        col["name"]
-                        for col in columns
-                        if col.get("is_pk", False)
-                    ]
+                    primary_keys = [col["name"] for col in columns if col.get("is_pk", False)]
                 self._dependency_graph.add_table(
                     TableNode(
                         table_name=tbl_name,
@@ -558,15 +555,16 @@ class RelationshipManager:
             parent_module = table_module_map.get(parent_table, "")
             child_module = table_module_map.get(child_table, "")
             is_cross_module = bool(
-                parent_module
-                and child_module
-                and parent_module != child_module,
+                parent_module and child_module and parent_module != child_module,
             )
             erp_module = child_module or parent_module
 
             # Deterministic relationship ID from table + column names.
             rel_id = self._generate_relationship_id(
-                parent_table, pk_column, child_table, fk_column,
+                parent_table,
+                pk_column,
+                child_table,
+                fk_column,
             )
 
             cardinality = fk.get("cardinality", "one_to_many")
@@ -653,8 +651,7 @@ class RelationshipManager:
             # Update next_key_value if numeric keys are being tracked.
             if keys and isinstance(keys[-1], (int, float)):
                 candidate = int(keys[-1]) + 1
-                if candidate > mapping.next_key_value:
-                    mapping.next_key_value = candidate
+                mapping.next_key_value = max(mapping.next_key_value, candidate)
 
         # Refresh FK value pools referencing this parent table/column.
         for rel_id, rel in self._relationships.items():
@@ -744,7 +741,7 @@ class RelationshipManager:
             strategy: Selection strategy — ``'random'``, ``'sequential'``,
                 ``'weighted'``, or ``'uniform'``.
             null_ratio: Fraction of values to set to ``None`` for nullable
-                FK columns (``0.0``–``1.0``).
+                FK columns (``0.0`` to ``1.0``).
 
         Returns:
             List of FK values (possibly including ``None`` for nullable
@@ -795,46 +792,13 @@ class RelationshipManager:
             self._violations.append(violation)
             raise ValueError(violation.message)
 
-        # Convert pool to numpy array for efficient selection.
-        pool_array = np.array(pool)
-
-        # Select FK values using the requested strategy.
-        if strategy == "random":
-            selected = np.random.choice(pool_array, size=count, replace=True).tolist()
-        elif strategy == "sequential":
-            counter_key = relationship_id
-            start = self._sequential_counters[counter_key]
-            indices = [(start + i) % len(pool) for i in range(count)]
-            selected = [pool[idx] for idx in indices]
-            self._sequential_counters[counter_key] = (start + count) % len(pool)
-        elif strategy == "weighted":
-            # Weighted: earlier parent keys are slightly more likely,
-            # simulating natural data skew where older records accumulate
-            # more references.
-            weights = np.arange(1, len(pool) + 1, dtype=float)
-            weights = weights / weights.sum()
-            selected = np.random.choice(
-                pool_array, size=count, replace=True, p=weights,
-            ).tolist()
-        elif strategy == "uniform":
-            # Uniform: distribute child records as evenly as possible
-            # across parent keys.
-            base_per_parent = count // len(pool)
-            remainder = count % len(pool)
-            selected_list: list[Any] = []
-            for i, key in enumerate(pool):
-                reps = base_per_parent + (1 if i < remainder else 0)
-                selected_list.extend([key] * reps)
-            np.random.shuffle(np.array(selected_list, dtype=object))
-            selected = selected_list[:count]
-        else:
-            # Fall back to random for unknown strategies.
-            self.logger.warning(
-                "unknown_fk_strategy_fallback_random",
-                strategy=strategy,
-                relationship_id=relationship_id,
-            )
-            selected = np.random.choice(pool_array, size=count, replace=True).tolist()
+        # Delegate value selection to the strategy helper.
+        selected = self._select_fk_values_by_strategy(
+            pool,
+            count,
+            strategy,
+            relationship_id,
+        )
 
         # Apply null ratio for nullable FK columns.
         if relationship.is_nullable and null_ratio > 0.0:
@@ -941,7 +905,7 @@ class RelationshipManager:
 
         Args:
             table_name: Table to which the batch belongs.
-            batch_data: Record data — either a 2-D ``np.ndarray`` (rows ×
+            batch_data: Record data - either a 2-D ``np.ndarray`` (rows x
                 columns) or a column-oriented ``dict`` mapping column name
                 to list of values.
             column_names: Ordered list of column names corresponding to
@@ -954,7 +918,7 @@ class RelationshipManager:
         violations: list[IntegrityViolation] = []
 
         # Normalise batch_data into column-oriented dict.
-        col_data: Dict[str, list] = {}
+        col_data: dict[str, list] = {}
         if isinstance(batch_data, np.ndarray):
             for idx, col_name in enumerate(column_names):
                 col_data[col_name] = batch_data[:, idx].tolist()
@@ -981,144 +945,10 @@ class RelationshipManager:
             ]
 
         # --- PK duplicate check ---
-        pk_relationships = self._get_relationships_for_table(
-            table_name, role="parent",
-        )
-        pk_columns_checked: Set[str] = set()
-        for rel in pk_relationships:
-            pk_col = rel.parent_column
-            if pk_col in pk_columns_checked or pk_col not in col_data:
-                continue
-            pk_columns_checked.add(pk_col)
-            values = col_data[pk_col]
-            arr = np.array(values)
-            unique_vals, counts = np.unique(arr, return_counts=True)
-            dup_mask = counts > 1
-            if np.any(dup_mask):
-                for dup_val in unique_vals[dup_mask]:
-                    indices = [i for i, v in enumerate(values) if v == dup_val]
-                    for idx in indices[1:]:
-                        violations.append(
-                            IntegrityViolation(
-                                violation_type="duplicate_pk",
-                                table_name=table_name,
-                                column_name=pk_col,
-                                record_index=idx,
-                                expected_value="unique",
-                                actual_value=dup_val,
-                                relationship_id=rel.relationship_id,
-                                severity="error",
-                                message=(
-                                    f"Duplicate PK value '{dup_val}' in "
-                                    f"'{table_name}.{pk_col}' at row {idx}"
-                                ),
-                            ),
-                        )
+        violations.extend(self._check_pk_duplicates(table_name, col_data))
 
         # --- FK validation ---
-        fk_relationships = self._get_relationships_for_table(
-            table_name, role="child",
-        )
-        for rel in fk_relationships:
-            fk_col = rel.child_column
-            if fk_col not in col_data:
-                continue
-
-            values = col_data[fk_col]
-            parent_key = f"{rel.parent_table}.{rel.parent_column}"
-            parent_mapping = self._key_mappings.get(parent_key)
-            parent_keys_arr: np.ndarray | None = None
-            if parent_mapping is not None and parent_mapping.generated_keys:
-                parent_keys_arr = np.array(parent_mapping.generated_keys)
-
-            # Identify null positions first.
-            null_indices: list[int] = []
-            non_null_indices: list[int] = []
-            non_null_values: list[Any] = []
-            for row_idx, val in enumerate(values):
-                if val is None or (isinstance(val, float) and np.isnan(val)):
-                    null_indices.append(row_idx)
-                else:
-                    non_null_indices.append(row_idx)
-                    non_null_values.append(val)
-
-            # Report null violations for non-nullable FK columns.
-            if not rel.is_nullable:
-                for row_idx in null_indices:
-                    violations.append(
-                        IntegrityViolation(
-                            violation_type="null_required_fk",
-                            table_name=table_name,
-                            column_name=fk_col,
-                            record_index=row_idx,
-                            expected_value="non-null",
-                            actual_value=values[row_idx],
-                            relationship_id=rel.relationship_id,
-                            severity="error",
-                            message=(
-                                f"NULL in non-nullable FK "
-                                f"'{table_name}.{fk_col}' at row {row_idx}"
-                            ),
-                        ),
-                    )
-
-            # Vectorised orphaned FK detection using np.isin().
-            if parent_keys_arr is not None and non_null_values:
-                fk_arr = np.array(non_null_values)
-                valid_mask = np.isin(fk_arr, parent_keys_arr)
-                orphan_positions = np.where(~valid_mask)[0]
-                for pos in orphan_positions:
-                    row_idx = non_null_indices[int(pos)]
-                    violations.append(
-                        IntegrityViolation(
-                            violation_type="orphaned_fk",
-                            table_name=table_name,
-                            column_name=fk_col,
-                            record_index=row_idx,
-                            expected_value=(
-                                f"value in {rel.parent_table}.{rel.parent_column}"
-                            ),
-                            actual_value=values[row_idx],
-                            relationship_id=rel.relationship_id,
-                            severity="error",
-                            message=(
-                                f"Orphaned FK value '{values[row_idx]}' in "
-                                f"'{table_name}.{fk_col}' at row {row_idx} — "
-                                f"no matching PK in "
-                                f"'{rel.parent_table}.{rel.parent_column}'"
-                            ),
-                        ),
-                    )
-
-            # Cardinality check for one-to-one relationships.
-            if rel.cardinality == "one_to_one":
-                non_null_vals = [
-                    v for v in values
-                    if v is not None and not (isinstance(v, float) and np.isnan(v))
-                ]
-                arr = np.array(non_null_vals)
-                if len(arr) > 0:
-                    unique_vals, counts = np.unique(arr, return_counts=True)
-                    dup_mask = counts > 1
-                    if np.any(dup_mask):
-                        for dup_val in unique_vals[dup_mask]:
-                            violations.append(
-                                IntegrityViolation(
-                                    violation_type="cardinality_violation",
-                                    table_name=table_name,
-                                    column_name=fk_col,
-                                    record_index=-1,
-                                    expected_value="unique FK values (one-to-one)",
-                                    actual_value=dup_val,
-                                    relationship_id=rel.relationship_id,
-                                    severity="error",
-                                    message=(
-                                        f"Cardinality violation: duplicate FK "
-                                        f"'{dup_val}' in one-to-one relationship "
-                                        f"'{table_name}.{fk_col}'"
-                                    ),
-                                ),
-                            )
+        violations.extend(self._check_fk_constraints(table_name, col_data))
 
         # Accumulate global violations.
         self._violations.extend(violations)
@@ -1136,7 +966,7 @@ class RelationshipManager:
 
     def validate_complete_dataset(
         self,
-        dataset: Dict[str, Any],
+        dataset: dict[str, Any],
     ) -> tuple[float, list[IntegrityViolation]]:
         """Validate referential integrity across the entire generated dataset.
 
@@ -1180,13 +1010,15 @@ class RelationshipManager:
                 continue
 
             _, batch_violations = self.validate_batch(
-                table_name, data, column_names,
+                table_name,
+                data,
+                column_names,
             )
             all_violations.extend(batch_violations)
 
             # Count total FK references for this table.
             fk_rels = self._get_relationships_for_table(table_name, role="child")
-            col_data: Dict[str, list] = {}
+            col_data: dict[str, list] = {}
             if isinstance(data, np.ndarray):
                 for idx, col_name in enumerate(column_names):
                     col_data[col_name] = data[:, idx].tolist()
@@ -1198,25 +1030,22 @@ class RelationshipManager:
                 if fk_col not in col_data:
                     continue
                 values = col_data[fk_col]
-                non_null_count = sum(
-                    1 for v in values
-                    if v is not None and not (isinstance(v, float) and np.isnan(v))
-                )
+                non_null_count = sum(1 for v in values if v is not None and not (isinstance(v, float) and np.isnan(v)))
                 total_references += non_null_count
 
             # Valid references = total minus orphaned/null violations for
             # this table.
             table_error_count = sum(
-                1 for v in batch_violations
-                if v.severity == "error"
-                and v.violation_type in ("orphaned_fk", "null_required_fk")
+                1
+                for v in batch_violations
+                if v.severity == "error" and v.violation_type in ("orphaned_fk", "null_required_fk")
             )
             valid_references += (
                 sum(
                     sum(
-                        1 for v in col_data.get(rel.child_column, [])
-                        if v is not None
-                        and not (isinstance(v, float) and np.isnan(v))
+                        1
+                        for v in col_data.get(rel.child_column, [])
+                        if v is not None and not (isinstance(v, float) and np.isnan(v))
                     )
                     for rel in fk_rels
                     if rel.child_column in col_data
@@ -1279,27 +1108,26 @@ class RelationshipManager:
                     "erp_module_coverage": { module: [table, ...], ... },
                 }
         """
-        violations_by_type: Dict[str, int] = defaultdict(int)
-        violations_by_table: Dict[str, int] = defaultdict(int)
+        violations_by_type: dict[str, int] = defaultdict(int)
+        violations_by_table: dict[str, int] = defaultdict(int)
 
         for v in self._violations:
             violations_by_type[v.violation_type] += 1
             violations_by_table[v.table_name] += 1
 
-        total_keys = sum(
-            len(m.generated_keys) for m in self._key_mappings.values()
-        )
+        total_keys = sum(len(m.generated_keys) for m in self._key_mappings.values())
 
         # Compute approximate integrity score from accumulated violations.
         total_refs = 0
         error_violations = sum(
-            1 for v in self._violations
-            if v.severity == "error"
-            and v.violation_type in ("orphaned_fk", "null_required_fk")
+            1
+            for v in self._violations
+            if v.severity == "error" and v.violation_type in ("orphaned_fk", "null_required_fk")
         )
         for mapping in self._key_mappings.values():
             child_rels = self._get_relationships_for_table(
-                mapping.table_name, role="parent",
+                mapping.table_name,
+                role="parent",
             )
             for rel in child_rels:
                 child_key = f"{rel.child_table}.{rel.child_column}"
@@ -1310,16 +1138,15 @@ class RelationshipManager:
         integrity_score = 1.0
         if total_refs > 0:
             integrity_score = max(
-                0.0, min(1.0, (total_refs - error_violations) / total_refs),
+                0.0,
+                min(1.0, (total_refs - error_violations) / total_refs),
             )
 
         # Serialise relationship definitions via model_dump() for portability.
-        relationship_details: list[dict] = [
-            rel.model_dump() for rel in self._relationships.values()
-        ]
+        relationship_details: list[dict] = [rel.model_dump() for rel in self._relationships.values()]
 
         # Gather downstream dependency information from the graph.
-        dependents_map: Dict[str, list[str]] = {}
+        dependents_map: dict[str, list[str]] = {}
         for table_key in self._key_mappings:
             table_name_part = table_key.rsplit(".", 1)[0] if "." in table_key else table_key
             try:
@@ -1338,10 +1165,7 @@ class RelationshipManager:
             "total_violations": len(self._violations),
             "violations_by_type": dict(violations_by_type),
             "violations_by_table": dict(violations_by_table),
-            "cross_module_references": {
-                module: {k: v for k, v in refs.items()}
-                for module, refs in self._cross_module_refs.items()
-            },
+            "cross_module_references": {module: dict(refs.items()) for module, refs in self._cross_module_refs.items()},
             "integrity_score": round(integrity_score, 6),
             "erp_module_coverage": dict(self._erp_module_registry),
             "relationship_details": relationship_details,
@@ -1386,6 +1210,291 @@ class RelationshipManager:
     # Private Helpers
     # ------------------------------------------------------------------
 
+    def _check_pk_duplicates(
+        self,
+        table_name: str,
+        col_data: dict[str, list],
+    ) -> list[IntegrityViolation]:
+        """Detect duplicate primary-key values in a batch.
+
+        Args:
+            table_name: Table being validated.
+            col_data: Column-oriented data mapping column name to values.
+
+        Returns:
+            List of ``duplicate_pk`` violations found.
+        """
+        violations: list[IntegrityViolation] = []
+        pk_relationships = self._get_relationships_for_table(table_name, role="parent")
+        pk_columns_checked: set[str] = set()
+
+        for rel in pk_relationships:
+            pk_col = rel.parent_column
+            if pk_col in pk_columns_checked or pk_col not in col_data:
+                continue
+            pk_columns_checked.add(pk_col)
+            values = col_data[pk_col]
+            arr = np.array(values)
+            unique_vals, counts = np.unique(arr, return_counts=True)
+            dup_mask = counts > 1
+            if np.any(dup_mask):
+                for dup_val in unique_vals[dup_mask]:
+                    indices = [i for i, v in enumerate(values) if v == dup_val]
+                    for idx in indices[1:]:
+                        violations.append(
+                            IntegrityViolation(
+                                violation_type="duplicate_pk",
+                                table_name=table_name,
+                                column_name=pk_col,
+                                record_index=idx,
+                                expected_value="unique",
+                                actual_value=dup_val,
+                                relationship_id=rel.relationship_id,
+                                severity="error",
+                                message=(f"Duplicate PK value '{dup_val}' in '{table_name}.{pk_col}' at row {idx}"),
+                            ),
+                        )
+        return violations
+
+    def _check_fk_constraints(
+        self,
+        table_name: str,
+        col_data: dict[str, list],
+    ) -> list[IntegrityViolation]:
+        """Validate FK constraints (orphans, nulls, cardinality) for a batch.
+
+        Args:
+            table_name: Table being validated.
+            col_data: Column-oriented data mapping column name to values.
+
+        Returns:
+            List of FK-related violations found.
+        """
+        violations: list[IntegrityViolation] = []
+        fk_relationships = self._get_relationships_for_table(table_name, role="child")
+
+        for rel in fk_relationships:
+            fk_col = rel.child_column
+            if fk_col not in col_data:
+                continue
+
+            values = col_data[fk_col]
+            parent_key = f"{rel.parent_table}.{rel.parent_column}"
+            parent_mapping = self._key_mappings.get(parent_key)
+            parent_keys_arr: np.ndarray | None = None
+            if parent_mapping is not None and parent_mapping.generated_keys:
+                parent_keys_arr = np.array(parent_mapping.generated_keys)
+
+            null_indices, non_null_indices, non_null_values = self._partition_null_values(values)
+
+            violations.extend(
+                self._check_null_fk_violations(rel, table_name, fk_col, values, null_indices),
+            )
+            violations.extend(
+                self._check_orphaned_fk_violations(
+                    rel,
+                    table_name,
+                    fk_col,
+                    values,
+                    parent_keys_arr,
+                    non_null_indices,
+                    non_null_values,
+                ),
+            )
+            violations.extend(
+                self._check_cardinality_violations(rel, table_name, fk_col, values),
+            )
+
+        return violations
+
+    @staticmethod
+    def _partition_null_values(
+        values: list[Any],
+    ) -> tuple[list[int], list[int], list[Any]]:
+        """Split values into null and non-null partitions with their indices.
+
+        Args:
+            values: Column values to partition.
+
+        Returns:
+            ``(null_indices, non_null_indices, non_null_values)``
+        """
+        null_indices: list[int] = []
+        non_null_indices: list[int] = []
+        non_null_values: list[Any] = []
+        for row_idx, val in enumerate(values):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                null_indices.append(row_idx)
+            else:
+                non_null_indices.append(row_idx)
+                non_null_values.append(val)
+        return null_indices, non_null_indices, non_null_values
+
+    @staticmethod
+    def _check_null_fk_violations(
+        rel: ForeignKeyRelationship,
+        table_name: str,
+        fk_col: str,
+        values: list[Any],
+        null_indices: list[int],
+    ) -> list[IntegrityViolation]:
+        """Report violations for NULL values in non-nullable FK columns."""
+        if rel.is_nullable:
+            return []
+        violations: list[IntegrityViolation] = []
+        for row_idx in null_indices:
+            violations.append(
+                IntegrityViolation(
+                    violation_type="null_required_fk",
+                    table_name=table_name,
+                    column_name=fk_col,
+                    record_index=row_idx,
+                    expected_value="non-null",
+                    actual_value=values[row_idx],
+                    relationship_id=rel.relationship_id,
+                    severity="error",
+                    message=(f"NULL in non-nullable FK '{table_name}.{fk_col}' at row {row_idx}"),
+                ),
+            )
+        return violations
+
+    @staticmethod
+    def _check_orphaned_fk_violations(
+        rel: ForeignKeyRelationship,
+        table_name: str,
+        fk_col: str,
+        values: list[Any],
+        parent_keys_arr: np.ndarray | None,
+        non_null_indices: list[int],
+        non_null_values: list[Any],
+    ) -> list[IntegrityViolation]:
+        """Detect FK values that have no matching parent PK."""
+        if parent_keys_arr is None or not non_null_values:
+            return []
+        violations: list[IntegrityViolation] = []
+        fk_arr = np.array(non_null_values)
+        valid_mask = np.isin(fk_arr, parent_keys_arr)
+        orphan_positions = np.where(~valid_mask)[0]
+        for pos in orphan_positions:
+            row_idx = non_null_indices[int(pos)]
+            violations.append(
+                IntegrityViolation(
+                    violation_type="orphaned_fk",
+                    table_name=table_name,
+                    column_name=fk_col,
+                    record_index=row_idx,
+                    expected_value=f"value in {rel.parent_table}.{rel.parent_column}",
+                    actual_value=values[row_idx],
+                    relationship_id=rel.relationship_id,
+                    severity="error",
+                    message=(
+                        f"Orphaned FK value '{values[row_idx]}' in "
+                        f"'{table_name}.{fk_col}' at row {row_idx} - "
+                        f"no matching PK in "
+                        f"'{rel.parent_table}.{rel.parent_column}'"
+                    ),
+                ),
+            )
+        return violations
+
+    @staticmethod
+    def _check_cardinality_violations(
+        rel: ForeignKeyRelationship,
+        table_name: str,
+        fk_col: str,
+        values: list[Any],
+    ) -> list[IntegrityViolation]:
+        """Check uniqueness constraint for one-to-one FK relationships."""
+        if rel.cardinality != "one_to_one":
+            return []
+        violations: list[IntegrityViolation] = []
+        non_null_vals = [v for v in values if v is not None and not (isinstance(v, float) and np.isnan(v))]
+        arr = np.array(non_null_vals)
+        if len(arr) > 0:
+            unique_vals, counts = np.unique(arr, return_counts=True)
+            dup_mask = counts > 1
+            if np.any(dup_mask):
+                for dup_val in unique_vals[dup_mask]:
+                    violations.append(
+                        IntegrityViolation(
+                            violation_type="cardinality_violation",
+                            table_name=table_name,
+                            column_name=fk_col,
+                            record_index=-1,
+                            expected_value="unique FK values (one-to-one)",
+                            actual_value=dup_val,
+                            relationship_id=rel.relationship_id,
+                            severity="error",
+                            message=(
+                                f"Cardinality violation: duplicate FK "
+                                f"'{dup_val}' in one-to-one relationship "
+                                f"'{table_name}.{fk_col}'"
+                            ),
+                        ),
+                    )
+        return violations
+
+    def _select_fk_values_by_strategy(
+        self,
+        pool: list[Any],
+        count: int,
+        strategy: str,
+        relationship_id: str,
+    ) -> list[Any]:
+        """Select FK values from *pool* using the given *strategy*.
+
+        Supports ``'random'``, ``'sequential'``, ``'weighted'``, and
+        ``'uniform'``.  Unknown strategies fall back to random.
+
+        Args:
+            pool: Available parent key values.
+            count: Number of FK values to produce.
+            strategy: Selection strategy name.
+            relationship_id: FK relationship identifier (used for
+                sequential counter tracking).
+
+        Returns:
+            List of selected FK values.
+        """
+        pool_array = np.array(pool)
+
+        if strategy == "sequential":
+            counter_key = relationship_id
+            start = self._sequential_counters[counter_key]
+            indices = [(start + i) % len(pool) for i in range(count)]
+            selected = [pool[idx] for idx in indices]
+            self._sequential_counters[counter_key] = (start + count) % len(pool)
+            return selected
+
+        if strategy == "weighted":
+            weights = np.arange(1, len(pool) + 1, dtype=float)
+            weights = weights / weights.sum()
+            return np.random.choice(
+                pool_array,
+                size=count,
+                replace=True,
+                p=weights,
+            ).tolist()
+
+        if strategy == "uniform":
+            base_per_parent = count // len(pool)
+            remainder = count % len(pool)
+            selected_list: list[Any] = []
+            for i, key in enumerate(pool):
+                reps = base_per_parent + (1 if i < remainder else 0)
+                selected_list.extend([key] * reps)
+            np.random.shuffle(np.array(selected_list, dtype=object))
+            return selected_list[:count]
+
+        if strategy != "random":
+            self.logger.warning(
+                "unknown_fk_strategy_fallback_random",
+                strategy=strategy,
+                relationship_id=relationship_id,
+            )
+
+        return np.random.choice(pool_array, size=count, replace=True).tolist()
+
     def _get_relationships_for_table(
         self,
         table_name: str,
@@ -1404,9 +1513,9 @@ class RelationshipManager:
         """
         results: list[ForeignKeyRelationship] = []
         for rel in self._relationships.values():
-            if role == "child" and rel.child_table == table_name:
-                results.append(rel)
-            elif role == "parent" and rel.parent_table == table_name:
+            if (role == "child" and rel.child_table == table_name) or (
+                role == "parent" and rel.parent_table == table_name
+            ):
                 results.append(rel)
         return results
 
@@ -1457,7 +1566,7 @@ class RelationshipManager:
         # Strip ERP system prefix if present.
         for prefix in (f"{erp_system}.", f"{erp_system}_"):
             if lower_name.startswith(prefix):
-                lower_name = lower_name[len(prefix):]
+                lower_name = lower_name[len(prefix) :]
                 break
 
         module_map = MODULE_TABLE_PREFIXES.get(erp_system, {})
@@ -1466,7 +1575,8 @@ class RelationshipManager:
             # For unknown ERP systems try all known prefix maps.
             for sys_map in MODULE_TABLE_PREFIXES.values():
                 for mod_prefix, module_name in sorted(
-                    sys_map.items(), key=lambda kv: -len(kv[0]),
+                    sys_map.items(),
+                    key=lambda kv: -len(kv[0]),
                 ):
                     if lower_name.startswith((f"{mod_prefix}.", f"{mod_prefix}_")):
                         return module_name
@@ -1474,7 +1584,8 @@ class RelationshipManager:
 
         # Match longest prefix first.
         for mod_prefix, module_name in sorted(
-            module_map.items(), key=lambda kv: -len(kv[0]),
+            module_map.items(),
+            key=lambda kv: -len(kv[0]),
         ):
             if lower_name.startswith((f"{mod_prefix}.", f"{mod_prefix}_")):
                 return module_name

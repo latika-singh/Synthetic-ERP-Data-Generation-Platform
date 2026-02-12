@@ -189,11 +189,13 @@ class SQLFormatter(BaseFormatter):
 
     Example::
 
-        formatter = SQLFormatter(config=SQLFormatterConfig(
-            dialect=SQLDialect.ORACLE,
-            batch_size=500,
-            include_ddl=True,
-        ))
+        formatter = SQLFormatter(
+            config=SQLFormatterConfig(
+                dialect=SQLDialect.ORACLE,
+                batch_size=500,
+                include_ddl=True,
+            )
+        )
         sql = formatter.format(df, "hr_employees", column_defs)
     """
 
@@ -255,9 +257,7 @@ class SQLFormatter(BaseFormatter):
             ValueError: If *data* is empty.
         """
         if data.empty:
-            raise ValueError(
-                f"Cannot format empty DataFrame for table '{table_name}'"
-            )
+            raise ValueError(f"Cannot format empty DataFrame for table '{table_name}'")
 
         buffer = io.StringIO()
         self.format_to_stream(
@@ -292,9 +292,7 @@ class SQLFormatter(BaseFormatter):
             ValueError: If *data* is empty.
         """
         if data.empty:
-            raise ValueError(
-                f"Cannot format empty DataFrame for table '{table_name}'"
-            )
+            raise ValueError(f"Cannot format empty DataFrame for table '{table_name}'")
 
         write = self._get_write_fn(output)
         qualified_name = self._get_qualified_table_name(table_name)
@@ -317,7 +315,8 @@ class SQLFormatter(BaseFormatter):
             write(copy_output)
         else:
             insert_output = self._generate_insert_statements(
-                data, qualified_name,
+                data,
+                qualified_name,
             )
             write(insert_output)
 
@@ -376,13 +375,19 @@ class SQLFormatter(BaseFormatter):
             if self._config.dialect == SQLDialect.ORACLE:
                 parts.append(
                     self._generate_oracle_insert_all(
-                        batch_df, table_name, columns, col_list,
+                        batch_df,
+                        table_name,
+                        columns,
+                        col_list,
                     )
                 )
             else:
                 parts.append(
                     self._generate_standard_insert(
-                        batch_df, table_name, columns, col_list,
+                        batch_df,
+                        table_name,
+                        columns,
+                        col_list,
                     )
                 )
 
@@ -418,11 +423,7 @@ class SQLFormatter(BaseFormatter):
                 values.append(self._escape_value(val, col_name))
             value_rows.append(f"({', '.join(values)})")
 
-        return (
-            f"INSERT INTO {table_name} ({col_list})\nVALUES\n"
-            + ",\n".join(f"    {vr}" for vr in value_rows)
-            + ";"
-        )
+        return f"INSERT INTO {table_name} ({col_list})\nVALUES\n" + ",\n".join(f"    {vr}" for vr in value_rows) + ";"
 
     def _generate_oracle_insert_all(
         self,
@@ -457,10 +458,7 @@ class SQLFormatter(BaseFormatter):
             for idx, val in enumerate(row):
                 col_name = columns[idx]
                 values.append(self._escape_value(val, col_name))
-            lines.append(
-                f"    INTO {table_name} ({col_list}) "
-                f"VALUES ({', '.join(values)})"
-            )
+            lines.append(f"    INTO {table_name} ({col_list}) VALUES ({', '.join(values)})")
 
         lines.append("SELECT 1 FROM DUAL;")
         return "\n".join(lines)
@@ -496,18 +494,23 @@ class SQLFormatter(BaseFormatter):
 
         if dialect == SQLDialect.POSTGRESQL:
             return self._generate_postgresql_copy(
-                data, table_name, columns, col_list,
+                data,
+                table_name,
+                columns,
+                col_list,
             )
 
         if dialect == SQLDialect.SQLSERVER:
             return self._generate_sqlserver_bulk_insert(
-                data, table_name, columns, col_list,
+                data,
+                table_name,
+                columns,
+                col_list,
             )
 
         # Oracle and SAP HANA lack native COPY; fall back to INSERT
         comment = (
-            f"-- COPY/BULK INSERT not natively supported for "
-            f"{dialect.value}; using INSERT statements instead.\n\n"
+            f"-- COPY/BULK INSERT not natively supported for {dialect.value}; using INSERT statements instead.\n\n"
         )
         return comment + self._generate_insert_statements(data, table_name)
 
@@ -543,12 +546,7 @@ class SQLFormatter(BaseFormatter):
                     row_values.append("t" if val else "f")
                 elif isinstance(val, str):
                     # Escape tabs, newlines, and backslashes in COPY
-                    escaped = (
-                        val.replace("\\", "\\\\")
-                        .replace("\t", "\\t")
-                        .replace("\n", "\\n")
-                        .replace("\r", "\\r")
-                    )
+                    escaped = val.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
                     row_values.append(escaped)
                 elif isinstance(val, (datetime, date)):
                     row_values.append(val.isoformat())
@@ -594,8 +592,7 @@ class SQLFormatter(BaseFormatter):
             "-- For file-based bulk loading, use:",
             f"-- BULK INSERT {table_name}",
             "-- FROM '<data_file_path>'",
-            "-- WITH (FIELDTERMINATOR = '\\t', ROWTERMINATOR = '\\n', "
-            "FIRSTROW = 2);",
+            "-- WITH (FIELDTERMINATOR = '\\t', ROWTERMINATOR = '\\n', FIRSTROW = 2);",
             "",
             f"SET IDENTITY_INSERT {table_name} ON;",
             "",
@@ -684,12 +681,7 @@ class SQLFormatter(BaseFormatter):
         drop_prefix = self._generate_drop_table_guard(qualified_name)
         columns_sql = ",\n".join(col_defs)
 
-        return (
-            f"{drop_prefix}"
-            f"CREATE TABLE {qualified_name} (\n"
-            f"{columns_sql}\n"
-            f");"
-        )
+        return f"{drop_prefix}CREATE TABLE {qualified_name} (\n{columns_sql}\n);"
 
     def _generate_drop_table_guard(self, qualified_name: str) -> str:
         """Generate a dialect-specific ``DROP TABLE IF EXISTS`` guard.
@@ -717,10 +709,7 @@ class SQLFormatter(BaseFormatter):
             )
 
         if dialect == SQLDialect.SQLSERVER:
-            return (
-                f"IF OBJECT_ID('{qualified_name}', 'U') IS NOT NULL\n"
-                f"    DROP TABLE {qualified_name};\nGO\n\n"
-            )
+            return f"IF OBJECT_ID('{qualified_name}', 'U') IS NOT NULL\n    DROP TABLE {qualified_name};\nGO\n\n"
 
         if dialect == SQLDialect.SAP_HANA:
             return (

@@ -27,9 +27,7 @@ Typical usage::
     )
 
     # Standard JSON array output
-    config = JSONFormatterConfig(
-        output_mode=JSONOutputMode.JSON_ARRAY, pretty_print=True
-    )
+    config = JSONFormatterConfig(output_mode=JSONOutputMode.JSON_ARRAY, pretty_print=True)
     formatter = JSONFormatter(config=config)
     json_output = formatter.format(dataframe, "gl_journal_entries")
 
@@ -174,10 +172,7 @@ class JSONFormatterConfig(BaseModel):
     )
     include_metadata: bool = Field(
         default=False,
-        description=(
-            "Wrap output with metadata "
-            "(table_name, record_count, generated_at, format_version)."
-        ),
+        description=("Wrap output with metadata (table_name, record_count, generated_at, format_version)."),
     )
     root_key: str | None = Field(
         default=None,
@@ -215,15 +210,11 @@ class SyntheticDataEncoder(json.JSONEncoder):
 
     Example::
 
-        encoder = SyntheticDataEncoder(
-            config=JSONFormatterConfig(decimal_as_string=True)
-        )
+        encoder = SyntheticDataEncoder(config=JSONFormatterConfig(decimal_as_string=True))
         json.dumps({"amount": Decimal("19.99")}, default=encoder.default)
     """
 
-    def __init__(
-        self, config: JSONFormatterConfig | None = None, **kwargs: Any
-    ) -> None:
+    def __init__(self, config: JSONFormatterConfig | None = None, **kwargs: Any) -> None:
         """Initialize the encoder with formatter configuration.
 
         Args:
@@ -232,9 +223,7 @@ class SyntheticDataEncoder(json.JSONEncoder):
             **kwargs: Keyword arguments forwarded to the base encoder.
         """
         super().__init__(**kwargs)
-        self._config: JSONFormatterConfig = (
-            config if config is not None else JSONFormatterConfig()
-        )
+        self._config: JSONFormatterConfig = config if config is not None else JSONFormatterConfig()
 
     def default(self, obj: Any) -> Any:
         """Serialize non-standard types to JSON-compatible values.
@@ -344,11 +333,13 @@ class JSONFormatter(BaseFormatter):
 
     Example::
 
-        formatter = JSONFormatter(JSONFormatterConfig(
-            output_mode=JSONOutputMode.JSON_ARRAY,
-            pretty_print=True,
-            include_metadata=True,
-        ))
+        formatter = JSONFormatter(
+            JSONFormatterConfig(
+                output_mode=JSONOutputMode.JSON_ARRAY,
+                pretty_print=True,
+                include_metadata=True,
+            )
+        )
         result = formatter.format(df, "hr_employees")
     """
 
@@ -380,13 +371,8 @@ class JSONFormatter(BaseFormatter):
         elif isinstance(config, JSONFormatterConfig):
             self._config = config
         else:
-            raise TypeError(
-                f"config must be JSONFormatterConfig, dict, or None; "
-                f"got {type(config).__name__}"
-            )
-        self._encoder: SyntheticDataEncoder = SyntheticDataEncoder(
-            config=self._config
-        )
+            raise TypeError(f"config must be JSONFormatterConfig, dict, or None; got {type(config).__name__}")
+        self._encoder: SyntheticDataEncoder = SyntheticDataEncoder(config=self._config)
 
     # ------------------------------------------------------------------
     # BaseFormatter abstract method implementations
@@ -423,9 +409,7 @@ class JSONFormatter(BaseFormatter):
         if data is None:
             raise ValueError("Input data must not be None.")
         if not isinstance(data, pd.DataFrame):
-            raise TypeError(
-                f"Expected pandas DataFrame, got {type(data).__name__}."
-            )
+            raise TypeError(f"Expected pandas DataFrame, got {type(data).__name__}.")
 
         if self._config.output_mode == JSONOutputMode.JSON_LINES:
             return self._format_json_lines(data, column_definitions)
@@ -458,16 +442,12 @@ class JSONFormatter(BaseFormatter):
         if data is None:
             raise ValueError("Input data must not be None.")
         if not isinstance(data, pd.DataFrame):
-            raise TypeError(
-                f"Expected pandas DataFrame, got {type(data).__name__}."
-            )
+            raise TypeError(f"Expected pandas DataFrame, got {type(data).__name__}.")
 
         if self._config.output_mode == JSONOutputMode.JSON_LINES:
             self._stream_json_lines(data, column_definitions, output)
         else:
-            self._stream_json_array(
-                data, table_name, column_definitions, output
-            )
+            self._stream_json_array(data, table_name, column_definitions, output)
 
     def get_file_extension(self) -> str:
         """Return the canonical file extension for the current output mode.
@@ -523,9 +503,7 @@ class JSONFormatter(BaseFormatter):
         """
         if self._config.output_mode == JSONOutputMode.JSON_LINES:
             # JSONL batches concatenate safely — use base implementation
-            return super().format_batch(
-                data_batches, table_name, column_definitions, output
-            )
+            return super().format_batch(data_batches, table_name, column_definitions, output)
 
         # JSON array mode: produce a single coherent JSON document
         _write = self._get_stream_writer(output)
@@ -540,16 +518,12 @@ class JSONFormatter(BaseFormatter):
 
         for batch in data_batches:
             for _, row in batch.iterrows():
-                all_records.append(
-                    self._row_to_dict(row, column_definitions)
-                )
+                all_records.append(self._row_to_dict(row, column_definitions))
             total_rows += len(batch)
 
         # Build output structure
         if self._config.include_metadata:
-            output_data: Any = self._add_metadata_wrapper(
-                all_records, table_name
-            )
+            output_data: Any = self._add_metadata_wrapper(all_records, table_name)
         elif self._config.root_key:
             output_data = {self._config.root_key: all_records}
         else:
@@ -589,10 +563,7 @@ class JSONFormatter(BaseFormatter):
         Returns:
             Complete JSON string.
         """
-        records: list[dict[str, Any]] = [
-            self._row_to_dict(row, column_definitions)
-            for _, row in data.iterrows()
-        ]
+        records: list[dict[str, Any]] = [self._row_to_dict(row, column_definitions) for _, row in data.iterrows()]
 
         # Determine the output structure
         output_data: Any
@@ -671,10 +642,7 @@ class JSONFormatter(BaseFormatter):
         pretty = self._config.pretty_print
         chunk_size = self._config.chunk_size
         total_rows = len(data)
-        has_envelope = (
-            self._config.include_metadata
-            or self._config.root_key is not None
-        )
+        has_envelope = self._config.include_metadata or self._config.root_key is not None
 
         # ---- Opening structure (delegated to helper) ----
         self._write_array_opening(_write, table_name, total_rows, pretty)
@@ -702,9 +670,7 @@ class JSONFormatter(BaseFormatter):
                 first_record = False
 
                 if pretty:
-                    _write(
-                        self._indent_json_block(record_json, record_indent)
-                    )
+                    _write(self._indent_json_block(record_json, record_indent))
                 else:
                     _write(record_json)
 
@@ -747,9 +713,7 @@ class JSONFormatter(BaseFormatter):
                     _write(f'{pad}"{key}": {json.dumps(val)},\n')
                 _write(f'{pad}"{records_key}": [\n')
             else:
-                prefix_parts = ", ".join(
-                    f'"{k}": {json.dumps(v)}' for k, v in meta.items()
-                )
+                prefix_parts = ", ".join(f'"{k}": {json.dumps(v)}' for k, v in meta.items())
                 _write(f'{{{prefix_parts}, "{records_key}": [')
         elif self._config.root_key:
             if pretty:
@@ -1059,6 +1023,4 @@ class JSONFormatter(BaseFormatter):
         """
         prefix = " " * spaces
         lines = json_str.split("\n")
-        return "\n".join(
-            (prefix + line) if line.strip() else line for line in lines
-        )
+        return "\n".join((prefix + line) if line.strip() else line for line in lines)

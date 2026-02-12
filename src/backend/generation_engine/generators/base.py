@@ -32,13 +32,11 @@ Usage::
 
     from generation_engine.generators.base import BaseGenerator, GenerationResult
 
+
     class MyGenerator(BaseGenerator):
-        def generate(self, schema, profile, num_records, **kwargs):
-            ...
-        def validate_config(self, config):
-            ...
-        def get_capabilities(self):
-            ...
+        def generate(self, schema, profile, num_records, **kwargs): ...
+        def validate_config(self, config): ...
+        def get_capabilities(self): ...
 """
 
 from __future__ import annotations
@@ -117,16 +115,13 @@ class ColumnSpec(BaseModel):
     constraints: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Column-specific constraints such as min, max, pattern, "
-            "enum_values, unique, regex, precision, scale."
+            "Column-specific constraints such as min, max, pattern, enum_values, unique, regex, precision, scale."
         ),
     )
     primary_key: bool = False
     foreign_key: dict[str, str] | None = Field(
         default=None,
-        description=(
-            'Foreign key reference: {"table": "<table>", "column": "<column>"}.'
-        ),
+        description=('Foreign key reference: {"table": "<table>", "column": "<column>"}.'),
     )
     description: str | None = None
 
@@ -218,9 +213,7 @@ class GenerationConfig(BaseModel):
         payloads decoded as ``int``).
         """
         if value <= 0:
-            raise ValueError(
-                f"num_records must be a positive integer, got {value}."
-            )
+            raise ValueError(f"num_records must be a positive integer, got {value}.")
         return value
 
 
@@ -340,10 +333,7 @@ class GenerationError(Exception):
         super().__init__(self.message)
 
     def __repr__(self) -> str:  # pragma: no cover — convenience repr
-        return (
-            f"GenerationError(message={self.message!r}, "
-            f"method={self.method!r}, details={self.details!r})"
-        )
+        return f"GenerationError(message={self.message!r}, method={self.method!r}, details={self.details!r})"
 
 
 # ---------------------------------------------------------------------------
@@ -799,18 +789,10 @@ class BaseGenerator(ABC):
             records_generated: Cumulative count of records produced so far.
             total_records: Target total record count.
         """
-        previous_pct: int = (
-            int((self._records_generated / total_records) * 100)
-            if total_records > 0
-            else 0
-        )
+        previous_pct: int = int((self._records_generated / total_records) * 100) if total_records > 0 else 0
         self._records_generated = records_generated
 
-        current_pct: int = (
-            int((records_generated / total_records) * 100)
-            if total_records > 0
-            else 0
-        )
+        current_pct: int = int((records_generated / total_records) * 100) if total_records > 0 else 0
 
         # Emit a log at every 10 % boundary crossed since the last call.
         previous_milestone: int = (previous_pct // 10) * 10

@@ -39,16 +39,18 @@ try:
         get_checkpoint_info,
     )
 
-    __all__.extend([
-        "CHECKPOINT_KEY_PREFIX",
-        "CHECKPOINT_TTL",
-        "DEFAULT_CHECKPOINT_INTERVAL",
-        "MAX_CHECKPOINT_SIZE",
-        "CheckpointManager",
-        "CheckpointState",
-        "cleanup_expired_checkpoints",
-        "get_checkpoint_info",
-    ])
+    __all__.extend(
+        [
+            "CHECKPOINT_KEY_PREFIX",
+            "CHECKPOINT_TTL",
+            "DEFAULT_CHECKPOINT_INTERVAL",
+            "MAX_CHECKPOINT_SIZE",
+            "CheckpointManager",
+            "CheckpointState",
+            "cleanup_expired_checkpoints",
+            "get_checkpoint_info",
+        ]
+    )
 except ImportError:  # pragma: no cover
     pass
 
@@ -63,14 +65,16 @@ try:
         get_job_progress,
     )
 
-    __all__.extend([
-        "DEFAULT_UPDATE_INTERVAL",
-        "PROGRESS_CHANNEL_PREFIX",
-        "PROGRESS_KEY_PREFIX",
-        "PROGRESS_TTL",
-        "ProgressTracker",
-        "cancel_job_progress",
-        "get_job_progress",
-    ])
+    __all__.extend(
+        [
+            "DEFAULT_UPDATE_INTERVAL",
+            "PROGRESS_CHANNEL_PREFIX",
+            "PROGRESS_KEY_PREFIX",
+            "PROGRESS_TTL",
+            "ProgressTracker",
+            "cancel_job_progress",
+            "get_job_progress",
+        ]
+    )
 except ImportError:  # pragma: no cover
     pass

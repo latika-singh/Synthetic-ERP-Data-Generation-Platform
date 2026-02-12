@@ -30,14 +30,16 @@ Usage::
     for batch_idx in range(total_batches):
         records = generate_batch(batch_idx)
         if mgr.should_checkpoint():
-            mgr.save_checkpoint({
-                "batch_index": batch_idx,
-                "records_generated": len(records),
-                "total_records": target_count,
-                "generator_state": generator.get_state(),
-                "column_states": column_tracker.state,
-                "relationship_state": fk_tracker.state,
-            })
+            mgr.save_checkpoint(
+                {
+                    "batch_index": batch_idx,
+                    "records_generated": len(records),
+                    "total_records": target_count,
+                    "generator_state": generator.get_state(),
+                    "column_states": column_tracker.state,
+                    "relationship_state": fk_tracker.state,
+                }
+            )
 
     # On job completion
     mgr.delete_checkpoint()
@@ -251,9 +253,7 @@ def _serialize_state(state: dict[str, Any]) -> str:
         encoded = base64.b64encode(pickled_bytes).decode("ascii")
         return f"{_FORMAT_PICKLE}:{encoded}"
     except (pickle.PicklingError, TypeError, OverflowError) as exc:
-        raise ValueError(
-            f"Failed to serialize checkpoint state: {exc}"
-        ) from exc
+        raise ValueError(f"Failed to serialize checkpoint state: {exc}") from exc
 
 
 def _deserialize_state(data: str) -> dict[str, Any]:
@@ -273,38 +273,28 @@ def _deserialize_state(data: str) -> dict[str, Any]:
             fails.
     """
     if data.startswith(f"{_FORMAT_JSON}:"):
-        json_str = data[len(_FORMAT_JSON) + 1:]
+        json_str = data[len(_FORMAT_JSON) + 1 :]
         try:
             raw = json.loads(json_str)
             if not isinstance(raw, dict):
-                raise ValueError(
-                    f"JSON checkpoint root is not a dict: {type(raw)}"
-                )
+                raise ValueError(f"JSON checkpoint root is not a dict: {type(raw)}")
             restored: dict[str, Any] = _restore_from_json(raw)
             return restored
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Failed to deserialize JSON checkpoint: {exc}"
-            ) from exc
+            raise ValueError(f"Failed to deserialize JSON checkpoint: {exc}") from exc
 
     if data.startswith(f"{_FORMAT_PICKLE}:"):
-        encoded = data[len(_FORMAT_PICKLE) + 1:]
+        encoded = data[len(_FORMAT_PICKLE) + 1 :]
         try:
             pickled_bytes = base64.b64decode(encoded)
             result = pickle.loads(pickled_bytes)  # noqa: S301 — trusted internal data
             if not isinstance(result, dict):
-                raise ValueError(
-                    f"Pickled checkpoint is not a dict: {type(result)}"
-                )
+                raise ValueError(f"Pickled checkpoint is not a dict: {type(result)}")
             return result
         except (pickle.UnpicklingError, binascii.Error, TypeError) as exc:
-            raise ValueError(
-                f"Failed to deserialize pickled checkpoint: {exc}"
-            ) from exc
+            raise ValueError(f"Failed to deserialize pickled checkpoint: {exc}") from exc
 
-    raise ValueError(
-        f"Unknown checkpoint serialization format: {data[:30]!r}..."
-    )
+    raise ValueError(f"Unknown checkpoint serialization format: {data[:30]!r}...")
 
 
 # ===========================================================================
@@ -409,9 +399,7 @@ class CheckpointManager:
         required_keys = {"batch_index", "records_generated", "total_records"}
         missing = required_keys - set(state.keys())
         if missing:
-            raise ValueError(
-                f"Checkpoint state missing required keys: {missing}"
-            )
+            raise ValueError(f"Checkpoint state missing required keys: {missing}")
 
         # Compress intermediate data if provided.
         compressed_intermediate: bytes | None = None
@@ -573,9 +561,7 @@ class CheckpointManager:
         if intermediate is not None:
             try:
                 if isinstance(intermediate, bytes):
-                    state_dict["intermediate_data"] = zlib.decompress(
-                        intermediate
-                    )
+                    state_dict["intermediate_data"] = zlib.decompress(intermediate)
                 elif isinstance(intermediate, str):
                     # May arrive as base64 string via legacy storage path.
                     raw_bytes = base64.b64decode(intermediate)
@@ -718,9 +704,7 @@ class CheckpointManager:
         Returns:
             ``True`` if a checkpoint should be saved, ``False`` otherwise.
         """
-        return (
-            time.time() - self._last_checkpoint_time
-        ) >= self._checkpoint_interval
+        return (time.time() - self._last_checkpoint_time) >= self._checkpoint_interval
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -818,9 +802,7 @@ def cleanup_expired_checkpoints(max_age_hours: int = 48) -> int:
     """
     deleted_count: int = 0
     max_age_seconds = max_age_hours * 3600
-    cutoff_time = datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(
-        seconds=max_age_seconds
-    )
+    cutoff_time = datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(seconds=max_age_seconds)
     scan_pattern = f"{CHECKPOINT_KEY_PREFIX}*"
 
     try:
@@ -855,9 +837,7 @@ def cleanup_expired_checkpoints(max_age_hours: int = 48) -> int:
                             state = _deserialize_state(raw)  # type: ignore[arg-type]
                             created_at_str = state.get("created_at", "")
                             if created_at_str:
-                                created_at = datetime.datetime.fromisoformat(
-                                    created_at_str
-                                )
+                                created_at = datetime.datetime.fromisoformat(created_at_str)
                                 if created_at < cutoff_time:
                                     should_delete = True
                     except (ValueError, KeyError, TypeError):

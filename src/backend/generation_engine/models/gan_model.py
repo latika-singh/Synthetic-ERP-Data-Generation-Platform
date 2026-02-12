@@ -129,9 +129,7 @@ class _ResidualBlock(nn.Module):
         self.bn = nn.BatchNorm1d(out_dim)
         self.act = nn.LeakyReLU(0.2, inplace=True)
         # Learnable projection shortcut when dimensions differ
-        self.shortcut: nn.Linear | None = (
-            nn.Linear(in_dim, out_dim) if in_dim != out_dim else None
-        )
+        self.shortcut: nn.Linear | None = nn.Linear(in_dim, out_dim) if in_dim != out_dim else None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply linear → BN → LeakyReLU, then add the residual.
@@ -190,9 +188,7 @@ class Generator(nn.Module):
         res_blocks: list[nn.Module] = []
         for i in range(len(hidden_dims) - 1):
             res_blocks.append(_ResidualBlock(hidden_dims[i], hidden_dims[i + 1]))
-        self.res_layers: nn.Module = (
-            nn.Sequential(*res_blocks) if res_blocks else nn.Identity()
-        )
+        self.res_layers: nn.Module = nn.Sequential(*res_blocks) if res_blocks else nn.Identity()
 
         # Output projection: last hidden dim → raw logits per column
         self.output_proj = nn.Linear(hidden_dims[-1], config.output_dim)
@@ -396,9 +392,7 @@ class TabularGAN:
 
         # Mixed-precision training support — enabled on CUDA devices
         self._use_amp: bool = self._device.type == "cuda"
-        self._scaler: torch.cuda.amp.GradScaler | None = (
-            torch.cuda.amp.GradScaler() if self._use_amp else None
-        )
+        self._scaler: torch.cuda.amp.GradScaler | None = torch.cuda.amp.GradScaler() if self._use_amp else None
 
         # Normalisation / encoding state (populated in _preprocess_data)
         self._num_mins: np.ndarray | None = None
@@ -447,10 +441,7 @@ class TabularGAN:
             ValueError: If *data* has fewer than 1 row or column.
         """
         if data.ndim != 2 or data.shape[0] < 1 or data.shape[1] < 1:
-            raise ValueError(
-                f"data must be a 2-D array with ≥1 row and ≥1 column, "
-                f"got shape {data.shape}"
-            )
+            raise ValueError(f"data must be a 2-D array with ≥1 row and ≥1 column, got shape {data.shape}")
 
         self._original_num_columns = data.shape[1]
         parts: list[np.ndarray] = []
@@ -488,14 +479,13 @@ class TabularGAN:
             col_data = data[:, col_idx].astype(int)
 
             unique_vals = sorted(set(col_data.tolist()))
-            cat_map: dict[int, Any] = {
-                v: idx for idx, v in enumerate(unique_vals)
-            }
+            cat_map: dict[int, Any] = {v: idx for idx, v in enumerate(unique_vals)}
             self._category_maps[col_idx] = cat_map
 
             actual_cats = max(n_cats, len(unique_vals))
             one_hot = np.zeros(
-                (data.shape[0], actual_cats), dtype=np.float32,
+                (data.shape[0], actual_cats),
+                dtype=np.float32,
             )
             for row_i, val in enumerate(col_data):
                 mapped = cat_map.get(int(val), 0)
@@ -531,7 +521,8 @@ class TabularGAN:
 
         n_samples = generated.shape[0]
         result = np.zeros(
-            (n_samples, self._original_num_columns), dtype=np.float64,
+            (n_samples, self._original_num_columns),
+            dtype=np.float64,
         )
 
         # --- Numerical columns ------------------------------------------------
@@ -548,14 +539,14 @@ class TabularGAN:
 
         # --- Categorical columns ----------------------------------------------
         for cat_meta, (start, end) in zip(
-            cat_cols, self._categorical_output_slices, strict=False,
+            cat_cols,
+            self._categorical_output_slices,
+            strict=False,
         ):
             col_idx: int = cat_meta["index"]
             cat_probs = generated[:, start:end]
             cat_indices = np.argmax(cat_probs, axis=1)
-            inv_map = {
-                v: k for k, v in self._category_maps.get(col_idx, {}).items()
-            }
+            inv_map = {v: k for k, v in self._category_maps.get(col_idx, {}).items()}
             for row_i, idx in enumerate(cat_indices):
                 result[row_i, col_idx] = inv_map.get(int(idx), 0)
 
@@ -621,18 +612,13 @@ class TabularGAN:
         Raises:
             ValueError: If the data is ``None``, empty, or not 2-D.
         """
-        if real_data is None or (
-            hasattr(real_data, "size") and real_data.size == 0
-        ):
+        if real_data is None or (hasattr(real_data, "size") and real_data.size == 0):
             raise ValueError("real_data must be a non-empty numpy array")
 
         if not isinstance(real_data, np.ndarray):
             real_data = np.asarray(real_data)
         if real_data.ndim != 2 or real_data.shape[0] < 1 or real_data.shape[1] < 1:
-            raise ValueError(
-                f"real_data must be a 2-D array with >=1 row and >=1 column, "
-                f"got shape {real_data.shape}"
-            )
+            raise ValueError(f"real_data must be a 2-D array with >=1 row and >=1 column, got shape {real_data.shape}")
         return real_data
 
     def _build_training_components(
@@ -709,7 +695,9 @@ class TabularGAN:
         d_loss = torch.tensor(0.0, device=self._device)
         for _ in range(self.config.n_critic):
             z = torch.randn(
-                batch_size, self.config.latent_dim, device=self._device,
+                batch_size,
+                self.config.latent_dim,
+                device=self._device,
             )
 
             if self._use_amp and self._scaler is not None:
@@ -750,7 +738,9 @@ class TabularGAN:
         if self.opt_g is None:
             raise RuntimeError("Generator optimizer not initialized.")
         z = torch.randn(
-            batch_size, self.config.latent_dim, device=self._device,
+            batch_size,
+            self.config.latent_dim,
+            device=self._device,
         )
 
         if self._use_amp and self._scaler is not None:
@@ -898,8 +888,12 @@ class TabularGAN:
                     cb(epoch, avg_g, avg_d)
 
             should_stop, best_g_loss, patience_counter = self._check_early_stop(
-                epoch, avg_g, best_g_loss, patience_counter,
-                early_stop_patience, early_stop_min_delta,
+                epoch,
+                avg_g,
+                best_g_loss,
+                patience_counter,
+                early_stop_patience,
+                early_stop_min_delta,
             )
             if should_stop:
                 break
@@ -1004,12 +998,8 @@ class TabularGAN:
         self._logger.info(
             "gan_training_completed",
             epochs_trained=self._final_epoch,
-            final_g_loss=(
-                round(self._g_losses[-1], 6) if self._g_losses else None
-            ),
-            final_d_loss=(
-                round(self._d_losses[-1], 6) if self._d_losses else None
-            ),
+            final_g_loss=(round(self._g_losses[-1], 6) if self._g_losses else None),
+            final_d_loss=(round(self._d_losses[-1], 6) if self._d_losses else None),
         )
 
         if self._device.type == "cuda":
@@ -1045,9 +1035,7 @@ class TabularGAN:
             ValueError: If *num_samples* < 1.
         """
         if not self._is_trained or self.generator is None:
-            raise RuntimeError(
-                "Model must be trained or loaded before generation"
-            )
+            raise RuntimeError("Model must be trained or loaded before generation")
         if num_samples < 1:
             raise ValueError("num_samples must be >= 1")
 
@@ -1067,7 +1055,9 @@ class TabularGAN:
                 bs = min(remaining, batch_max)
                 with torch.no_grad():
                     z = torch.randn(
-                        bs, self.config.latent_dim, device=self._device,
+                        bs,
+                        self.config.latent_dim,
+                        device=self._device,
                     )
                     if self._use_amp:
                         with torch.cuda.amp.autocast():
@@ -1139,9 +1129,7 @@ class TabularGAN:
             OSError: If the target directory cannot be created.
         """
         if self.generator is None or self.discriminator is None:
-            raise RuntimeError(
-                "Model must be built (via train() or load()) before saving"
-            )
+            raise RuntimeError("Model must be built (via train() or load()) before saving")
 
         # Ensure the parent directory exists
         parent_dir = os.path.dirname(path)
@@ -1155,9 +1143,7 @@ class TabularGAN:
                 "config": {
                     "latent_dim": self.config.latent_dim,
                     "generator_hidden_dims": self.config.generator_hidden_dims,
-                    "discriminator_hidden_dims": (
-                        self.config.discriminator_hidden_dims
-                    ),
+                    "discriminator_hidden_dims": (self.config.discriminator_hidden_dims),
                     "learning_rate_g": self.config.learning_rate_g,
                     "learning_rate_d": self.config.learning_rate_d,
                     "beta1": self.config.beta1,
@@ -1165,9 +1151,7 @@ class TabularGAN:
                     "batch_size": self.config.batch_size,
                     "num_epochs": self.config.num_epochs,
                     "n_critic": self.config.n_critic,
-                    "gradient_penalty_lambda": (
-                        self.config.gradient_penalty_lambda
-                    ),
+                    "gradient_penalty_lambda": (self.config.gradient_penalty_lambda),
                     "dropout_rate": self.config.dropout_rate,
                     "output_dim": self.config.output_dim,
                     "numerical_columns": self.config.numerical_columns,
@@ -1175,31 +1159,16 @@ class TabularGAN:
                     "device": self.config.device,
                 },
                 "normalization": {
-                    "num_mins": (
-                        self._num_mins.tolist()
-                        if self._num_mins is not None
-                        else None
-                    ),
-                    "num_maxs": (
-                        self._num_maxs.tolist()
-                        if self._num_maxs is not None
-                        else None
-                    ),
-                    "num_ranges": (
-                        self._num_ranges.tolist()
-                        if self._num_ranges is not None
-                        else None
-                    ),
+                    "num_mins": (self._num_mins.tolist() if self._num_mins is not None else None),
+                    "num_maxs": (self._num_maxs.tolist() if self._num_maxs is not None else None),
+                    "num_ranges": (self._num_ranges.tolist() if self._num_ranges is not None else None),
                 },
                 "category_maps": {
-                    str(k): {str(ki): str(vi) for ki, vi in v.items()}
-                    for k, v in self._category_maps.items()
+                    str(k): {str(ki): str(vi) for ki, vi in v.items()} for k, v in self._category_maps.items()
                 },
                 "output_mappings": {
                     "numerical_output_indices": self._numerical_output_indices,
-                    "categorical_output_slices": [
-                        list(s) for s in self._categorical_output_slices
-                    ],
+                    "categorical_output_slices": [list(s) for s in self._categorical_output_slices],
                     "preprocessed_dim": self._preprocessed_dim,
                 },
                 "training_state": {
@@ -1267,7 +1236,9 @@ class TabularGAN:
 
         try:
             checkpoint: dict[str, Any] = torch.load(
-                path, map_location=device, weights_only=False,
+                path,
+                map_location=device,
+                weights_only=False,
             )
             raw_cfg: dict[str, Any] = checkpoint["config"]
             config = GANConfig(
@@ -1307,51 +1278,47 @@ class TabularGAN:
             norm: dict[str, Any] = checkpoint.get("normalization", {})
             if norm.get("num_mins") is not None:
                 instance._num_mins = np.array(
-                    norm["num_mins"], dtype=np.float64,
+                    norm["num_mins"],
+                    dtype=np.float64,
                 )
             if norm.get("num_maxs") is not None:
                 instance._num_maxs = np.array(
-                    norm["num_maxs"], dtype=np.float64,
+                    norm["num_maxs"],
+                    dtype=np.float64,
                 )
             if norm.get("num_ranges") is not None:
                 instance._num_ranges = np.array(
-                    norm["num_ranges"], dtype=np.float64,
+                    norm["num_ranges"],
+                    dtype=np.float64,
                 )
 
             # Restore category maps
             raw_maps: dict[str, dict[str, str]] = checkpoint.get(
-                "category_maps", {},
+                "category_maps",
+                {},
             )
-            instance._category_maps = {
-                int(k): {int(ki): vi for ki, vi in v.items()}
-                for k, v in raw_maps.items()
-            }
+            instance._category_maps = {int(k): {int(ki): vi for ki, vi in v.items()} for k, v in raw_maps.items()}
 
             # Restore output mappings
             mappings: dict[str, Any] = checkpoint.get("output_mappings", {})
             instance._numerical_output_indices = mappings.get(
-                "numerical_output_indices", [],
+                "numerical_output_indices",
+                [],
             )
-            instance._categorical_output_slices = [
-                tuple(s)
-                for s in mappings.get("categorical_output_slices", [])
-            ]
+            instance._categorical_output_slices = [tuple(s) for s in mappings.get("categorical_output_slices", [])]
             instance._preprocessed_dim = mappings.get("preprocessed_dim", 0)
 
             # Wire column-type metadata into the loaded Generator
-            instance.generator._numerical_indices = (
-                instance._numerical_output_indices
-            )
-            instance.generator._categorical_slices = (
-                instance._categorical_output_slices
-            )
+            instance.generator._numerical_indices = instance._numerical_output_indices
+            instance.generator._categorical_slices = instance._categorical_output_slices
 
             # Restore training state
             ts: dict[str, Any] = checkpoint.get("training_state", {})
             instance._is_trained = ts.get("is_trained", True)
             instance._final_epoch = ts.get("final_epoch", 0)
             instance._original_num_columns = ts.get(
-                "original_num_columns", 0,
+                "original_num_columns",
+                0,
             )
 
             load_logger.info(
@@ -1396,12 +1363,8 @@ class TabularGAN:
             "discriminator_hidden_dims": self.config.discriminator_hidden_dims,
             "final_epoch": self._final_epoch,
             "is_trained": self._is_trained,
-            "final_g_loss": (
-                self._g_losses[-1] if self._g_losses else None
-            ),
-            "final_d_loss": (
-                self._d_losses[-1] if self._d_losses else None
-            ),
+            "final_g_loss": (self._g_losses[-1] if self._g_losses else None),
+            "final_d_loss": (self._d_losses[-1] if self._d_losses else None),
             "num_epochs_configured": self.config.num_epochs,
             "batch_size": self.config.batch_size,
             "n_critic": self.config.n_critic,

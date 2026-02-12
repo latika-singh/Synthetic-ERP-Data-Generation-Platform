@@ -64,6 +64,7 @@ logger = get_logger(__name__)
 # GPU / Device Configuration
 # ---------------------------------------------------------------------------
 
+
 def _configure_gpu_memory() -> None:
     """Configure GPU memory growth to prevent TensorFlow from pre-allocating all VRAM.
 
@@ -309,13 +310,12 @@ def _apply_decoder_activations(
 
     if not has_column_info:
         return tf.keras.layers.Activation(
-            config.output_activation, name="dec_output_act",
+            config.output_activation,
+            name="dec_output_act",
         )(raw_output)
 
     # Build ordered segments of (start, end, type) across output_dim
-    cat_starts: dict[int, tuple[int, int]] = {
-        s: (s, e) for s, e in categorical_output_slices
-    }
+    cat_starts: dict[int, tuple[int, int]] = {s: (s, e) for s, e in categorical_output_slices}
     segments: list[tuple[int, int, str]] = []
     pos = 0
     while pos < output_dim:
@@ -334,11 +334,13 @@ def _apply_decoder_activations(
         segment = raw_output[:, seg_start:seg_end]
         if seg_type == "numerical":
             activated = tf.keras.layers.Activation(
-                "sigmoid", name=f"sig_{seg_start}_{seg_end}",
+                "sigmoid",
+                name=f"sig_{seg_start}_{seg_end}",
             )(segment)
         else:
             activated = tf.keras.layers.Activation(
-                "softmax", name=f"sfx_{seg_start}_{seg_end}",
+                "softmax",
+                name=f"sfx_{seg_start}_{seg_end}",
             )(segment)
         parts.append(activated)
 
@@ -405,8 +407,11 @@ def build_decoder(
 
     # ----- Apply column-type-specific activations -----
     activated_output = _apply_decoder_activations(
-        raw_output, output_dim, config,
-        numerical_output_indices, categorical_output_slices,
+        raw_output,
+        output_dim,
+        config,
+        numerical_output_indices,
+        categorical_output_slices,
     )
 
     decoder = tf.keras.Model(inputs, activated_output, name="decoder")
@@ -459,7 +464,9 @@ class KLAnnealingCallback(tf.keras.callbacks.Callback):
         self.max_kl_weight: float = max_kl_weight
 
     def on_epoch_begin(
-        self, epoch: int, _logs: dict[str, Any] | None = None,
+        self,
+        epoch: int,
+        _logs: dict[str, Any] | None = None,
     ) -> None:
         """Update the KL weight at the start of each epoch.
 
@@ -651,7 +658,9 @@ class TabularVAE(tf.keras.Model):
         ]
 
     def call(
-        self, inputs: tf.Tensor, training: bool = False,
+        self,
+        inputs: tf.Tensor,
+        training: bool = False,
     ) -> tf.Tensor:
         """Forward pass: encode → sample → decode.
 
@@ -718,14 +727,17 @@ class TabularVAE(tf.keras.Model):
             for start, end in self._categorical_output_slices:
                 x_cat = x[:, start:end]
                 x_recon_cat = tf.clip_by_value(
-                    x_reconstructed[:, start:end], 1e-7, 1.0 - 1e-7,
+                    x_reconstructed[:, start:end],
+                    1e-7,
+                    1.0 - 1e-7,
                 )
                 bce = tf.reduce_mean(
                     tf.keras.losses.binary_crossentropy(x_cat, x_recon_cat),
                 )
                 cat_bce_total = cat_bce_total + bce
             num_groups = tf.cast(
-                max(len(self._categorical_output_slices), 1), tf.float32,
+                max(len(self._categorical_output_slices), 1),
+                tf.float32,
             )
             reconstruction_loss = reconstruction_loss + cat_bce_total / num_groups
 
@@ -766,7 +778,10 @@ class TabularVAE(tf.keras.Model):
             z_mean, z_log_var, z = self.encoder(data, training=True)
             reconstructed = self.decoder(z, training=True)
             total_loss, recon_loss, kl_loss = self.compute_loss(
-                data, reconstructed, z_mean, z_log_var,
+                data,
+                reconstructed,
+                z_mean,
+                z_log_var,
                 kl_weight=self._current_kl_weight,
             )
 
@@ -824,9 +839,7 @@ class TabularVAE(tf.keras.Model):
             col_data = real_data[:, col_idx]
 
             unique_vals = sorted(set(col_data.tolist()))
-            cat_to_idx: dict[Any, int] = {
-                val: i for i, val in enumerate(unique_vals[:num_cats])
-            }
+            cat_to_idx: dict[Any, int] = {val: i for i, val in enumerate(unique_vals[:num_cats])}
             idx_to_cat: dict[int, Any] = {i: val for val, i in cat_to_idx.items()}
             self._category_maps[col_idx] = idx_to_cat
 
@@ -954,9 +967,7 @@ class TabularVAE(tf.keras.Model):
         if real_data is None or len(real_data) == 0:
             raise ValueError("real_data must be a non-empty numpy array")
 
-        self._original_num_columns = (
-            real_data.shape[1] if real_data.ndim > 1 else 1
-        )
+        self._original_num_columns = real_data.shape[1] if real_data.ndim > 1 else 1
 
         self._logger.info(
             "vae_training_started",
@@ -985,9 +996,7 @@ class TabularVAE(tf.keras.Model):
             )
 
             # ---- Assemble callbacks ---------------------------------------
-            monitor = (
-                "val_total_loss" if validation_split > 0 else "total_loss"
-            )
+            monitor = "val_total_loss" if validation_split > 0 else "total_loss"
             training_callbacks: list[Any] = [
                 tf.keras.callbacks.EarlyStopping(
                     monitor=monitor,
@@ -1033,10 +1042,7 @@ class TabularVAE(tf.keras.Model):
             # ---- Record results -------------------------------------------
             self._is_trained = True
             self._final_epoch = len(history.history.get("total_loss", []))
-            self._training_history = {
-                key: [float(v) for v in vals]
-                for key, vals in history.history.items()
-            }
+            self._training_history = {key: [float(v) for v in vals] for key, vals in history.history.items()}
 
             final_total = history.history.get("total_loss", [0.0])[-1]
             final_recon = history.history.get("reconstruction_loss", [0.0])[-1]
@@ -1113,7 +1119,8 @@ class TabularVAE(tf.keras.Model):
 
             # Decode in manageable batches
             generated_preprocessed = self.decoder.predict(
-                z, batch_size=self.config.batch_size,
+                z,
+                batch_size=self.config.batch_size,
             )
 
             # Post-process to original format
@@ -1133,8 +1140,7 @@ class TabularVAE(tf.keras.Model):
                 num_samples=num_samples,
             )
             raise RuntimeError(
-                f"Out of memory generating {num_samples} samples.  "
-                f"Try generating in smaller batches.  Original: {exc}",
+                f"Out of memory generating {num_samples} samples.  Try generating in smaller batches.  Original: {exc}",
             ) from exc
         except Exception as exc:
             self._logger.error(
@@ -1224,31 +1230,16 @@ class TabularVAE(tf.keras.Model):
                     "output_activation": self.config.output_activation,
                 },
                 "normalization": {
-                    "num_mins": (
-                        self._num_mins.tolist()
-                        if self._num_mins is not None
-                        else None
-                    ),
-                    "num_maxs": (
-                        self._num_maxs.tolist()
-                        if self._num_maxs is not None
-                        else None
-                    ),
-                    "num_ranges": (
-                        self._num_ranges.tolist()
-                        if self._num_ranges is not None
-                        else None
-                    ),
+                    "num_mins": (self._num_mins.tolist() if self._num_mins is not None else None),
+                    "num_maxs": (self._num_maxs.tolist() if self._num_maxs is not None else None),
+                    "num_ranges": (self._num_ranges.tolist() if self._num_ranges is not None else None),
                 },
                 "category_maps": {
-                    str(k): {str(ki): str(vi) for ki, vi in v.items()}
-                    for k, v in self._category_maps.items()
+                    str(k): {str(ki): str(vi) for ki, vi in v.items()} for k, v in self._category_maps.items()
                 },
                 "output_mappings": {
                     "numerical_output_indices": self._numerical_output_indices,
-                    "categorical_output_slices": [
-                        list(s) for s in self._categorical_output_slices
-                    ],
+                    "categorical_output_slices": [list(s) for s in self._categorical_output_slices],
                     "preprocessed_dim": self._preprocessed_dim,
                 },
                 "training_state": {
@@ -1337,21 +1328,18 @@ class TabularVAE(tf.keras.Model):
 
         # Category maps
         raw_maps = sidecar.get("category_maps", {})
-        self._category_maps = {
-            int(k): {int(ki): vi for ki, vi in v.items()}
-            for k, v in raw_maps.items()
-        }
+        self._category_maps = {int(k): {int(ki): vi for ki, vi in v.items()} for k, v in raw_maps.items()}
 
         # Output mappings
         mappings = sidecar.get("output_mappings", {})
         self._numerical_output_indices = mappings.get(
-            "numerical_output_indices", [],
+            "numerical_output_indices",
+            [],
         )
-        self._categorical_output_slices = [
-            tuple(s) for s in mappings.get("categorical_output_slices", [])
-        ]
+        self._categorical_output_slices = [tuple(s) for s in mappings.get("categorical_output_slices", [])]
         self._preprocessed_dim = mappings.get(
-            "preprocessed_dim", self.config.input_dim,
+            "preprocessed_dim",
+            self.config.input_dim,
         )
 
         # Training state
@@ -1410,7 +1398,8 @@ class TabularVAE(tf.keras.Model):
 
             custom_objects = {"Sampling": Sampling}
             instance.encoder = tf.keras.models.load_model(
-                encoder_path, custom_objects=custom_objects,
+                encoder_path,
+                custom_objects=custom_objects,
             )
             instance.decoder = tf.keras.models.load_model(decoder_path)
 

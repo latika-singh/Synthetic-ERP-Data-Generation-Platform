@@ -159,10 +159,7 @@ class FormatterRegistry:
         """
         if format_type not in cls._registry:
             available = ", ".join(f.value for f in cls._registry)
-            msg = (
-                f"No formatter registered for {format_type.value!r}. "
-                f"Available formats: {available}"
-            )
+            msg = f"No formatter registered for {format_type.value!r}. Available formats: {available}"
             raise KeyError(msg)
 
         formatter_cls, default_config = cls._registry[format_type]
