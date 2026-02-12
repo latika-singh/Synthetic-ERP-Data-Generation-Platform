@@ -865,7 +865,22 @@ def _register_error_handlers(app: Flask) -> None:
         Logs the full exception traceback via structlog and returns a
         generic 500 JSON response to prevent leaking internal details
         to the client.
+
+        If the exception is an :class:`~werkzeug.exceptions.HTTPException`
+        (e.g. 405 Method Not Allowed), the original HTTP status code is
+        preserved so that Flask/Werkzeug semantics are respected.
         """
+        from werkzeug.exceptions import HTTPException
+
+        if isinstance(error, HTTPException):
+            # Preserve the original HTTP status code for known HTTP errors
+            # that do not have a dedicated errorhandler registered.
+            return jsonify({
+                "error": error.name,
+                "message": error.description,
+                "status_code": error.code,
+            }), error.code  # type: ignore[return-value]
+
         logger.error(
             "unhandled_exception",
             error_type=type(error).__name__,
