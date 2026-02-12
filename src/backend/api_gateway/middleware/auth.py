@@ -56,8 +56,9 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import structlog
 from flask import Flask, Response, current_app, g, jsonify, request
-from jose import ExpiredSignatureError, JWTClaimsError, JWTError
+from jose import ExpiredSignatureError, JWTError
 from jose import jwt as jose_jwt
+from jose.jwt import JWTClaimsError
 
 from shared.logging.structured_logger import get_logger
 
