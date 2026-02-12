@@ -50,9 +50,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
-from shared.logging.structured_logger import get_logger
 from compliance_service.regulations import (
     BaseRegulationChecker,
     ComplianceResult,
@@ -60,13 +59,14 @@ from compliance_service.regulations import (
     RegulationType,
     Severity,
 )
+from shared.logging.structured_logger import get_logger
 
 
 # ---------------------------------------------------------------------------
 # HIPAA PHI Identifiers — 18 categories per 45 CFR 164.514(b)(2)
 # ---------------------------------------------------------------------------
 
-HIPAA_PHI_IDENTIFIERS: Dict[str, List[str]] = {
+HIPAA_PHI_IDENTIFIERS: dict[str, list[str]] = {
     "names": [
         "first_name",
         "last_name",
@@ -178,7 +178,7 @@ value list contains lower-case, underscore-separated field-name fragments
 used for pattern matching during compliance checks."""
 
 
-HIPAA_MINIMUM_NECESSARY_CATEGORIES: Set[str] = {
+HIPAA_MINIMUM_NECESSARY_CATEGORIES: set[str] = {
     "names",
     "geographic_data",
     "dates",
@@ -208,7 +208,7 @@ present in generated datasets must be justified."""
 # Internal constants
 # ---------------------------------------------------------------------------
 
-_PHI_CATEGORY_INDEX: Dict[str, int] = {
+_PHI_CATEGORY_INDEX: dict[str, int] = {
     "names": 1,
     "geographic_data": 2,
     "dates": 3,
@@ -232,7 +232,7 @@ _PHI_CATEGORY_INDEX: Dict[str, int] = {
 Safe Harbor enumeration at 45 CFR 164.514(b)(2).  Used when constructing
 ``article_reference`` strings for violations."""
 
-_DIRECT_IDENTIFIER_CATEGORIES: Set[str] = {
+_DIRECT_IDENTIFIER_CATEGORIES: set[str] = {
     "social_security_numbers",
     "medical_record_numbers",
     "health_plan_beneficiary_numbers",
@@ -246,7 +246,7 @@ _DIRECT_IDENTIFIER_CATEGORIES: Set[str] = {
 identifying an individual without additional context.  These receive
 ``Severity.CRITICAL`` whereas quasi-identifiers receive ``Severity.HIGH``."""
 
-_PII_TYPE_TO_PHI_MAP: Dict[str, str] = {
+_PII_TYPE_TO_PHI_MAP: dict[str, str] = {
     # Name-related PII types
     "PERSON": "names",
     "NAME": "names",
@@ -362,7 +362,7 @@ class PHICheckResult:
     """
 
     category: str
-    matched_fields: List[str] = field(default_factory=list)
+    matched_fields: list[str] = field(default_factory=list)
     is_deidentified: bool = False
     confidence: float = 0.0
 
@@ -426,7 +426,7 @@ def _is_direct_identifier(phi_category: str) -> bool:
     return phi_category in _DIRECT_IDENTIFIER_CATEGORIES
 
 
-def _map_pii_type_to_phi(pii_type: str) -> Optional[str]:
+def _map_pii_type_to_phi(pii_type: str) -> str | None:
     """Map a generic PII entity type to its HIPAA PHI category.
 
     The PII detectors (NLP-based and regex-based) produce entity labels
@@ -509,10 +509,10 @@ class HIPAARegulationChecker(BaseRegulationChecker):
         scanning.
         """
         self.logger = get_logger(__name__)
-        self.phi_identifiers: Set[str] = set()
+        self.phi_identifiers: set[str] = set()
         for identifiers in HIPAA_PHI_IDENTIFIERS.values():
             self.phi_identifiers.update(identifiers)
-        self.phi_categories: Dict[str, List[str]] = HIPAA_PHI_IDENTIFIERS
+        self.phi_categories: dict[str, list[str]] = HIPAA_PHI_IDENTIFIERS
 
     # ------------------------------------------------------------------
     # Abstract interface implementations
@@ -529,8 +529,8 @@ class HIPAARegulationChecker(BaseRegulationChecker):
 
     def check_compliance(
         self,
-        dataset_metadata: Dict[str, Any],
-        scan_results: Dict[str, Any],
+        dataset_metadata: dict[str, Any],
+        scan_results: dict[str, Any],
     ) -> ComplianceResult:
         """Execute the full HIPAA compliance check suite.
 
@@ -574,8 +574,8 @@ class HIPAARegulationChecker(BaseRegulationChecker):
             regulation_type="HIPAA",
         )
 
-        columns: List[Dict[str, Any]] = dataset_metadata.get("columns", [])
-        all_violations: List[ComplianceViolation] = []
+        columns: list[dict[str, Any]] = dataset_metadata.get("columns", [])
+        all_violations: list[ComplianceViolation] = []
 
         # --- 1. PHI Identifier Check ---
         try:
@@ -756,9 +756,9 @@ class HIPAARegulationChecker(BaseRegulationChecker):
 
     def check_phi_identifiers(
         self,
-        columns: List[Dict[str, Any]],
-        scan_results: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        columns: list[dict[str, Any]],
+        scan_results: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Check dataset columns and PII scan results for PHI identifiers.
 
         Performs a two-pass detection:
@@ -784,8 +784,8 @@ class HIPAARegulationChecker(BaseRegulationChecker):
             List of ``ComplianceViolation`` instances for every PHI
             identifier found.
         """
-        violations: List[ComplianceViolation] = []
-        seen_column_categories: Set[str] = set()
+        violations: list[ComplianceViolation] = []
+        seen_column_categories: set[str] = set()
 
         # --- Pass 1: Column-name pattern matching ---
         for column in columns:
@@ -830,7 +830,7 @@ class HIPAARegulationChecker(BaseRegulationChecker):
                 seen_column_categories.add(f"{col_name}:{phi_category}")
 
         # --- Pass 2: PII scan result matching ---
-        detections: List[Dict[str, Any]] = scan_results.get("detections", [])
+        detections: list[dict[str, Any]] = scan_results.get("detections", [])
         for detection in detections:
             field_name: str = detection.get("field_name", "")
             pii_type: str = detection.get("pii_type", "")
@@ -895,9 +895,9 @@ class HIPAARegulationChecker(BaseRegulationChecker):
 
     def check_minimum_necessary(
         self,
-        dataset_metadata: Dict[str, Any],
-        columns: List[Dict[str, Any]],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+        columns: list[dict[str, Any]],
+    ) -> list[ComplianceViolation]:
         """Validate the HIPAA Minimum Necessary standard (45 CFR 164.502(b)).
 
         The Minimum Necessary standard requires that covered entities limit
@@ -919,14 +919,14 @@ class HIPAARegulationChecker(BaseRegulationChecker):
             List of ``ComplianceViolation`` instances for Minimum Necessary
             violations.
         """
-        violations: List[ComplianceViolation] = []
-        generation_profile: Dict[str, Any] = dataset_metadata.get(
+        violations: list[ComplianceViolation] = []
+        generation_profile: dict[str, Any] = dataset_metadata.get(
             "generation_profile", {},
         )
-        phi_justifications: Dict[str, str] = dataset_metadata.get(
+        phi_justifications: dict[str, str] = dataset_metadata.get(
             "phi_justifications", {},
         )
-        access_controls: Dict[str, Any] = dataset_metadata.get(
+        access_controls: dict[str, Any] = dataset_metadata.get(
             "access_controls", {},
         )
 
@@ -1023,8 +1023,8 @@ class HIPAARegulationChecker(BaseRegulationChecker):
 
     def check_safe_harbor_method(
         self,
-        scan_results: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        scan_results: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Validate de-identification per Safe Harbor method (45 CFR 164.514(b)).
 
         The Safe Harbor method requires that all 18 PHI identifier categories
@@ -1047,11 +1047,11 @@ class HIPAARegulationChecker(BaseRegulationChecker):
             List of ``ComplianceViolation`` instances for unaddressed PHI
             categories.
         """
-        violations: List[ComplianceViolation] = []
-        deidentification_status: Dict[str, Any] = scan_results.get(
+        violations: list[ComplianceViolation] = []
+        deidentification_status: dict[str, Any] = scan_results.get(
             "deidentification_status", {},
         )
-        phi_categories_found: Set[str] = set(
+        phi_categories_found: set[str] = set(
             scan_results.get("phi_categories_found", []),
         )
 
@@ -1061,9 +1061,9 @@ class HIPAARegulationChecker(BaseRegulationChecker):
                 continue
 
             identifier_index = _PHI_CATEGORY_INDEX.get(category, 0)
-            status: Dict[str, Any] = deidentification_status.get(category, {})
+            status: dict[str, Any] = deidentification_status.get(category, {})
             is_addressed: bool = bool(status.get("is_addressed", False))
-            affected_fields: List[str] = list(
+            affected_fields: list[str] = list(
                 status.get("affected_fields", []),
             )
 
@@ -1096,8 +1096,8 @@ class HIPAARegulationChecker(BaseRegulationChecker):
                 )
 
         # Cross-check PII detections against de-identification status
-        detections: List[Dict[str, Any]] = scan_results.get("detections", [])
-        uncovered_categories: Set[str] = set()
+        detections: list[dict[str, Any]] = scan_results.get("detections", [])
+        uncovered_categories: set[str] = set()
 
         for detection in detections:
             pii_type: str = detection.get("pii_type", "")
@@ -1156,8 +1156,8 @@ class HIPAARegulationChecker(BaseRegulationChecker):
 
     def check_expert_determination(
         self,
-        dataset_metadata: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Validate Expert Determination documentation (45 CFR 164.514(a)).
 
         The Expert Determination method allows de-identification to be
@@ -1186,7 +1186,7 @@ class HIPAARegulationChecker(BaseRegulationChecker):
             List of ``ComplianceViolation`` instances for missing or
             incomplete Expert Determination documentation.
         """
-        violations: List[ComplianceViolation] = []
+        violations: list[ComplianceViolation] = []
         deidentification_method: str = str(
             dataset_metadata.get("deidentification_method", ""),
         ).strip().lower()
@@ -1195,7 +1195,7 @@ class HIPAARegulationChecker(BaseRegulationChecker):
         if deidentification_method != DeidentificationMethod.EXPERT_DETERMINATION.value:
             return violations
 
-        expert_determination: Dict[str, Any] = dataset_metadata.get(
+        expert_determination: dict[str, Any] = dataset_metadata.get(
             "expert_determination", {},
         )
 
@@ -1229,7 +1229,7 @@ class HIPAARegulationChecker(BaseRegulationChecker):
             return violations
 
         # Check: required documentation elements
-        required_elements: Dict[str, str] = {
+        required_elements: dict[str, str] = {
             "expert_name": (
                 "the name or identifier of the qualified statistical or "
                 "scientific expert"
@@ -1288,7 +1288,7 @@ class HIPAARegulationChecker(BaseRegulationChecker):
         self,
         column_name: str,
         column_type: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Map a column name/type to one of the 18 PHI identifier categories.
 
         Uses case-insensitive matching with normalization (lowercasing,
