@@ -36,9 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
-
-from shared.logging.structured_logger import get_logger
+from typing import Any
 
 from compliance_service.regulations import (
     BaseRegulationChecker,
@@ -47,6 +45,8 @@ from compliance_service.regulations import (
     RegulationType,
     Severity,
 )
+from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -58,7 +58,7 @@ _logger = get_logger(__name__)
 # CCPA Personal Information Categories — Cal. Civ. Code §1798.140(o)
 # ---------------------------------------------------------------------------
 
-CCPA_PERSONAL_INFORMATION_CATEGORIES: Dict[str, List[str]] = {
+CCPA_PERSONAL_INFORMATION_CATEGORIES: dict[str, list[str]] = {
     "identifiers": [
         "name",
         "first_name",
@@ -156,29 +156,23 @@ CCPA_PERSONAL_INFORMATION_CATEGORIES: Dict[str, List[str]] = {
 }
 
 # ---------------------------------------------------------------------------
-# CCPA Consumer Rights — §§1798.100 – 1798.125 (as amended by CPRA)
+# CCPA Consumer Rights - §§1798.100 - 1798.125 (as amended by CPRA)
 # ---------------------------------------------------------------------------
 
-CCPA_CONSUMER_RIGHTS: Dict[str, str] = {
+CCPA_CONSUMER_RIGHTS: dict[str, str] = {
     "right_to_know": "Consumers can request disclosure of PI collected (§1798.100)",
     "right_to_delete": "Consumers can request deletion of PI (§1798.105)",
     "right_to_opt_out": "Consumers can opt out of sale of PI (§1798.120)",
-    "right_to_non_discrimination": (
-        "Consumers cannot be discriminated against for exercising rights (§1798.125)"
-    ),
-    "right_to_correct": (
-        "Consumers can request correction of inaccurate PI — CPRA amendment (§1798.106)"
-    ),
-    "right_to_limit": (
-        "Consumers can limit use of sensitive PI — CPRA amendment (§1798.121)"
-    ),
+    "right_to_non_discrimination": ("Consumers cannot be discriminated against for exercising rights (§1798.125)"),
+    "right_to_correct": ("Consumers can request correction of inaccurate PI — CPRA amendment (§1798.106)"),
+    "right_to_limit": ("Consumers can limit use of sensitive PI — CPRA amendment (§1798.121)"),
 }
 
 # ---------------------------------------------------------------------------
 # CPRA Sensitive Personal Information — Cal. Civ. Code §1798.140(ae)
 # ---------------------------------------------------------------------------
 
-_SENSITIVE_PI_FIELDS: Set[str] = {
+_SENSITIVE_PI_FIELDS: set[str] = {
     # Government-issued identifiers
     "ssn",
     "social_security_number",
@@ -232,7 +226,7 @@ _SENSITIVE_PI_FIELDS: Set[str] = {
     "sexual_orientation",
 }
 
-_SENSITIVE_PI_CATEGORIES: Set[str] = {
+_SENSITIVE_PI_CATEGORIES: set[str] = {
     "identifiers",
     "biometric_information",
     "geolocation_data",
@@ -242,12 +236,11 @@ _SENSITIVE_PI_CATEGORIES: Set[str] = {
 # Pre-computed lookup sets for fast matching
 # ---------------------------------------------------------------------------
 
-_PI_CATEGORY_LOOKUP: Dict[str, Set[str]] = {
-    category: {f.lower() for f in fields}
-    for category, fields in CCPA_PERSONAL_INFORMATION_CATEGORIES.items()
+_PI_CATEGORY_LOOKUP: dict[str, set[str]] = {
+    category: {f.lower() for f in fields} for category, fields in CCPA_PERSONAL_INFORMATION_CATEGORIES.items()
 }
 
-_ALL_PI_FIELDS: Set[str] = set()
+_ALL_PI_FIELDS: set[str] = set()
 for _fields in _PI_CATEGORY_LOOKUP.values():
     _ALL_PI_FIELDS.update(_fields)
 
@@ -294,7 +287,7 @@ class PICategoryType(Enum):
     INFERENCE = "INFERENCE"
 
 
-_CATEGORY_TO_TYPE: Dict[str, PICategoryType] = {
+_CATEGORY_TO_TYPE: dict[str, PICategoryType] = {
     "identifiers": PICategoryType.IDENTIFIER,
     "commercial_information": PICategoryType.COMMERCIAL,
     "biometric_information": PICategoryType.BIOMETRIC,
@@ -306,7 +299,7 @@ _CATEGORY_TO_TYPE: Dict[str, PICategoryType] = {
     "inferences": PICategoryType.INFERENCE,
 }
 
-_HIGH_SEVERITY_TYPES: Set[PICategoryType] = {
+_HIGH_SEVERITY_TYPES: set[PICategoryType] = {
     PICategoryType.IDENTIFIER,
     PICategoryType.BIOMETRIC,
 }
@@ -332,7 +325,7 @@ def _normalize_name(name: str) -> str:
 def _match_column_to_pi_category(
     column_name: str,
     column_type: str,
-) -> Optional[str]:
+) -> str | None:
     """Map a dataset column to a CCPA personal-information category.
 
     The lookup is performed against the pre-computed ``_PI_CATEGORY_LOOKUP``
@@ -363,7 +356,7 @@ def _match_column_to_pi_category(
 
     # Type-hint heuristic: certain column types hint at PI regardless of name
     col_type_lower = column_type.lower() if column_type else ""
-    type_category_map: Dict[str, str] = {
+    type_category_map: dict[str, str] = {
         "email": "identifiers",
         "ip_address": "identifiers",
         "ip": "identifiers",
@@ -473,8 +466,8 @@ class CCPARegulationChecker(BaseRegulationChecker):
         for compliance event reporting.
         """
         self.logger = get_logger(__name__)
-        self.personal_info_patterns: Dict[str, Set[str]] = _PI_CATEGORY_LOOKUP
-        self.consumer_rights: Dict[str, str] = CCPA_CONSUMER_RIGHTS
+        self.personal_info_patterns: dict[str, set[str]] = _PI_CATEGORY_LOOKUP
+        self.consumer_rights: dict[str, str] = CCPA_CONSUMER_RIGHTS
 
     # ------------------------------------------------------------------
     # Main compliance check
@@ -482,8 +475,8 @@ class CCPARegulationChecker(BaseRegulationChecker):
 
     def check_compliance(
         self,
-        dataset_metadata: Dict[str, Any],
-        scan_results: Dict[str, Any],
+        dataset_metadata: dict[str, Any],
+        scan_results: dict[str, Any],
     ) -> ComplianceResult:
         """Execute the full CCPA compliance check against a dataset.
 
@@ -515,17 +508,15 @@ class CCPARegulationChecker(BaseRegulationChecker):
             dataset_id=dataset_metadata.get("dataset_id", "unknown"),
         )
 
-        columns: List[Dict[str, Any]] = dataset_metadata.get("columns", [])
-        all_violations: List[ComplianceViolation] = []
+        columns: list[dict[str, Any]] = dataset_metadata.get("columns", [])
+        all_violations: list[ComplianceViolation] = []
 
         # 1. Personal Information categories — §1798.140(o)
         pi_violations = self.check_personal_information(columns, scan_results)
         all_violations.extend(pi_violations)
 
         # 2. Sensitive Personal Information — §1798.140(ae)
-        spi_violations = self.check_sensitive_personal_information(
-            columns, scan_results
-        )
+        spi_violations = self.check_sensitive_personal_information(columns, scan_results)
         all_violations.extend(spi_violations)
 
         # 3. Consumer Rights — §§1798.100-125
@@ -574,9 +565,9 @@ class CCPARegulationChecker(BaseRegulationChecker):
 
     def check_personal_information(
         self,
-        columns: List[Dict[str, Any]],
-        scan_results: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        columns: list[dict[str, Any]],
+        scan_results: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Check for CCPA personal-information categories in the dataset.
 
         Iterates through every column and the PII scan results, matching
@@ -596,21 +587,14 @@ class CCPARegulationChecker(BaseRegulationChecker):
             field detected.  Severity is ``HIGH`` for identifiers and
             biometric data, ``MEDIUM`` for other categories.
         """
-        violations: List[ComplianceViolation] = []
-        deidentified: Set[str] = {
-            _normalize_name(f)
-            for f in scan_results.get("deidentified_fields", [])
-        }
-        detected_entities: List[Dict[str, Any]] = scan_results.get(
-            "detected_entities", []
-        )
+        violations: list[ComplianceViolation] = []
+        deidentified: set[str] = {_normalize_name(f) for f in scan_results.get("deidentified_fields", [])}
+        detected_entities: list[dict[str, Any]] = scan_results.get("detected_entities", [])
 
         # Build a fast lookup of fields flagged by the PII detector
-        pii_field_set: Set[str] = {
-            _normalize_name(f) for f in scan_results.get("pii_fields", [])
-        }
+        pii_field_set: set[str] = {_normalize_name(f) for f in scan_results.get("pii_fields", [])}
 
-        checked_fields: Set[str] = set()
+        checked_fields: set[str] = set()
 
         # --- Pass 1: column-level matching ---
         for col in columns:
@@ -632,11 +616,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
 
             # Determine severity based on category type
             cat_type = _CATEGORY_TO_TYPE.get(category, PICategoryType.INFERENCE)
-            severity = (
-                Severity.HIGH
-                if cat_type in _HIGH_SEVERITY_TYPES
-                else Severity.MEDIUM
-            )
+            severity = Severity.HIGH if cat_type in _HIGH_SEVERITY_TYPES else Severity.MEDIUM
 
             violations.append(
                 ComplianceViolation(
@@ -649,8 +629,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
                     ),
                     affected_fields=[col_name],
                     remediation=(
-                        f"De-identify or remove column '{col_name}' to comply "
-                        f"with CCPA PI category '{category}'."
+                        f"De-identify or remove column '{col_name}' to comply with CCPA PI category '{category}'."
                     ),
                     metadata={"pi_category": category},
                 )
@@ -679,11 +658,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
                 continue
 
             cat_type = _CATEGORY_TO_TYPE.get(category, PICategoryType.INFERENCE)
-            severity = (
-                Severity.HIGH
-                if cat_type in _HIGH_SEVERITY_TYPES
-                else Severity.MEDIUM
-            )
+            severity = Severity.HIGH if cat_type in _HIGH_SEVERITY_TYPES else Severity.MEDIUM
 
             violations.append(
                 ComplianceViolation(
@@ -697,8 +672,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
                     ),
                     affected_fields=[entity_field],
                     remediation=(
-                        f"De-identify or remove field '{entity_field}' to "
-                        f"comply with CCPA PI category '{category}'."
+                        f"De-identify or remove field '{entity_field}' to comply with CCPA PI category '{category}'."
                     ),
                     metadata={
                         "pi_category": category,
@@ -712,9 +686,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
             self.logger.warning(
                 "ccpa_personal_information_detected",
                 violation_count=len(violations),
-                categories_affected=list(
-                    {v.metadata.get("pi_category", "") for v in violations}
-                ),
+                categories_affected=list({v.metadata.get("pi_category", "") for v in violations}),
             )
 
         return violations
@@ -725,9 +697,9 @@ class CCPARegulationChecker(BaseRegulationChecker):
 
     def check_sensitive_personal_information(
         self,
-        columns: List[Dict[str, Any]],
-        scan_results: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        columns: list[dict[str, Any]],
+        scan_results: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Check for CPRA-defined sensitive personal information.
 
         Sensitive PI includes government-issued IDs (SSN, driver's license,
@@ -744,12 +716,9 @@ class CCPARegulationChecker(BaseRegulationChecker):
             List of ``CRITICAL``-severity :class:`ComplianceViolation`
             instances for every sensitive PI field detected.
         """
-        violations: List[ComplianceViolation] = []
-        deidentified: Set[str] = {
-            _normalize_name(f)
-            for f in scan_results.get("deidentified_fields", [])
-        }
-        checked_fields: Set[str] = set()
+        violations: list[ComplianceViolation] = []
+        deidentified: set[str] = {_normalize_name(f) for f in scan_results.get("deidentified_fields", [])}
+        checked_fields: set[str] = set()
 
         for col in columns:
             col_name = col.get("name", "")
@@ -793,9 +762,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
             )
 
         # Also check PII detector entities for sensitive matches
-        detected_entities: List[Dict[str, Any]] = scan_results.get(
-            "detected_entities", []
-        )
+        detected_entities: list[dict[str, Any]] = scan_results.get("detected_entities", [])
         for entity in detected_entities:
             entity_field = entity.get("field", "")
             entity_type = entity.get("entity_type", "")
@@ -854,8 +821,8 @@ class CCPARegulationChecker(BaseRegulationChecker):
 
     def check_consumer_rights(
         self,
-        dataset_metadata: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Validate that the generation profile supports CCPA consumer rights.
 
         Each of the six consumer rights (right to know, delete, opt-out,
@@ -871,13 +838,11 @@ class CCPARegulationChecker(BaseRegulationChecker):
         Returns:
             List of :class:`ComplianceViolation` for unsupported rights.
         """
-        violations: List[ComplianceViolation] = []
-        profile: Dict[str, Any] = dataset_metadata.get("generation_profile", {})
-        rights_support: Dict[str, bool] = profile.get(
-            "consumer_rights_support", {}
-        )
+        violations: list[ComplianceViolation] = []
+        profile: dict[str, Any] = dataset_metadata.get("generation_profile", {})
+        rights_support: dict[str, bool] = profile.get("consumer_rights_support", {})
 
-        right_article_map: Dict[str, str] = {
+        right_article_map: dict[str, str] = {
             "right_to_know": "Cal. Civ. Code §1798.100",
             "right_to_delete": "Cal. Civ. Code §1798.105",
             "right_to_opt_out": "Cal. Civ. Code §1798.120",
@@ -886,18 +851,15 @@ class CCPARegulationChecker(BaseRegulationChecker):
             "right_to_limit": "Cal. Civ. Code §1798.121",
         }
 
-        right_remediation_map: Dict[str, str] = {
+        right_remediation_map: dict[str, str] = {
             "right_to_know": (
-                "Ensure the dataset supports disclosure queries so consumers "
-                "can request what PI has been collected."
+                "Ensure the dataset supports disclosure queries so consumers can request what PI has been collected."
             ),
             "right_to_delete": (
-                "Ensure the dataset and its derived artifacts can be fully "
-                "deleted upon consumer request."
+                "Ensure the dataset and its derived artifacts can be fully deleted upon consumer request."
             ),
             "right_to_opt_out": (
-                "Implement an opt-out mechanism allowing consumers to prevent "
-                "sale or sharing of their PI."
+                "Implement an opt-out mechanism allowing consumers to prevent sale or sharing of their PI."
             ),
             "right_to_non_discrimination": (
                 "Remove any metadata that could enable discrimination against "
@@ -916,9 +878,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
         for right_key, right_desc in CCPA_CONSUMER_RIGHTS.items():
             is_supported = rights_support.get(right_key, False)
             if not is_supported:
-                article = right_article_map.get(
-                    right_key, "Cal. Civ. Code §1798.100-199.100"
-                )
+                article = right_article_map.get(right_key, "Cal. Civ. Code §1798.100-199.100")
                 remediation = right_remediation_map.get(
                     right_key,
                     f"Add support for '{right_key}' in the generation profile.",
@@ -929,8 +889,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
                         severity=Severity.HIGH,
                         article_reference=article,
                         description=(
-                            f"Consumer right '{right_key}' is not supported "
-                            f"in the generation profile. {right_desc}"
+                            f"Consumer right '{right_key}' is not supported in the generation profile. {right_desc}"
                         ),
                         affected_fields=[],
                         remediation=remediation,
@@ -942,9 +901,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
             self.logger.warning(
                 "ccpa_consumer_rights_violations",
                 violation_count=len(violations),
-                unsupported_rights=[
-                    v.metadata.get("consumer_right", "") for v in violations
-                ],
+                unsupported_rights=[v.metadata.get("consumer_right", "") for v in violations],
             )
         else:
             self.logger.info(
@@ -960,8 +917,8 @@ class CCPARegulationChecker(BaseRegulationChecker):
 
     def check_data_sale_provisions(
         self,
-        dataset_metadata: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Validate CCPA data-sale provisions if data is marked for sale/sharing.
 
         When the dataset metadata indicates that the generated synthetic data
@@ -980,8 +937,8 @@ class CCPARegulationChecker(BaseRegulationChecker):
             List of ``HIGH``-severity :class:`ComplianceViolation` for
             unmet sale provisions.
         """
-        violations: List[ComplianceViolation] = []
-        data_sale: Dict[str, Any] = dataset_metadata.get("data_sale", {})
+        violations: list[ComplianceViolation] = []
+        data_sale: dict[str, Any] = dataset_metadata.get("data_sale", {})
 
         # Only run when data is explicitly marked for sale/sharing
         is_sold = data_sale.get("is_sold", False)
@@ -1020,10 +977,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
                     regulation_type=RegulationType.CCPA,
                     severity=Severity.HIGH,
                     article_reference="Cal. Civ. Code §1798.100(b)",
-                    description=(
-                        "Data is marked for sale/sharing but the required "
-                        "notice at collection is missing."
-                    ),
+                    description=("Data is marked for sale/sharing but the required notice at collection is missing."),
                     affected_fields=[],
                     remediation=(
                         "Provide a notice at or before the point of collection "
@@ -1035,9 +989,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
             )
 
         # Check service provider agreement (CPRA requirement)
-        service_provider_agreement = data_sale.get(
-            "service_provider_agreement", False
-        )
+        service_provider_agreement = data_sale.get("service_provider_agreement", False)
         if not service_provider_agreement:
             violations.append(
                 ComplianceViolation(
@@ -1045,8 +997,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
                     severity=Severity.HIGH,
                     article_reference="Cal. Civ. Code §1798.140(ag)",
                     description=(
-                        "Data is marked for sharing but no service provider "
-                        "or contractor agreement is documented."
+                        "Data is marked for sharing but no service provider or contractor agreement is documented."
                     ),
                     affected_fields=[],
                     remediation=(
@@ -1074,15 +1025,15 @@ class CCPARegulationChecker(BaseRegulationChecker):
 
     def check_minors_consent(
         self,
-        dataset_metadata: Dict[str, Any],
-    ) -> List[ComplianceViolation]:
+        dataset_metadata: dict[str, Any],
+    ) -> list[ComplianceViolation]:
         """Validate consent mechanisms for data representing minors.
 
         If the dataset contains records representing individuals under 16,
         CCPA requires:
 
         * **Under 13** — affirmative parental or guardian consent.
-        * **13–15** — the minor's own affirmative opt-in consent.
+        * **13-15** --- the minor's own affirmative opt-in consent.
 
         If the ``minors_data`` metadata key is absent or
         ``contains_minors`` is ``False``, no checks are performed.
@@ -1095,14 +1046,14 @@ class CCPARegulationChecker(BaseRegulationChecker):
             List of ``CRITICAL``-severity :class:`ComplianceViolation`
             for inadequate consent mechanisms.
         """
-        violations: List[ComplianceViolation] = []
-        minors_data: Dict[str, Any] = dataset_metadata.get("minors_data", {})
+        violations: list[ComplianceViolation] = []
+        minors_data: dict[str, Any] = dataset_metadata.get("minors_data", {})
 
         contains_minors = minors_data.get("contains_minors", False)
         if not contains_minors:
             return violations
 
-        min_age = minors_data.get("minimum_age", None)
+        min_age = minors_data.get("minimum_age")
         parental_consent = minors_data.get("parental_consent_obtained", False)
         minor_opt_in = minors_data.get("minor_opt_in_obtained", False)
 
@@ -1131,11 +1082,7 @@ class CCPARegulationChecker(BaseRegulationChecker):
             )
 
         # Children 13-15: require opt-in consent from the minor
-        if (
-            min_age is not None
-            and 13 <= min_age < 16
-            and not minor_opt_in
-        ):
+        if min_age is not None and 13 <= min_age < 16 and not minor_opt_in:
             violations.append(
                 ComplianceViolation(
                     regulation_type=RegulationType.CCPA,
@@ -1159,27 +1106,26 @@ class CCPARegulationChecker(BaseRegulationChecker):
             )
 
         # When contains_minors is True but no age info is provided, flag it
-        if min_age is None:
-            if not parental_consent and not minor_opt_in:
-                violations.append(
-                    ComplianceViolation(
-                        regulation_type=RegulationType.CCPA,
-                        severity=Severity.CRITICAL,
-                        article_reference="Cal. Civ. Code §1798.120(c)-(d)",
-                        description=(
-                            "Dataset is marked as containing minors' data but "
-                            "neither minimum age nor consent mechanisms are "
-                            "documented."
-                        ),
-                        affected_fields=[],
-                        remediation=(
-                            "Document the minimum age of represented individuals "
-                            "and obtain appropriate consent (parental for under "
-                            "13, minor opt-in for 13-15) per §1798.120(c)-(d)."
-                        ),
-                        metadata={"consent_type": "unknown"},
-                    )
+        if min_age is None and not parental_consent and not minor_opt_in:
+            violations.append(
+                ComplianceViolation(
+                    regulation_type=RegulationType.CCPA,
+                    severity=Severity.CRITICAL,
+                    article_reference="Cal. Civ. Code §1798.120(c)-(d)",
+                    description=(
+                        "Dataset is marked as containing minors' data but "
+                        "neither minimum age nor consent mechanisms are "
+                        "documented."
+                    ),
+                    affected_fields=[],
+                    remediation=(
+                        "Document the minimum age of represented individuals "
+                        "and obtain appropriate consent (parental for under "
+                        "13, minor opt-in for 13-15) per §1798.120(c)-(d)."
+                    ),
+                    metadata={"consent_type": "unknown"},
                 )
+            )
 
         if violations:
             self.logger.warning(
