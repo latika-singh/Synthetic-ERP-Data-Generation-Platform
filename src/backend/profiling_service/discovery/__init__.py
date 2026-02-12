@@ -30,22 +30,23 @@ discovery, and table dependency analysis.
     Material Management).
 """
 
-from profiling_service.discovery.schema_extractor import SchemaExtractor
-from profiling_service.discovery.relationship_mapper import RelationshipMapper
 from profiling_service.discovery.dependency_analyzer import (
     CycleInfo,
     DependencyAnalysisResult,
     DependencyAnalyzer,
     DependencyLevel,
 )
+from profiling_service.discovery.relationship_mapper import RelationshipMapper
+from profiling_service.discovery.schema_extractor import SchemaExtractor
+
 
 __all__ = [
-    "SchemaExtractor",
-    "RelationshipMapper",
-    "DependencyAnalyzer",
-    "DependencyAnalysisResult",
-    "DependencyLevel",
     "CycleInfo",
+    "DependencyAnalysisResult",
+    "DependencyAnalyzer",
+    "DependencyLevel",
+    "RelationshipMapper",
+    "SchemaExtractor",
 ]
 
 __version__ = "1.0.0"

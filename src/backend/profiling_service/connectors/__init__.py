@@ -39,13 +39,11 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Type
-
 from profiling_service.connectors.base import (
     BaseConnector,
     ColumnMetadata,
     ConnectionConfig,
-    ConnectionError,
+    ConnectionError,  # noqa: A004
     ConnectorError,
     DiscoveryError,
     ERPModule,
@@ -58,6 +56,7 @@ from profiling_service.connectors.oracle_connector import OracleConnector
 from profiling_service.connectors.sap_connector import SAPConnector
 from shared.logging.structured_logger import get_logger
 
+
 # ---------------------------------------------------------------------------
 # Module-level logger
 # ---------------------------------------------------------------------------
@@ -68,7 +67,7 @@ _logger = get_logger(__name__)
 # Connector Registry  (factory pattern)
 # ---------------------------------------------------------------------------
 
-CONNECTOR_REGISTRY: dict[str, Type[BaseConnector]] = {
+CONNECTOR_REGISTRY: dict[str, type[BaseConnector]] = {
     "sap": SAPConnector,
     "oracle_ebs": OracleConnector,
     "dynamics_365": DynamicsConnector,
@@ -146,24 +145,24 @@ def get_supported_erp_types() -> list[str]:
 # ---------------------------------------------------------------------------
 
 __all__ = [
+    "CONNECTOR_REGISTRY",
     # Base abstractions
     "BaseConnector",
-    "ConnectionConfig",
-    "TableMetadata",
     "ColumnMetadata",
-    "RelationshipMetadata",
-    "ERPModule",
+    "ConnectionConfig",
+    "ConnectionError",
     # Exceptions
     "ConnectorError",
-    "ConnectionError",
     "DiscoveryError",
+    "DynamicsConnector",
+    "ERPModule",
+    "JDBCConnector",
+    "OracleConnector",
+    "RelationshipMetadata",
     # Concrete connectors
     "SAPConnector",
-    "OracleConnector",
-    "DynamicsConnector",
-    "JDBCConnector",
+    "TableMetadata",
     # Factory utilities
     "get_connector",
     "get_supported_erp_types",
-    "CONNECTOR_REGISTRY",
 ]

@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Optional
 
 from flask import Blueprint, Flask, g, jsonify, request
 from flask_cors import CORS
@@ -46,6 +45,7 @@ from shared.middleware.circuit_breaker import CircuitBreakerRegistry
 from shared.middleware.health_check import init_health_checks
 from shared.observability.metrics import setup_metrics
 from shared.observability.tracing import init_tracing
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — bound after ``configure_logging()`` is called in
@@ -60,7 +60,7 @@ logger = get_logger(__name__)
 # ===========================================================================
 
 
-def create_app(config_name: Optional[str] = None) -> Flask:
+def create_app(config_name: str | None = None) -> Flask:
     """Create, configure, and return a Flask application instance.
 
     This is the canonical Application Factory for the Profiling Service.

@@ -51,16 +51,15 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict, deque
-from typing import Any, Optional
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from profiling_service.models.schema_definition import (
-    RelationshipDefinition,
-    SchemaDefinition,
-    TableDefinition,
-)
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from profiling_service.models.schema_definition import SchemaDefinition
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +156,7 @@ class DependencyAnalysisResult(BaseModel):
     total_tables: int = 0
     total_relationships: int = 0
     max_depth: int = 0
-    analysis_duration_seconds: Optional[float] = None
+    analysis_duration_seconds: float | None = None
 
 
 # ===================================================================
@@ -589,8 +588,8 @@ class DependencyAnalyzer:
             List of :class:`CycleInfo` — empty if the graph is acyclic.
         """
         WHITE, GREY, BLACK = 0, 1, 2  # noqa: N806
-        colour: dict[str, int] = {t: WHITE for t in self._all_tables}
-        parent: dict[str, str | None] = {t: None for t in self._all_tables}
+        colour: dict[str, int] = dict.fromkeys(self._all_tables, WHITE)
+        parent: dict[str, str | None] = dict.fromkeys(self._all_tables)
         cycles: list[CycleInfo] = []
 
         def _dfs(node: str) -> None:
@@ -713,18 +712,17 @@ class DependencyAnalyzer:
                     to_table=predecessor,
                     reason=f"Breaking cycle at '{bp}'",
                 )
-            else:
-                # Try the reverse direction: predecessor → bp.
-                # (adjacency semantics: predecessor depends on bp.)
-                if bp in self._adjacency.get(predecessor, set()):
-                    self._adjacency[predecessor].discard(bp)
-                    self._reverse_adjacency[bp].discard(predecessor)
-                    self._in_degree[predecessor] = max(
-                        self._in_degree.get(predecessor, 1) - 1, 0
-                    )
-                    self._logger.info(
-                        "cycle_edge_removed",
-                        from_table=predecessor,
-                        to_table=bp,
-                        reason=f"Breaking cycle at '{bp}' (reverse direction)",
-                    )
+            # Try the reverse direction: predecessor → bp.
+            # (adjacency semantics: predecessor depends on bp.)
+            elif bp in self._adjacency.get(predecessor, set()):
+                self._adjacency[predecessor].discard(bp)
+                self._reverse_adjacency[bp].discard(predecessor)
+                self._in_degree[predecessor] = max(
+                    self._in_degree.get(predecessor, 1) - 1, 0
+                )
+                self._logger.info(
+                    "cycle_edge_removed",
+                    from_table=predecessor,
+                    to_table=bp,
+                    reason=f"Breaking cycle at '{bp}' (reverse direction)",
+                )

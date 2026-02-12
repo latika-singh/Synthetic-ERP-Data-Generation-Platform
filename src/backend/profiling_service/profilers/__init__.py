@@ -32,6 +32,7 @@ from typing import Optional, Union
 from profiling_service.profilers.pattern_analyzer import PatternAnalyzer
 from profiling_service.profilers.statistical_profiler import StatisticalProfiler
 
+
 # ---------------------------------------------------------------------------
 # Profiler Registry (factory pattern)
 # ---------------------------------------------------------------------------
@@ -49,8 +50,8 @@ PROFILER_REGISTRY: dict[str, type] = {
 
 def get_profiler(
     profiler_type: str,
-    config: Optional[dict] = None,
-) -> Union[StatisticalProfiler, PatternAnalyzer]:
+    config: dict | None = None,
+) -> StatisticalProfiler | PatternAnalyzer:
     """Create and return a profiler instance for the given type.
 
     Looks up *profiler_type* in :data:`PROFILER_REGISTRY` and instantiates
@@ -97,9 +98,9 @@ def get_available_profilers() -> list[str]:
 # ---------------------------------------------------------------------------
 
 __all__ = [
-    "StatisticalProfiler",
-    "PatternAnalyzer",
     "PROFILER_REGISTRY",
-    "get_profiler",
+    "PatternAnalyzer",
+    "StatisticalProfiler",
     "get_available_profilers",
+    "get_profiler",
 ]

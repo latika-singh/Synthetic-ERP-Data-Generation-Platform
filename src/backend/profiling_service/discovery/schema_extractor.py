@@ -39,33 +39,31 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import time
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
-from profiling_service.connectors.base import (
-    BaseConnector,
-    ColumnMetadata,
-    ConnectionConfig,
-    RelationshipMetadata,
-    TableMetadata,
-)
 from profiling_service.connectors import get_connector
 from profiling_service.models.schema_definition import (
     ColumnDataType,
     ColumnDefinition,
-    ConstraintDefinition,
     ERPModule,
     ERPType,
-    IndexDefinition,
     SchemaDefinition,
     SchemaDefinitionRepository,
     SchemaStatus,
     TableDefinition,
 )
 from shared.logging.structured_logger import get_logger
-from shared.middleware.circuit_breaker import circuit_breaker_decorator
-from shared.database.mongodb import get_mongo_db
+
+
+if TYPE_CHECKING:
+    from profiling_service.connectors.base import (
+        BaseConnector,
+        ColumnMetadata,
+        ConnectionConfig,
+        TableMetadata,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +131,7 @@ class SchemaExtractor:
     def __init__(
         self,
         tenant_id: str,
-        config: Optional[dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
         """Initialise the extractor.
 
@@ -328,7 +326,7 @@ class SchemaExtractor:
     # Public — CRUD convenience wrappers
     # ---------------------------------------------------------------
 
-    def get_schema_by_id(self, schema_id: str) -> Optional[SchemaDefinition]:
+    def get_schema_by_id(self, schema_id: str) -> SchemaDefinition | None:
         """Retrieve a schema by its unique ID (tenant-scoped).
 
         Args:
@@ -341,9 +339,9 @@ class SchemaExtractor:
 
     def list_schemas(
         self,
-        erp_type: Optional[str] = None,
-        module: Optional[str] = None,
-        status: Optional[str] = None,
+        erp_type: str | None = None,
+        module: str | None = None,
+        status: str | None = None,
         skip: int = 0,
         limit: int = 20,
     ) -> list[SchemaDefinition]:
@@ -364,20 +362,14 @@ class SchemaExtractor:
         status_enum: SchemaStatus | None = None
 
         if erp_type:
-            try:
+            with contextlib.suppress(ValueError):
                 erp_type_enum = ERPType(erp_type)
-            except ValueError:
-                pass
         if module:
-            try:
+            with contextlib.suppress(ValueError):
                 module_enum = ERPModule(module)
-            except ValueError:
-                pass
         if status:
-            try:
+            with contextlib.suppress(ValueError):
                 status_enum = SchemaStatus(status)
-            except ValueError:
-                pass
 
         return self._repo.list_schemas(
             erp_type=erp_type_enum,

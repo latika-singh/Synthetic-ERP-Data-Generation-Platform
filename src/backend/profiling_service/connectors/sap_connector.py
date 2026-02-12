@@ -38,7 +38,7 @@ from profiling_service.connectors.base import (
     BaseConnector,
     ColumnMetadata,
     ConnectionConfig,
-    ConnectionError,
+    ConnectionError,  # noqa: A004
     ConnectorError,
     DiscoveryError,
     ERPModule,
@@ -47,6 +47,7 @@ from profiling_service.connectors.base import (
 )
 from shared.logging.structured_logger import get_logger
 from shared.middleware.circuit_breaker import circuit_breaker_decorator
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -392,7 +393,7 @@ class SAPConnector(BaseConnector):
         """
         try:
             try:
-                import pyrfc  # type: ignore[import-untyped]  # noqa: F811
+                import pyrfc  # type: ignore[import-untyped]  # noqa: PLC0415
 
                 self._connection = pyrfc.Connection(
                     ashost=self._host,
@@ -504,7 +505,7 @@ class SAPConnector(BaseConnector):
     def discover_columns(
         self,
         table_name: str,
-        schema_name: str | None = None,
+        schema_name: str | None = None,  # noqa: ARG002
     ) -> list[ColumnMetadata]:
         """Discover columns for a specific SAP table.
 
@@ -579,7 +580,7 @@ class SAPConnector(BaseConnector):
 
     def discover_relationships(
         self,
-        schema_name: str | None = None,
+        schema_name: str | None = None,  # noqa: ARG002
     ) -> list[RelationshipMetadata]:
         """Discover foreign-key relationships across SAP tables.
 
@@ -701,7 +702,7 @@ class SAPConnector(BaseConnector):
                 return ERPModule(module_key)
         return None
 
-    def _build_generic_columns(self, table_name: str) -> list[ColumnMetadata]:
+    def _build_generic_columns(self, _table_name: str) -> list[ColumnMetadata]:
         """Return a minimal generic column set for uncached tables.
 
         Args:

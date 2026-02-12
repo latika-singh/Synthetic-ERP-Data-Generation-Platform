@@ -51,7 +51,7 @@ from __future__ import annotations
 import re
 import string
 from collections import Counter, defaultdict
-from typing import Any, Optional, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -188,7 +188,7 @@ class PatternAnalyzer:
     # Initialiser
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Initialise the PatternAnalyzer.
 
         Args:
@@ -309,9 +309,9 @@ class PatternAnalyzer:
             # Format / regex pattern detection.
             # Temporal columns benefit most from date-pattern matching;
             # Numeric columns rarely have meaningful string patterns.
-            format_pattern: Optional[str] = None
-            regex_pattern: Optional[str] = None
-            if category == DataCategory.TEMPORAL or category == DataCategory.TEXT:
+            format_pattern: str | None = None
+            regex_pattern: str | None = None
+            if category in (DataCategory.TEMPORAL, DataCategory.TEXT):
                 format_pattern, regex_pattern = self._detect_format_pattern(
                     str_values
                 )
@@ -608,7 +608,7 @@ class PatternAnalyzer:
     def _detect_format_pattern(
         self,
         str_values: list[str],
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Detect a matching format pattern from predefined or inferred rules.
 
         Iterates through :data:`FORMAT_PATTERN_RULES` and tests each
@@ -631,10 +631,10 @@ class PatternAnalyzer:
         sample_size = len(sample)
 
         # Test each predefined pattern.
-        best_match_name: Optional[str] = None
+        best_match_name: str | None = None
         best_match_rate: float = 0.0
 
-        for name, (compiled_re, template) in self._compiled_patterns.items():
+        for name, (compiled_re, _template) in self._compiled_patterns.items():
             matches = sum(
                 1 for val in sample if compiled_re.fullmatch(val)
             )
@@ -660,7 +660,7 @@ class PatternAnalyzer:
     def _infer_pattern_from_values(
         self,
         str_values: list[str],
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Infer an abstract format pattern from the values themselves.
 
         Groups values by string length, selects the dominant length group
@@ -685,7 +685,7 @@ class PatternAnalyzer:
 
         # Find the dominant length group.
         total = len(str_values)
-        dominant_length: Optional[int] = None
+        dominant_length: int | None = None
         dominant_group: list[str] = []
 
         for length, group in sorted(
@@ -750,7 +750,7 @@ class PatternAnalyzer:
     def _analyze_string_lengths(
         self,
         str_values: list[str],
-    ) -> dict[str, Union[float, int]]:
+    ) -> dict[str, float | int]:
         """Compute string-length statistics for column values.
 
         Args:

@@ -32,7 +32,7 @@ from profiling_service.connectors.base import (
     BaseConnector,
     ColumnMetadata,
     ConnectionConfig,
-    ConnectionError,
+    ConnectionError,  # noqa: A004
     ConnectorError,
     DiscoveryError,
     ERPModule,
@@ -41,6 +41,7 @@ from profiling_service.connectors.base import (
 )
 from shared.logging.structured_logger import get_logger
 from shared.middleware.circuit_breaker import circuit_breaker_decorator
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -264,7 +265,7 @@ class DynamicsConnector(BaseConnector):
         """
         try:
             try:
-                import httpx  # type: ignore[import-untyped]
+                import httpx  # type: ignore[import-untyped]  # noqa: PLC0415
 
                 # Obtain access token via client credentials grant.
                 token_response = httpx.post(
@@ -387,7 +388,7 @@ class DynamicsConnector(BaseConnector):
     def discover_columns(
         self,
         table_name: str,
-        schema_name: str | None = None,
+        schema_name: str | None = None,  # noqa: ARG002
     ) -> list[ColumnMetadata]:
         """Discover attributes for a Dynamics 365 entity.
 
@@ -455,7 +456,7 @@ class DynamicsConnector(BaseConnector):
 
     def discover_relationships(
         self,
-        schema_name: str | None = None,
+        schema_name: str | None = None,  # noqa: ARG002
     ) -> list[RelationshipMetadata]:
         """Discover relationships across Dynamics 365 entities.
 
@@ -544,7 +545,7 @@ class DynamicsConnector(BaseConnector):
         if time.time() >= self._token_expires_at:
             self._logger.info("dynamics_token_refresh_started")
             try:
-                import httpx  # type: ignore[import-untyped]
+                import httpx  # type: ignore[import-untyped]  # noqa: PLC0415
 
                 response = httpx.post(
                     self._token_endpoint,
@@ -621,7 +622,7 @@ class DynamicsConnector(BaseConnector):
                 return ERPModule(module_key)
         return None
 
-    def _build_generic_columns(self, entity_name: str) -> list[ColumnMetadata]:
+    def _build_generic_columns(self, _entity_name: str) -> list[ColumnMetadata]:
         """Return a minimal generic attribute set for uncached entities.
 
         Args:

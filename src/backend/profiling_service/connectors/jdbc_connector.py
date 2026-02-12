@@ -39,7 +39,7 @@ from profiling_service.connectors.base import (
     BaseConnector,
     ColumnMetadata,
     ConnectionConfig,
-    ConnectionError,
+    ConnectionError,  # noqa: A004
     ConnectorError,
     DiscoveryError,
     ERPModule,
@@ -48,6 +48,7 @@ from profiling_service.connectors.base import (
 )
 from shared.logging.structured_logger import get_logger
 from shared.middleware.circuit_breaker import circuit_breaker_decorator
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -298,7 +299,7 @@ class JDBCConnector(BaseConnector):
         """
         try:
             try:
-                import jaydebeapi  # type: ignore[import-untyped]
+                import jaydebeapi  # type: ignore[import-untyped]  # noqa: PLC0415
 
                 driver_args: list[str] = [self._username, self._password]
                 jar_path = self._driver_path if self._driver_path else None
@@ -530,9 +531,8 @@ class JDBCConnector(BaseConnector):
                 tbl_type = str(rs.getString(4) or "TABLE")
                 remarks = str(rs.getString(5) or "")
 
-                if module is not None:
-                    if not self._matches_module(tbl_name, module):
-                        continue
+                if module is not None and not self._matches_module(tbl_name, module):
+                    continue
 
                 assigned_module = self._classify_table_by_name(tbl_name)
                 result.append(
@@ -872,7 +872,7 @@ class JDBCConnector(BaseConnector):
                 return ERPModule(module_key)
         return None
 
-    def _build_generic_columns(self, table_name: str) -> list[ColumnMetadata]:
+    def _build_generic_columns(self, _table_name: str) -> list[ColumnMetadata]:
         """Return a minimal generic column set for uncached tables.
 
         Args:
