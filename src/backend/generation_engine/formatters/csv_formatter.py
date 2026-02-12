@@ -662,7 +662,7 @@ class CSVFormatter(BaseFormatter):
     # ------------------------------------------------------------------
 
     def _write_header(
-        self, writer: csv.writer, columns: list[str]
+        self, writer: Any, columns: list[str]
     ) -> None:
         """Write the column header row to the CSV writer.
 
@@ -674,7 +674,7 @@ class CSVFormatter(BaseFormatter):
 
     def _write_rows(
         self,
-        writer: csv.writer,
+        writer: Any,
         data: pd.DataFrame,
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
     ) -> int:
@@ -811,7 +811,7 @@ class CSVFormatter(BaseFormatter):
             return data  # Already in the desired order — avoid copy
         return data[final_order]
 
-    def _get_csv_writer(self, output: Any) -> csv.writer:
+    def _get_csv_writer(self, output: Any) -> Any:
         """Create a :class:`csv.writer` configured from current settings.
 
         Args:

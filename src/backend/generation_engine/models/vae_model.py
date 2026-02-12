@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf  # type: ignore[import-untyped]
 
 from shared.logging.structured_logger import get_logger
 
@@ -217,7 +217,8 @@ class Sampling(tf.keras.layers.Layer):
 
     def get_config(self) -> dict[str, Any]:
         """Return the layer configuration for serialisation."""
-        return super().get_config()
+        config: dict[str, Any] = super().get_config()
+        return config
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +663,8 @@ class TabularVAE(tf.keras.Model):
         Returns:
             Reconstructed tensor of the same shape as *inputs*.
         """
+        if self.encoder is None or self.decoder is None:
+            raise RuntimeError("VAE encoder/decoder not built. Call build_model() first.")
         _z_mean, _z_log_var, z = self.encoder(inputs, training=training)
         reconstructed = self.decoder(z, training=training)
         return reconstructed
@@ -757,6 +760,8 @@ class TabularVAE(tf.keras.Model):
         Returns:
             Dictionary mapping metric names to their current batch values.
         """
+        if self.encoder is None or self.decoder is None:
+            raise RuntimeError("VAE encoder/decoder not built. Call build_model() first.")
         with tf.GradientTape() as tape:
             z_mean, z_log_var, z = self.encoder(data, training=True)
             reconstructed = self.decoder(z, training=True)
@@ -838,7 +843,8 @@ class TabularVAE(tf.keras.Model):
             self._num_maxs = np.max(all_data, axis=0)
             self._num_ranges = self._num_maxs - self._num_mins
             self._num_ranges[self._num_ranges == 0] = 1.0
-            return (all_data - self._num_mins) / self._num_ranges
+            result: np.ndarray = (all_data - self._num_mins) / self._num_ranges
+            return result
 
         return np.concatenate(parts, axis=1)
 
@@ -863,7 +869,8 @@ class TabularVAE(tf.keras.Model):
         # No column metadata → simple de-normalisation
         if total_raw_cols == 0:
             if self._num_mins is not None and self._num_ranges is not None:
-                return generated * self._num_ranges + self._num_mins
+                denormed: np.ndarray = generated * self._num_ranges + self._num_mins
+                return denormed
             return generated
 
         # Use original column count if known, else fall back to sum
@@ -1085,7 +1092,7 @@ class TabularVAE(tf.keras.Model):
             RuntimeError: If the model has not been trained yet.
             ValueError: If ``num_samples < 1``.
         """
-        if not self._is_trained and self.decoder is None:
+        if self.decoder is None:
             raise RuntimeError(
                 "Model must be trained or loaded before generating data",
             )

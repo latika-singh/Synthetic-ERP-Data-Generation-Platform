@@ -144,7 +144,8 @@ class _ResidualBlock(nn.Module):
         """
         identity = x if self.shortcut is None else self.shortcut(x)
         out = self.act(self.bn(self.fc(x)))
-        return out + identity
+        result: torch.Tensor = out + identity
+        return result
 
 
 # ============================================================================
@@ -241,7 +242,8 @@ class Generator(nn.Module):
 
         # Fast path when no column metadata is available
         if not self._numerical_indices and not self._categorical_slices:
-            return self._sigmoid(raw)
+            activated: torch.Tensor = self._sigmoid(raw)
+            return activated
 
         # Build a sorted list of (start, end, kind) column segments
         segments: list[tuple[int, int, str]] = []
@@ -346,7 +348,8 @@ class Discriminator(nn.Module):
         Returns:
             Score tensor of shape ``(batch, 1)``.
         """
-        return self.net(x)
+        score: torch.Tensor = self.net(x)
+        return score
 
 
 # ============================================================================
@@ -505,7 +508,7 @@ class TabularGAN:
         if not parts:
             return data.astype(np.float32)
 
-        preprocessed = np.concatenate(parts, axis=1)
+        preprocessed: np.ndarray = np.concatenate(parts, axis=1)
         self._preprocessed_dim = preprocessed.shape[1]
         return preprocessed
 
@@ -598,7 +601,8 @@ class TabularGAN:
         )[0]
         gradients = gradients.view(gradients.size(0), -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return self.config.gradient_penalty_lambda * gradient_penalty
+        gp_result: torch.Tensor = self.config.gradient_penalty_lambda * gradient_penalty
+        return gp_result
 
     # ------------------------------------------------------------------
     # Training helpers (extracted to satisfy branch/statement limits)
@@ -698,6 +702,10 @@ class TabularGAN:
         Returns:
             The last discriminator loss tensor (for epoch accumulation).
         """
+        if self.generator is None or self.discriminator is None:
+            raise RuntimeError("GAN models not built. Call build_model() first.")
+        if self.opt_d is None:
+            raise RuntimeError("Discriminator optimizer not initialized.")
         d_loss = torch.tensor(0.0, device=self._device)
         for _ in range(self.config.n_critic):
             z = torch.randn(
@@ -737,6 +745,10 @@ class TabularGAN:
         Returns:
             The generator loss tensor.
         """
+        if self.generator is None or self.discriminator is None:
+            raise RuntimeError("GAN models not built. Call build_model() first.")
+        if self.opt_g is None:
+            raise RuntimeError("Generator optimizer not initialized.")
         z = torch.randn(
             batch_size, self.config.latent_dim, device=self._device,
         )
@@ -758,7 +770,8 @@ class TabularGAN:
             g_loss.backward()
             self.opt_g.step()
 
-        return g_loss
+        g_loss_result: torch.Tensor = g_loss
+        return g_loss_result
 
     def _handle_training_error(self, exc: BaseException) -> None:
         """Log training errors with structured context and clean up GPU.
@@ -868,8 +881,8 @@ class TabularGAN:
         patience_counter: int = 0
         best_g_loss: float | None = None
 
-        self._g_losses: list[float] = []
-        self._d_losses: list[float] = []
+        self._g_losses = []
+        self._d_losses = []
         final_epoch: int = 0
 
         for epoch in range(self.config.num_epochs):

@@ -551,13 +551,13 @@ class DependencyGraph:
             sorted_nodes.append(node)
 
             # Reduce in-degree for each child; enqueue newly-unblocked.
-            children = sorted(
+            child_list: list[str] = sorted(
                 self._adjacency_list.get(node, set()),
                 key=lambda t: self._nodes[t].generation_priority
                 if t in self._nodes
                 else 0,
             )
-            for child in children:
+            for child in child_list:
                 if child not in in_degree:
                     continue
                 in_degree[child] -= 1
@@ -1171,8 +1171,8 @@ class DependencyGraph:
             max_depth = max(depth.values()) if depth else 0
 
         tables_per_module: dict[str, int] = defaultdict(int)
-        for node in self._nodes.values():
-            mod = node.erp_module or "unclassified"
+        for table_node in self._nodes.values():
+            mod = table_node.erp_module or "unclassified"
             tables_per_module[mod] += 1
 
         return {

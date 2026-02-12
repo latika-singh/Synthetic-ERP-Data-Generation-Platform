@@ -51,6 +51,7 @@ Usage::
 from __future__ import annotations
 
 import base64
+import binascii
 import contextlib
 import datetime
 import hashlib
@@ -279,7 +280,8 @@ def _deserialize_state(data: str) -> dict[str, Any]:
                 raise ValueError(
                     f"JSON checkpoint root is not a dict: {type(raw)}"
                 )
-            return _restore_from_json(raw)
+            restored: dict[str, Any] = _restore_from_json(raw)
+            return restored
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"Failed to deserialize JSON checkpoint: {exc}"
@@ -295,7 +297,7 @@ def _deserialize_state(data: str) -> dict[str, Any]:
                     f"Pickled checkpoint is not a dict: {type(result)}"
                 )
             return result
-        except (pickle.UnpicklingError, base64.binascii.Error, TypeError) as exc:
+        except (pickle.UnpicklingError, binascii.Error, TypeError) as exc:
             raise ValueError(
                 f"Failed to deserialize pickled checkpoint: {exc}"
             ) from exc
@@ -515,7 +517,7 @@ class CheckpointManager:
             no valid checkpoint is available.
         """
         try:
-            serialized: str | None = self._redis.get(self._checkpoint_key)
+            serialized: str | None = self._redis.get(self._checkpoint_key)  # type: ignore[assignment]
         except (
             redis.exceptions.RedisError,
             redis.exceptions.ConnectionError,
@@ -578,7 +580,7 @@ class CheckpointManager:
                     # May arrive as base64 string via legacy storage path.
                     raw_bytes = base64.b64decode(intermediate)
                     state_dict["intermediate_data"] = zlib.decompress(raw_bytes)
-            except (zlib.error, base64.binascii.Error) as exc:
+            except (zlib.error, binascii.Error) as exc:
                 self._logger.warning(
                     "intermediate_data_decompression_failed",
                     job_id=self._job_id,
@@ -672,7 +674,7 @@ class CheckpointManager:
             exists.
         """
         try:
-            serialized: str | None = self._redis.get(self._checkpoint_key)
+            serialized: str | None = self._redis.get(self._checkpoint_key)  # type: ignore[assignment]
         except (
             redis.exceptions.RedisError,
             redis.exceptions.ConnectionError,
@@ -760,7 +762,7 @@ def get_checkpoint_info(job_id: str) -> dict[str, Any] | None:
 
     try:
         client = get_redis_client()
-        serialized: str | None = client.get(checkpoint_key)
+        serialized: str | None = client.get(checkpoint_key)  # type: ignore[assignment]
     except (
         redis.exceptions.RedisError,
         redis.exceptions.ConnectionError,
@@ -826,7 +828,7 @@ def cleanup_expired_checkpoints(max_age_hours: int = 48) -> int:
         cursor: int = 0
 
         while True:
-            cursor, keys = client.scan(
+            cursor, keys = client.scan(  # type: ignore[misc]
                 cursor=cursor,
                 match=scan_pattern,
                 count=100,
@@ -850,7 +852,7 @@ def cleanup_expired_checkpoints(max_age_hours: int = 48) -> int:
                     try:
                         raw = client.get(key)
                         if raw is not None:
-                            state = _deserialize_state(raw)
+                            state = _deserialize_state(raw)  # type: ignore[arg-type]
                             created_at_str = state.get("created_at", "")
                             if created_at_str:
                                 created_at = datetime.datetime.fromisoformat(

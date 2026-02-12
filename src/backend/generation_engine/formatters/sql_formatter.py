@@ -37,12 +37,16 @@ import math
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from pydantic import BaseModel, Field
 
 from .base import BaseFormatter
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +138,7 @@ class SQLFormatterConfig(BaseModel):
         default=False,
         description="Use COPY/BULK INSERT for high throughput",
     )
-    schema_name: Optional[str] = Field(
+    schema_name: str | None = Field(
         default=None,
         description="Database schema prefix for table names",
     )
@@ -195,7 +199,7 @@ class SQLFormatter(BaseFormatter):
 
     def __init__(
         self,
-        config: Union[SQLFormatterConfig, Dict[str, Any], None] = None,
+        config: SQLFormatterConfig | dict[str, Any] | None = None,
     ) -> None:
         """Initialise the SQL formatter with the given configuration.
 
@@ -363,7 +367,7 @@ class SQLFormatter(BaseFormatter):
         Returns:
             Concatenated INSERT statements as a single string.
         """
-        parts: List[str] = []
+        parts: list[str] = []
         columns = list(data.columns)
         col_list = ", ".join(self._quote_identifier(c) for c in columns)
         batches = self._batch_rows(data)
@@ -388,7 +392,7 @@ class SQLFormatter(BaseFormatter):
         self,
         batch_df: pd.DataFrame,
         table_name: str,
-        columns: List[str],
+        columns: list[str],
         col_list: str,
     ) -> str:
         """Generate a standard multi-row INSERT statement.
@@ -405,10 +409,10 @@ class SQLFormatter(BaseFormatter):
         Returns:
             Single INSERT statement string.
         """
-        value_rows: List[str] = []
+        value_rows: list[str] = []
 
         for row in batch_df.itertuples(index=False, name=None):
-            values: List[str] = []
+            values: list[str] = []
             for idx, val in enumerate(row):
                 col_name = columns[idx]
                 values.append(self._escape_value(val, col_name))
@@ -424,7 +428,7 @@ class SQLFormatter(BaseFormatter):
         self,
         batch_df: pd.DataFrame,
         table_name: str,
-        columns: List[str],
+        columns: list[str],
         col_list: str,
     ) -> str:
         """Generate Oracle ``INSERT ALL … SELECT 1 FROM DUAL`` statement.
@@ -446,10 +450,10 @@ class SQLFormatter(BaseFormatter):
         Returns:
             Oracle-compatible INSERT ALL statement string.
         """
-        lines: List[str] = ["INSERT ALL"]
+        lines: list[str] = ["INSERT ALL"]
 
         for row in batch_df.itertuples(index=False, name=None):
-            values: List[str] = []
+            values: list[str] = []
             for idx, val in enumerate(row):
                 col_name = columns[idx]
                 values.append(self._escape_value(val, col_name))
@@ -511,7 +515,7 @@ class SQLFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        columns: List[str],
+        _columns: list[str],
         col_list: str,
     ) -> str:
         """Generate PostgreSQL ``COPY … FROM STDIN`` with tab-delimited data.
@@ -526,12 +530,12 @@ class SQLFormatter(BaseFormatter):
             PostgreSQL COPY statement with inline data terminated by
             the ``\\.`` end-of-data marker.
         """
-        lines: List[str] = [
+        lines: list[str] = [
             f"COPY {table_name} ({col_list}) FROM STDIN;",
         ]
 
         for row in data.itertuples(index=False, name=None):
-            row_values: List[str] = []
+            row_values: list[str] = []
             for val in row:
                 if val is None or pd.isna(val):
                     row_values.append("\\N")
@@ -566,8 +570,8 @@ class SQLFormatter(BaseFormatter):
         self,
         data: pd.DataFrame,
         table_name: str,
-        columns: List[str],
-        col_list: str,
+        _columns: list[str],
+        _col_list: str,
     ) -> str:
         """Generate SQL Server BULK INSERT preamble with INSERT fallback.
 
@@ -586,12 +590,12 @@ class SQLFormatter(BaseFormatter):
             SQL Server-compatible INSERT statements with identity
             insert handling and BULK INSERT recommendation comment.
         """
-        parts: List[str] = [
-            f"-- For file-based bulk loading, use:",
+        parts: list[str] = [
+            "-- For file-based bulk loading, use:",
             f"-- BULK INSERT {table_name}",
-            f"-- FROM '<data_file_path>'",
-            f"-- WITH (FIELDTERMINATOR = '\\t', ROWTERMINATOR = '\\n', "
-            f"FIRSTROW = 2);",
+            "-- FROM '<data_file_path>'",
+            "-- WITH (FIELDTERMINATOR = '\\t', ROWTERMINATOR = '\\n', "
+            "FIRSTROW = 2);",
             "",
             f"SET IDENTITY_INSERT {table_name} ON;",
             "",
@@ -610,7 +614,7 @@ class SQLFormatter(BaseFormatter):
     def _generate_ddl(
         self,
         table_name: str,
-        column_definitions: Dict[str, Any],
+        column_definitions: dict[str, Any],
     ) -> str:
         """Generate ``CREATE TABLE`` DDL with dialect-specific data types.
 
@@ -630,7 +634,7 @@ class SQLFormatter(BaseFormatter):
         qualified_name = self._get_qualified_table_name(table_name)
         type_mapping = self._get_type_mapping()
 
-        col_defs: List[str] = []
+        col_defs: list[str] = []
         for col_name, meta in column_definitions.items():
             # Normalise metadata into a uniform shape
             if isinstance(meta, dict):
@@ -667,7 +671,7 @@ class SQLFormatter(BaseFormatter):
                 sql_type = f"{sql_type}({length})"
 
             quoted_col = self._quote_identifier(col_name)
-            tokens: List[str] = [quoted_col, sql_type]
+            tokens: list[str] = [quoted_col, sql_type]
 
             if primary_key:
                 tokens.append("PRIMARY KEY")
@@ -732,7 +736,7 @@ class SQLFormatter(BaseFormatter):
     # Value escaping and formatting
     # ------------------------------------------------------------------
 
-    def _escape_value(self, value: Any, column_type: str) -> str:
+    def _escape_value(self, value: Any, _column_type: str) -> str:
         """Escape and format a single cell value for SQL output.
 
         Dispatches to type-specific formatting methods based on the
@@ -742,8 +746,9 @@ class SQLFormatter(BaseFormatter):
 
         Args:
             value: The cell value from the DataFrame row.
-            column_type: Column name (used for logging context; type
-                inference is based on the Python value type).
+            _column_type: Column name (reserved for future type-aware
+                escaping; currently unused as type inference is based
+                on the Python value type).
 
         Returns:
             SQL-safe string representation of the value.
@@ -994,7 +999,7 @@ class SQLFormatter(BaseFormatter):
     # Type mapping
     # ------------------------------------------------------------------
 
-    def _get_type_mapping(self) -> Dict[str, str]:
+    def _get_type_mapping(self) -> dict[str, str]:
         """Return dialect-specific SQL type mappings.
 
         Maps generic column type names (upper-case) to their
@@ -1146,7 +1151,7 @@ class SQLFormatter(BaseFormatter):
     # Transaction wrappers
     # ------------------------------------------------------------------
 
-    def _get_transaction_wrapper(self) -> Tuple[str, str]:
+    def _get_transaction_wrapper(self) -> tuple[str, str]:
         """Return dialect-specific ``BEGIN`` / ``COMMIT`` statements.
 
         Returns:
@@ -1174,7 +1179,7 @@ class SQLFormatter(BaseFormatter):
     # Batch splitting
     # ------------------------------------------------------------------
 
-    def _batch_rows(self, data: pd.DataFrame) -> List[pd.DataFrame]:
+    def _batch_rows(self, data: pd.DataFrame) -> list[pd.DataFrame]:
         """Split a DataFrame into chunks of ``batch_size`` rows.
 
         Args:
@@ -1190,7 +1195,7 @@ class SQLFormatter(BaseFormatter):
         if num_rows <= batch_size:
             return [data]
 
-        batches: List[pd.DataFrame] = []
+        batches: list[pd.DataFrame] = []
         for start in range(0, num_rows, batch_size):
             end = min(start + batch_size, num_rows)
             batches.append(data.iloc[start:end])
@@ -1202,7 +1207,7 @@ class SQLFormatter(BaseFormatter):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_write_fn(output: io.IOBase):
+    def _get_write_fn(output: io.IOBase) -> Callable[[str], int]:
         """Return a write callable appropriate for the stream type.
 
         Transparently encodes strings to bytes when the *output* stream
@@ -1220,6 +1225,8 @@ class SQLFormatter(BaseFormatter):
 
         def _write_encoded(text: str) -> int:
             """Encode *text* to UTF-8 and write to the binary stream."""
-            return output.write(text.encode("utf-8"))
+            encoded_bytes = text.encode("utf-8")
+            result: int = output.write(encoded_bytes)
+            return result
 
         return _write_encoded

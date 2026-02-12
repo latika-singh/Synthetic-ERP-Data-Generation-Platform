@@ -59,7 +59,7 @@ from generation_engine.formatters.base import BaseFormatter
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 
 # ======================================================================
@@ -989,12 +989,37 @@ class JSONFormatter(BaseFormatter):
             return str(value)
         return float(value)
 
+    def _encode_numpy(self, obj: Any) -> Any:
+        """Encode numpy scalar and array types to JSON-native values.
+
+        Converts numpy-backed dtypes (common in pandas DataFrames) into
+        plain Python types that are JSON-serializable.
+
+        Args:
+            obj: A numpy scalar (``np.integer``, ``np.floating``,
+                ``np.bool_``) or ``np.ndarray``.
+
+        Returns:
+            The equivalent Python native value (``int``, ``float``,
+            ``bool``, ``list``, or ``None`` for NaN floats).
+        """
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return self._config.null_value if np.isnan(obj) else float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        # np.ndarray → Python list
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
     # ------------------------------------------------------------------
     # Utility helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_stream_writer(output: io.IOBase):
+    def _get_stream_writer(output: io.IOBase) -> Callable[[str], Any]:
         """Create a write callable compatible with text and binary streams.
 
         Detects whether *output* is binary and returns a function that
