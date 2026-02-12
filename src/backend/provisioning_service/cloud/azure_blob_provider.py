@@ -184,6 +184,13 @@ class AzureBlobProvider(BaseCloudProvider):
             ValueError: If required authentication parameters are missing
                 or the configuration is invalid.
         """
+        # ---- Validate config is a dict ------------------------------------
+        if not isinstance(config, dict):
+            raise ValueError(
+                "AzureBlobProvider requires a non-null configuration "
+                "dictionary.  Received: {!r}".format(type(config).__name__)
+            )
+
         # ---- Azure-specific config extraction ----------------------------
         # These must be set BEFORE super().__init__() because the base
         # class calls _initialize_client() at the end of its __init__.
