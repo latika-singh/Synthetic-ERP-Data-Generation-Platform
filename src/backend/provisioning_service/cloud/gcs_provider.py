@@ -59,9 +59,9 @@ import os
 from datetime import timedelta
 from typing import Any, BinaryIO, Dict, Generator, List, Optional
 
-from google.api_core import retry as gcs_retry
 from google.cloud import storage as gcs_storage
 from google.cloud.exceptions import Conflict, GoogleCloudError, NotFound
+from google.cloud.storage import retry as gcs_retry
 from google.oauth2 import service_account
 
 from provisioning_service.cloud.base import BaseCloudProvider
@@ -161,6 +161,13 @@ class GCSProvider(BaseCloudProvider):
                 docstring for recognised keys and environment-variable
                 fallbacks.
         """
+        # -- Early config validation (before accessing dict keys) ----------
+        if config is None or not isinstance(config, dict):
+            raise ValueError(
+                "GCSProvider requires a non-None dict for 'config'. "
+                f"Received: {type(config).__name__}"
+            )
+
         # -- GCS-specific config extraction (before super triggers _initialize_client) --
         self._project_id: str = str(
             config.get("project_id") or os.environ.get("GCP_PROJECT_ID", "")
