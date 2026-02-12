@@ -38,6 +38,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from quality_service.validators.base import ValidationResult
+from shared.database.mongodb import get_mongo_db
 from shared.logging.structured_logger import get_logger
 
 
@@ -252,8 +253,6 @@ class ReportGenerator:
         # database is unavailable (e.g. during unit-testing).
         self._db = None
         try:
-            from shared.database.mongodb import get_mongo_db
-
             self._db = get_mongo_db()
             self.logger.info(
                 "report_generator_initialized",
@@ -270,11 +269,19 @@ class ReportGenerator:
     # ------------------------------------------------------------------
 
     def _get_collection(self):
-        """Return the MongoDB collection handle, raising if unavailable."""
+        """Return the MongoDB collection handle, raising if unavailable.
+
+        Attempts lazy reconnection when the initial ``__init__`` connection
+        failed (e.g. MongoDB was temporarily unreachable).
+
+        Returns:
+            A ``pymongo.collection.Collection`` for ``quality_reports``.
+
+        Raises:
+            RuntimeError: If MongoDB remains unavailable.
+        """
         if self._db is None:
             try:
-                from shared.database.mongodb import get_mongo_db
-
                 self._db = get_mongo_db()
             except Exception as exc:
                 raise RuntimeError(
@@ -334,6 +341,12 @@ class ReportGenerator:
         # Generate high-level summary statistics.
         summary = self._generate_summary(sections, composite_score)
 
+        # Extract data_profile and schema_info from metadata when provided
+        # so they populate the dedicated report fields for API drill-down.
+        safe_metadata = metadata if metadata is not None else {}
+        data_profile = safe_metadata.get("data_profile", {})
+        schema_info = safe_metadata.get("schema_info", {})
+
         report = QualityReport(
             report_id=report_id,
             job_id=job_id,
@@ -344,8 +357,10 @@ class ReportGenerator:
             threshold=threshold,
             sections=sections,
             summary=summary,
-            metadata=metadata if metadata is not None else {},
+            metadata=safe_metadata,
             recommendations=recommendations,
+            data_profile=data_profile,
+            schema_info=schema_info,
         )
 
         self.logger.info(
@@ -479,6 +494,9 @@ class ReportGenerator:
 
         Performs a direct field mapping so that report consumers receive a
         uniform structure regardless of which validator produced the result.
+        The validator's ``threshold`` is included in the section ``details``
+        under the ``validator_threshold`` key so that drill-down consumers can
+        see the pass/fail criteria applied by each validator.
 
         Args:
             result: The validator output to convert.
@@ -486,13 +504,19 @@ class ReportGenerator:
         Returns:
             A :class:`QualityReportSection` containing the mapped data.
         """
+        # Merge the validator's threshold into section details for drill-down
+        # transparency — consumers viewing a section can see the pass/fail
+        # criteria that was applied during validation.
+        section_details = dict(result.details) if result.details else {}
+        section_details["validator_threshold"] = result.threshold
+
         return QualityReportSection(
             section_name=result.validator_name,
             score=result.score,
             weight=result.weight,
             weighted_score=result.weighted_score,
             passed=result.passed,
-            details=result.details if result.details else {},
+            details=section_details,
             errors=list(result.errors) if result.errors else [],
             warnings=list(result.warnings) if result.warnings else [],
             records_validated=result.records_validated,
