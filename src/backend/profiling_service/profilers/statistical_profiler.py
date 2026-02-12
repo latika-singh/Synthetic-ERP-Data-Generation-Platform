@@ -257,6 +257,11 @@ class StatisticalProfiler:
         Optionally computes cross‑table correlations for copula‑based
         multivariate correlation preservation.
 
+        The profile starts in :attr:`ProfileStatus.IN_PROGRESS` while
+        cross‑table correlations are being computed and transitions to
+        :attr:`ProfileStatus.COMPLETED` on success or
+        :attr:`ProfileStatus.FAILED` on error.
+
         Args:
             schema_id: The schema definition ID.
             tenant_id: Tenant identifier for multi‑tenant isolation.
@@ -268,42 +273,106 @@ class StatisticalProfiler:
         """
         start_ts = time.time()
 
-        cross_table_corrs: list[CorrelationEntry] = []
-        if include_cross_table and len(table_profiles) > 1:
-            cross_table_corrs = self._compute_cross_table_correlations(table_profiles)
-
-        total_cols = sum(len(tp.columns) for tp in table_profiles)
-
-        profile = StatisticalProfile(
-            tenant_id=tenant_id,
-            schema_id=schema_id,
-            status=ProfileStatus.COMPLETED,
-            tables=table_profiles,
-            cross_table_correlations=cross_table_corrs,
-            total_tables_profiled=len(table_profiles),
-            total_columns_profiled=total_cols,
-            overall_completeness=1.0 if total_cols > 0 else 0.0,
-            profiling_config={
-                "sample_size": self._sample_size,
-                "max_categories": self._max_categories,
-                "distribution_bins": self._distribution_bins,
-                "timeout_seconds": self._timeout_seconds,
-            },
-            profiling_metadata={
-                "duration_seconds": round(time.time() - start_ts, 3),
-            },
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-
         self._logger.info(
-            "schema_profiling_complete",
+            "schema_profiling_started",
             schema_id=schema_id,
             tenant_id=tenant_id,
             table_count=len(table_profiles),
-            column_count=total_cols,
+            status=ProfileStatus.IN_PROGRESS,
         )
-        return profile
+
+        status = ProfileStatus.IN_PROGRESS
+        cross_table_corrs: list[CorrelationEntry] = []
+
+        try:
+            if include_cross_table and len(table_profiles) > 1:
+                cross_table_corrs = self._compute_cross_table_correlations(table_profiles)
+
+            total_cols = sum(len(tp.columns) for tp in table_profiles)
+
+            # Compute overall completeness — ratio of columns that have
+            # a non‑None distribution or frequency (i.e. were successfully
+            # profiled beyond basic counts).
+            profiled_cols = sum(
+                1
+                for tp in table_profiles
+                for cp in tp.columns
+                if cp.distribution is not None or cp.frequency is not None
+            )
+            overall_completeness = profiled_cols / total_cols if total_cols > 0 else 0.0
+
+            duration = round(time.time() - start_ts, 3)
+            status = ProfileStatus.COMPLETED
+
+            profile = StatisticalProfile(
+                tenant_id=tenant_id,
+                schema_id=schema_id,
+                status=status,
+                tables=table_profiles,
+                cross_table_correlations=cross_table_corrs,
+                total_tables_profiled=len(table_profiles),
+                total_columns_profiled=total_cols,
+                overall_completeness=round(overall_completeness, 6),
+                profiling_config={
+                    "sample_size": self._sample_size,
+                    "max_categories": self._max_categories,
+                    "distribution_bins": self._distribution_bins,
+                    "timeout_seconds": self._timeout_seconds,
+                },
+                profiling_metadata={
+                    "duration_seconds": duration,
+                },
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+
+            self._logger.info(
+                "schema_profiling_complete",
+                schema_id=schema_id,
+                tenant_id=tenant_id,
+                table_count=len(table_profiles),
+                column_count=total_cols,
+                overall_completeness=round(overall_completeness, 6),
+                duration_seconds=duration,
+            )
+            return profile
+
+        except Exception as exc:
+            duration = round(time.time() - start_ts, 3)
+            self._logger.error(
+                "schema_profiling_failed",
+                schema_id=schema_id,
+                tenant_id=tenant_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                duration_seconds=duration,
+            )
+            # Return a profile with FAILED status so callers can inspect
+            # the error state rather than catching an unhandled exception.
+            total_cols = sum(len(tp.columns) for tp in table_profiles)
+            return StatisticalProfile(
+                tenant_id=tenant_id,
+                schema_id=schema_id,
+                status=ProfileStatus.FAILED,
+                tables=table_profiles,
+                cross_table_correlations=cross_table_corrs,
+                total_tables_profiled=len(table_profiles),
+                total_columns_profiled=total_cols,
+                overall_completeness=0.0,
+                profiling_config={
+                    "sample_size": self._sample_size,
+                    "max_categories": self._max_categories,
+                    "distribution_bins": self._distribution_bins,
+                    "timeout_seconds": self._timeout_seconds,
+                },
+                profiling_metadata={
+                    "duration_seconds": duration,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                },
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
 
     # ---------------------------------------------------------------
     # Core private — _profile_column
@@ -349,6 +418,7 @@ class StatisticalProfiler:
         value_range: ValueRange | None = None
         percentiles: Percentiles | None = None
         frequency: FrequencyDistribution | None = None
+        pattern: PatternMetadata | None = None
         outlier_count: int = 0
         outlier_boundaries: dict[str, float] | None = None
 
@@ -364,10 +434,27 @@ class StatisticalProfiler:
 
             elif data_category == DataCategory.CATEGORICAL:
                 frequency = self._compute_categorical_frequency(non_null)
+                cat_params: dict[str, Any] = {
+                    "categories": {str(k): v for k, v in (frequency.categories or {}).items()},
+                }
+                # Chi‑square goodness‑of‑fit test against a uniform
+                # distribution to measure how evenly distributed categories
+                # are.  A high p‑value indicates near‑uniform spread.
+                cat_gof = 1.0
+                chi_sq_stat: float | None = None
+                cat_counts = list((frequency.categories or {}).values())
+                if len(cat_counts) >= 2:
+                    try:
+                        chi2_val, chi2_pval = scipy_stats.chisquare(cat_counts)
+                        cat_gof = round(float(chi2_pval), 6)
+                        chi_sq_stat = round(float(chi2_val), 6)
+                    except Exception:
+                        pass
                 distribution = DistributionParameters(
                     distribution_type=DistributionType.CATEGORICAL,
-                    parameters={"categories": {str(k): v for k, v in (frequency.categories or {}).items()}},
-                    goodness_of_fit=1.0,
+                    parameters=cat_params,
+                    goodness_of_fit=cat_gof,
+                    chi_square_statistic=chi_sq_stat,
                 )
 
             elif data_category == DataCategory.TEMPORAL:
@@ -378,10 +465,22 @@ class StatisticalProfiler:
                     distribution = self._fit_distribution(arr)
                     frequency = self._compute_frequency_histogram(arr)
 
+            elif data_category == DataCategory.BOOLEAN:
+                # Boolean columns are treated as categorical with two values.
+                frequency = self._compute_categorical_frequency(non_null)
+                distribution = DistributionParameters(
+                    distribution_type=DistributionType.CATEGORICAL,
+                    parameters={"categories": {str(k): v for k, v in (frequency.categories or {}).items()}},
+                    goodness_of_fit=1.0,
+                )
+
             elif data_category in (DataCategory.TEXT, DataCategory.IDENTIFIER):
-                # For text columns we only generate frequency distributions.
+                # For text columns generate frequency distributions and
+                # compute pattern metadata (format patterns, character‑class
+                # distributions, etc.) — anonymised per C‑001.
                 if distinct_count <= self._max_categories:
                     frequency = self._compute_categorical_frequency(non_null)
+                pattern = _compute_pattern_metadata(non_null)
 
         col_profile = ColumnProfile(
             column_name=column_name,
@@ -394,6 +493,7 @@ class StatisticalProfiler:
             cardinality=round(cardinality, 6),
             is_unique=is_unique,
             distribution=distribution,
+            pattern=pattern,
             value_range=value_range,
             percentiles=percentiles,
             frequency=frequency,
@@ -494,15 +594,100 @@ class StatisticalProfiler:
         )
 
     # ---------------------------------------------------------------
+    # Normality pre‑tests
+    # ---------------------------------------------------------------
+
+    def _check_normality(self, values: np.ndarray) -> dict[str, Any]:
+        """Run multiple normality tests on *values*.
+
+        Applies the Shapiro‑Wilk, D'Agostino‑Pearson, and Anderson‑Darling
+        tests and returns a summary dictionary.  These results can guide
+        the distribution‑fitting pipeline — if all three agree that the
+        data is normal, the fitter can short‑circuit to a normal fit.
+
+        Args:
+            values: 1‑D numeric array (NaN‑free).
+
+        Returns:
+            A dictionary with keys ``shapiro_stat``, ``shapiro_pvalue``,
+            ``dagostino_stat``, ``dagostino_pvalue``, ``anderson_stat``,
+            ``anderson_critical_values``, ``is_likely_normal``.
+        """
+        result: dict[str, Any] = {
+            "shapiro_stat": None,
+            "shapiro_pvalue": None,
+            "dagostino_stat": None,
+            "dagostino_pvalue": None,
+            "anderson_stat": None,
+            "anderson_critical_values": None,
+            "is_likely_normal": False,
+        }
+        normal_votes = 0
+
+        # Shapiro‑Wilk — works best with n ≤ 5000.
+        try:
+            sample = values[:5000] if len(values) > 5000 else values
+            sw_stat, sw_pval = scipy_stats.shapiro(sample)
+            result["shapiro_stat"] = round(float(sw_stat), 6)
+            result["shapiro_pvalue"] = round(float(sw_pval), 6)
+            if sw_pval > 0.05:
+                normal_votes += 1
+        except Exception:
+            pass
+
+        # D'Agostino‑Pearson (requires n ≥ 20).
+        if len(values) >= 20:
+            try:
+                dp_stat, dp_pval = scipy_stats.normaltest(values)
+                result["dagostino_stat"] = round(float(dp_stat), 6)
+                result["dagostino_pvalue"] = round(float(dp_pval), 6)
+                if dp_pval > 0.05:
+                    normal_votes += 1
+            except Exception:
+                pass
+
+        # Anderson‑Darling.
+        try:
+            ad_result = scipy_stats.anderson(values, dist="norm")
+            result["anderson_stat"] = round(float(ad_result.statistic), 6)
+            result["anderson_critical_values"] = [
+                round(float(cv), 6) for cv in ad_result.critical_values
+            ]
+            # Compare against 5% significance level (index 2).
+            if len(ad_result.critical_values) > 2:
+                if ad_result.statistic < ad_result.critical_values[2]:
+                    normal_votes += 1
+        except Exception:
+            pass
+
+        result["is_likely_normal"] = normal_votes >= 2
+
+        self._logger.debug(
+            "normality_tests_complete",
+            sample_size=len(values),
+            normal_votes=normal_votes,
+            is_likely_normal=result["is_likely_normal"],
+        )
+        return result
+
+    # ---------------------------------------------------------------
     # Distribution fitting
     # ---------------------------------------------------------------
 
     def _fit_distribution(self, values: np.ndarray) -> DistributionParameters:
         """Fit candidate distributions and select the best via KS test.
 
-        Iterates over :data:`DISTRIBUTION_CANDIDATES`, fits each via
-        ``distribution.fit()`` and evaluates with ``kstest``.  The
-        candidate with the highest *p*‑value is selected.
+        Iterates over :data:`DISTRIBUTION_CANDIDATES` (continuous families),
+        fits each via ``distribution.fit()`` and evaluates with ``kstest``.
+        Additionally tests the **Poisson** distribution for non‑negative
+        integer‑valued data using a chi‑square goodness‑of‑fit test (since
+        Poisson is discrete and the KS test is not directly applicable).
+
+        Before fitting, a normality pre‑check is performed via
+        :meth:`_check_normality` (Shapiro‑Wilk, D'Agostino‑Pearson,
+        Anderson‑Darling).  If the data is strongly normal, the fitter
+        can still confirm this through the standard KS pipeline, but the
+        normality metadata is attached for downstream consumers.
 
         Args:
             values: 1‑D numeric array.
@@ -518,11 +703,15 @@ class StatisticalProfiler:
                 ks_statistic=1.0,
             )
 
+        # Run normality pre‑tests for diagnostic metadata.
+        normality_info = self._check_normality(values)
+
         best_type = DistributionType.NORMAL
         best_params: dict[str, Any] = {}
         best_pvalue = -1.0
         best_ks = 1.0
 
+        # --- Continuous distribution candidates ---
         for dist_type, dist_obj in DISTRIBUTION_CANDIDATES:
             try:
                 # Certain distributions require all‑positive data.
@@ -550,9 +739,21 @@ class StatisticalProfiler:
             except Exception as exc:
                 self._logger.debug(
                     "distribution_fit_skipped",
-                    distribution=dist_type,
+                    distribution=str(dist_type),
                     error=str(exc),
                 )
+
+        # --- Poisson distribution (discrete — handled separately) ---
+        poisson_pvalue = _fit_poisson(values)
+        if poisson_pvalue is not None and poisson_pvalue > best_pvalue:
+            lam = float(np.mean(values))
+            best_type = DistributionType.POISSON
+            best_pvalue = poisson_pvalue
+            best_ks = 0.0  # KS not applicable; chi‑square used instead.
+            best_params = {"lambda": round(lam, 6)}
+
+        # Attach normality metadata to the parameters dict.
+        best_params["_normality_info"] = normality_info
 
         return DistributionParameters(
             distribution_type=best_type,
@@ -684,9 +885,15 @@ class StatisticalProfiler:
                 pearson: float | None = None
                 spearman: float | None = None
                 try:
-                    pearson = float(scipy_stats.pearsonr(arr_a, arr_b).statistic)
+                    # Primary: np.corrcoef for Pearson correlation matrix.
+                    corr_matrix = np.corrcoef(arr_a, arr_b)
+                    pearson = float(corr_matrix[0, 1])
                 except Exception:
-                    pass
+                    # Fallback: scipy_stats.pearsonr.
+                    try:
+                        pearson = float(scipy_stats.pearsonr(arr_a, arr_b).statistic)
+                    except Exception:
+                        pass
                 try:
                     spearman = float(scipy_stats.spearmanr(arr_a, arr_b).statistic)
                 except Exception:
@@ -882,6 +1089,9 @@ class StatisticalProfiler:
 def _is_null(value: Any) -> bool:
     """Return ``True`` if *value* represents a missing/null sentinel.
 
+    Checks for ``None``, ``NaN`` (via :func:`numpy.isnan`), pandas ``NA``,
+    and empty/whitespace-only strings.
+
     Args:
         value: Any value.
 
@@ -890,8 +1100,12 @@ def _is_null(value: Any) -> bool:
     """
     if value is None:
         return True
-    if isinstance(value, float) and math.isnan(value):
-        return True
+    if isinstance(value, (float, np.floating)):
+        try:
+            if np.isnan(value):
+                return True
+        except (TypeError, ValueError):
+            pass
     try:
         if pd.isna(value):
             return True
@@ -905,7 +1119,10 @@ def _is_null(value: Any) -> bool:
 def _to_numeric_array(values: list) -> Optional[np.ndarray]:
     """Convert a list of values to a 1‑D float64 numpy array.
 
-    Non‑numeric and null values are silently dropped.
+    Uses :func:`pandas.to_numeric` for robust type coercion with
+    ``errors="coerce"`` semantics, then filters to finite values via
+    :func:`numpy.isfinite`.  Non‑numeric and null values are silently
+    dropped.
 
     Args:
         values: Raw sample values.
@@ -914,19 +1131,30 @@ def _to_numeric_array(values: list) -> Optional[np.ndarray]:
         A ``numpy.ndarray`` of finite floats, or ``None`` if conversion
         yields an empty array.
     """
-    nums: list[float] = []
-    for v in values:
-        if v is None:
-            continue
-        try:
-            f = float(v)
-            if math.isfinite(f):
-                nums.append(f)
-        except (TypeError, ValueError):
-            continue
-    if not nums:
-        return None
-    return np.array(nums, dtype=np.float64)
+    try:
+        series = pd.to_numeric(pd.Series(values), errors="coerce")
+        arr = series.dropna().values.astype(np.float64)
+        # Keep only finite values (no inf / -inf).
+        finite_mask = np.isfinite(arr)
+        arr = arr[finite_mask]
+        if len(arr) == 0:
+            return None
+        return arr
+    except Exception:
+        # Fallback: manual per-element conversion.
+        nums: list[float] = []
+        for v in values:
+            if v is None:
+                continue
+            try:
+                f = float(v)
+                if np.isfinite(f):
+                    nums.append(f)
+            except (TypeError, ValueError):
+                continue
+        if not nums:
+            return None
+        return np.array(nums, dtype=np.float64)
 
 
 def _temporal_to_epoch(values: list) -> Optional[np.ndarray]:
@@ -1008,6 +1236,191 @@ def _top_values_numeric(
             "percentage": round(int(counts[idx]) / total, 6),
         })
     return result
+
+
+def _fit_poisson(values: np.ndarray) -> Optional[float]:
+    """Attempt to fit a Poisson distribution to *values*.
+
+    Poisson is appropriate when values are non‑negative integers.  The
+    method estimates λ = mean(values) and performs a chi‑square
+    goodness‑of‑fit test via :func:`scipy.stats.chisquare` against
+    expected Poisson frequencies.
+
+    Args:
+        values: 1‑D numeric array.
+
+    Returns:
+        The chi‑square test *p*‑value if the Poisson fit is feasible,
+        or ``None`` if the data is unsuitable for Poisson fitting.
+    """
+    # Poisson requires non‑negative integer data.
+    if np.any(values < 0):
+        return None
+    rounded = np.round(values)
+    if not np.allclose(values, rounded, atol=0.01):
+        return None
+
+    int_vals = rounded.astype(int)
+    lam = float(np.mean(int_vals))
+    if lam <= 0:
+        return None
+
+    try:
+        max_val = int(np.max(int_vals))
+        # Limit bins to a reasonable range.
+        max_bin = min(max_val + 1, 50)
+        observed = np.bincount(int_vals, minlength=max_bin)[:max_bin]
+
+        from scipy.stats import poisson as _poisson_dist
+
+        expected = np.array([
+            _poisson_dist.pmf(k, lam) * len(int_vals)
+            for k in range(max_bin)
+        ])
+
+        # Merge bins with expected counts < 5 (chi‑square requirement).
+        obs_merged: list[float] = []
+        exp_merged: list[float] = []
+        obs_acc = 0.0
+        exp_acc = 0.0
+        for o, e in zip(observed, expected):
+            obs_acc += o
+            exp_acc += e
+            if exp_acc >= 5:
+                obs_merged.append(obs_acc)
+                exp_merged.append(exp_acc)
+                obs_acc = 0.0
+                exp_acc = 0.0
+        if exp_acc > 0:
+            if exp_merged:
+                obs_merged[-1] += obs_acc
+                exp_merged[-1] += exp_acc
+            else:
+                obs_merged.append(obs_acc)
+                exp_merged.append(exp_acc)
+
+        if len(obs_merged) < 2:
+            return None
+
+        chi2_stat, p_value = scipy_stats.chisquare(obs_merged, f_exp=exp_merged)
+        return float(p_value)
+    except Exception:
+        return None
+
+
+def _compute_pattern_metadata(values: list, max_samples: int = 5) -> PatternMetadata:
+    """Derive string pattern metadata from a list of text values.
+
+    Computes average/min/max string lengths, common prefixes and suffixes,
+    character‑class distributions (alphabetic, digit, special), and a
+    simplified format pattern.  ``sample_formats`` contains anonymised
+    format exemplars (e.g. ``"AAAA-9999"``), never raw data (C‑001).
+
+    Args:
+        values: Non‑null string values.
+        max_samples: Maximum number of format samples to include.
+
+    Returns:
+        A populated :class:`PatternMetadata`.
+    """
+    str_values = [str(v) for v in values if v is not None]
+    if not str_values:
+        return PatternMetadata()
+
+    lengths = [len(s) for s in str_values]
+    avg_len = sum(lengths) / len(lengths) if lengths else 0.0
+    min_len = min(lengths) if lengths else 0
+    max_len = max(lengths) if lengths else 0
+
+    # Character‑class distribution across all characters.
+    total_chars = sum(lengths)
+    alpha_count = sum(c.isalpha() for s in str_values for c in s)
+    digit_count = sum(c.isdigit() for s in str_values for c in s)
+    special_count = total_chars - alpha_count - digit_count
+    char_classes: dict[str, float] = {}
+    if total_chars > 0:
+        char_classes = {
+            "alpha": round(alpha_count / total_chars, 6),
+            "digit": round(digit_count / total_chars, 6),
+            "special": round(special_count / total_chars, 6),
+        }
+
+    # Common prefixes (first 3 characters).
+    prefix_counter: dict[str, int] = {}
+    suffix_counter: dict[str, int] = {}
+    for s in str_values:
+        if len(s) >= 3:
+            prefix_counter[s[:3]] = prefix_counter.get(s[:3], 0) + 1
+            suffix_counter[s[-3:]] = suffix_counter.get(s[-3:], 0) + 1
+    threshold = max(1, len(str_values) // 10)
+    common_prefixes = sorted(
+        [p for p, c in prefix_counter.items() if c >= threshold],
+        key=lambda p: prefix_counter[p],
+        reverse=True,
+    )[:5]
+    common_suffixes = sorted(
+        [s for s, c in suffix_counter.items() if c >= threshold],
+        key=lambda s: suffix_counter[s],
+        reverse=True,
+    )[:5]
+
+    # Build anonymised format pattern from a representative sample.
+    sample_formats: list[str] = []
+    seen_patterns: set[str] = set()
+    for s in str_values[:200]:
+        pattern = ""
+        for ch in s:
+            if ch.isalpha():
+                pattern += "A"
+            elif ch.isdigit():
+                pattern += "9"
+            else:
+                pattern += ch
+        if pattern not in seen_patterns:
+            seen_patterns.add(pattern)
+            sample_formats.append(pattern)
+            if len(sample_formats) >= max_samples:
+                break
+
+    # Attempt a simple regex pattern from the most common format.
+    regex_pattern: str | None = None
+    format_pattern: str | None = None
+    if sample_formats:
+        fmt = sample_formats[0]
+        format_pattern = fmt
+        regex_chars: list[str] = []
+        i = 0
+        while i < len(fmt):
+            if fmt[i] == "A":
+                run = 0
+                while i < len(fmt) and fmt[i] == "A":
+                    run += 1
+                    i += 1
+                regex_chars.append(f"[A-Za-z]{{{run}}}")
+            elif fmt[i] == "9":
+                run = 0
+                while i < len(fmt) and fmt[i] == "9":
+                    run += 1
+                    i += 1
+                regex_chars.append(f"\\d{{{run}}}")
+            else:
+                import re as _re_mod
+
+                regex_chars.append(_re_mod.escape(fmt[i]))
+                i += 1
+        regex_pattern = "^" + "".join(regex_chars) + "$"
+
+    return PatternMetadata(
+        format_pattern=format_pattern,
+        regex_pattern=regex_pattern,
+        common_prefixes=common_prefixes,
+        common_suffixes=common_suffixes,
+        average_length=round(avg_len, 2),
+        min_length=min_len,
+        max_length=max_len,
+        sample_formats=sample_formats,
+        character_classes=char_classes,
+    )
 
 
 def _cramers_v(col_a: list[str], col_b: list[str]) -> Optional[float]:
