@@ -32,7 +32,7 @@ Design Patterns:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from profiling_service.connectors.base import (
     BaseConnector,
@@ -366,7 +366,7 @@ class SAPConnector(BaseConnector):
         self._password: str = config.password or ""
 
         # Optional pyrfc connection handle.
-        self._connection: Any = None
+        self._connection: Optional[Any] = None
 
         # Flag indicating whether live RFC is available.
         self._use_live_rfc: bool = False
@@ -458,19 +458,38 @@ class SAPConnector(BaseConnector):
         self._validate_connected()
 
         try:
+            # Live RFC path — query the SAP data dictionary via RFC with
+            # automatic retry and exponential backoff for transient failures.
+            if self._use_live_rfc and self._connection is not None:
+                result = self._retry_with_backoff(
+                    self._rfc_discover_tables,
+                    schema_name,
+                    module,
+                    operation_name="sap_rfc_discover_tables",
+                )
+                self._logger.info(
+                    "sap_tables_discovered",
+                    table_count=len(result),
+                    module=module.value if module else "all",
+                    mode="live_rfc",
+                )
+                return result
+
+            # Offline data-dictionary fallback — resolves table metadata from
+            # the compiled SAP_MODULE_TABLE_MAPPINGS when pyrfc is unavailable.
             if module is not None:
                 module_key = module.value if isinstance(module, ERPModule) else str(module)
                 table_names = SAP_MODULE_TABLE_MAPPINGS.get(module_key, [])
             else:
-                table_names = []
-                for tables in SAP_MODULE_TABLE_MAPPINGS.values():
-                    table_names.extend(tables)
+                table_names = [
+                    t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables
+                ]
 
-            result: list[TableMetadata] = []
+            result_offline: list[TableMetadata] = []
             for tbl_name in table_names:
                 description = _SAP_TABLE_DESCRIPTIONS.get(tbl_name, "")
                 assigned_module = self._classify_module(tbl_name)
-                result.append(
+                result_offline.append(
                     TableMetadata(
                         table_name=tbl_name,
                         schema_name=schema_name or "SAPSR3",
@@ -483,10 +502,11 @@ class SAPConnector(BaseConnector):
 
             self._logger.info(
                 "sap_tables_discovered",
-                table_count=len(result),
+                table_count=len(result_offline),
                 module=module.value if module else "all",
+                mode="offline",
             )
-            return result
+            return result_offline
 
         except ConnectorError:
             raise
@@ -525,6 +545,23 @@ class SAPConnector(BaseConnector):
         self._validate_connected()
 
         try:
+            # Live RFC path — query DD03L (Table Fields) via RFC with
+            # automatic retry and exponential backoff.
+            if self._use_live_rfc and self._connection is not None:
+                result = self._retry_with_backoff(
+                    self._rfc_discover_columns,
+                    table_name,
+                    operation_name="sap_rfc_discover_columns",
+                )
+                self._logger.info(
+                    "sap_columns_discovered",
+                    table_name=table_name,
+                    column_count=len(result),
+                    mode="live_rfc",
+                )
+                return result
+
+            # Offline data-dictionary fallback.
             columns_data = _SAP_DD_COLUMNS.get(table_name)
             if columns_data is None:
                 # For tables not in the offline data-dictionary, return
@@ -535,18 +572,23 @@ class SAPConnector(BaseConnector):
                 )
                 return self._build_generic_columns(table_name)
 
-            result: list[ColumnMetadata] = []
+            result_offline: list[ColumnMetadata] = []
             for idx, col in enumerate(columns_data, start=1):
                 standard_type = self._map_sap_type_to_standard(
                     col["type"], col["length"], col["decimals"],
                 )
-                result.append(
+                _string_types = {
+                    "CHAR", "SSTRING", "STRING", "NUMC",
+                    "CLNT", "LANG", "CUKY", "UNIT",
+                }
+                _numeric_types = {"DEC", "CURR", "QUAN", "FLTP"}
+                result_offline.append(
                     ColumnMetadata(
                         column_name=col["name"],
                         native_type=col["type"],
                         standard_type=standard_type,
-                        max_length=col["length"] if col["type"] in {"CHAR", "SSTRING", "STRING", "NUMC", "CLNT", "LANG", "CUKY", "UNIT"} else None,
-                        precision=col["length"] if col["type"] in {"DEC", "CURR", "QUAN", "FLTP"} else None,
+                        max_length=col["length"] if col["type"] in _string_types else None,
+                        precision=col["length"] if col["type"] in _numeric_types else None,
                         scale=col["decimals"] if col["decimals"] > 0 else None,
                         is_nullable=col["nullable"],
                         is_primary_key=col["key"],
@@ -559,9 +601,10 @@ class SAPConnector(BaseConnector):
             self._logger.info(
                 "sap_columns_discovered",
                 table_name=table_name,
-                column_count=len(result),
+                column_count=len(result_offline),
+                mode="offline",
             )
-            return result
+            return result_offline
 
         except ConnectorError:
             raise
@@ -599,10 +642,26 @@ class SAPConnector(BaseConnector):
         self._validate_connected()
 
         try:
-            result: list[RelationshipMetadata] = []
+            # Live RFC path — query DD08L (Foreign Key Header) via RFC
+            # with automatic retry and exponential backoff.
+            if self._use_live_rfc and self._connection is not None:
+                result = self._retry_with_backoff(
+                    self._rfc_discover_relationships,
+                    operation_name="sap_rfc_discover_relationships",
+                )
+                self._logger.info(
+                    "sap_relationships_discovered",
+                    relationship_count=len(result),
+                    mode="live_rfc",
+                )
+                return result
+
+            # Offline data-dictionary fallback — well-known SAP FK
+            # relationships derived from standard SAP data-model.
+            result_offline: list[RelationshipMetadata] = []
             for _table_name, rels in _SAP_RELATIONSHIPS.items():
                 for rel in rels:
-                    result.append(
+                    result_offline.append(
                         RelationshipMetadata(
                             constraint_name=rel["constraint"],
                             source_table=rel["source_table"],
@@ -615,9 +674,10 @@ class SAPConnector(BaseConnector):
 
             self._logger.info(
                 "sap_relationships_discovered",
-                relationship_count=len(result),
+                relationship_count=len(result_offline),
+                mode="offline",
             )
-            return result
+            return result_offline
 
         except ConnectorError:
             raise
@@ -701,6 +761,263 @@ class SAPConnector(BaseConnector):
             if table_name in tables:
                 return ERPModule(module_key)
         return None
+
+    # -- Live RFC Discovery Helpers -----------------------------------------
+
+    def _rfc_discover_tables(
+        self,
+        schema_name: Optional[str],
+        module: Optional[ERPModule],
+    ) -> list[TableMetadata]:
+        """Discover tables via live SAP RFC calls to the ABAP data dictionary.
+
+        Issues ``RFC_READ_TABLE`` against the ``DD02V`` dictionary view to
+        extract table names, descriptions, and classification.
+
+        **Privacy (C-001):** Only dictionary views are queried — no
+        production data tables are accessed.
+
+        Args:
+            schema_name: Optional schema qualifier (defaults to
+                ``"SAPSR3"``).
+            module: Optional ERP module filter.
+
+        Returns:
+            List of :class:`TableMetadata` for each discovered table.
+        """
+        if module is not None:
+            module_key = module.value if isinstance(module, ERPModule) else str(module)
+            target_tables = SAP_MODULE_TABLE_MAPPINGS.get(module_key, [])
+        else:
+            target_tables = [
+                t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables
+            ]
+
+        result: list[TableMetadata] = []
+        for tbl_name in target_tables:
+            try:
+                rfc_result = self._connection.call(
+                    "RFC_READ_TABLE",
+                    QUERY_TABLE="DD02V",
+                    DELIMITER="|",
+                    ROWCOUNT=1,
+                    OPTIONS=[{"TEXT": f"TABNAME EQ '{tbl_name}'"}],
+                    FIELDS=[
+                        {"FIELDNAME": "TABNAME"},
+                        {"FIELDNAME": "DDTEXT"},
+                        {"FIELDNAME": "TABCLASS"},
+                    ],
+                )
+                data_rows = rfc_result.get("DATA", [])
+                description = _SAP_TABLE_DESCRIPTIONS.get(tbl_name, "")
+                table_type = "TABLE"
+
+                if data_rows:
+                    raw = data_rows[0].get("WA", "")
+                    parts = raw.split("|")
+                    if len(parts) >= 2:
+                        description = parts[1].strip() or description
+                    if len(parts) >= 3:
+                        table_type = "VIEW" if parts[2].strip() == "V" else "TABLE"
+
+                result.append(
+                    TableMetadata(
+                        table_name=tbl_name,
+                        schema_name=schema_name or "SAPSR3",
+                        description=description,
+                        estimated_row_count=None,
+                        module=self._classify_module(tbl_name),
+                        table_type=table_type,
+                    )
+                )
+            except Exception as exc:
+                # Per-table fallback — record with offline description so
+                # that partial failures do not discard the entire result.
+                self._logger.warning(
+                    "sap_rfc_table_query_fallback",
+                    table_name=tbl_name,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+                result.append(
+                    TableMetadata(
+                        table_name=tbl_name,
+                        schema_name=schema_name or "SAPSR3",
+                        description=_SAP_TABLE_DESCRIPTIONS.get(tbl_name, ""),
+                        module=self._classify_module(tbl_name),
+                        table_type="TABLE",
+                    )
+                )
+
+        return result
+
+    def _rfc_discover_columns(self, table_name: str) -> list[ColumnMetadata]:
+        """Discover column metadata via live SAP RFC calls to DD03L.
+
+        Issues ``RFC_READ_TABLE`` against ``DD03L`` (Table Fields) to
+        extract column-level structural metadata.
+
+        **Privacy (C-001):** Only the data-dictionary is queried — no
+        production data values are ever accessed.
+
+        Args:
+            table_name: Physical SAP table name (e.g. ``"BKPF"``).
+
+        Returns:
+            List of :class:`ColumnMetadata` for each column.  Falls back
+            to :meth:`_build_generic_columns` when no results are
+            returned.
+        """
+        rfc_result = self._connection.call(
+            "RFC_READ_TABLE",
+            QUERY_TABLE="DD03L",
+            DELIMITER="|",
+            OPTIONS=[{"TEXT": f"TABNAME EQ '{table_name}'"}],
+            FIELDS=[
+                {"FIELDNAME": "FIELDNAME"},
+                {"FIELDNAME": "POSITION"},
+                {"FIELDNAME": "KEYFLAG"},
+                {"FIELDNAME": "DATATYPE"},
+                {"FIELDNAME": "LENG"},
+                {"FIELDNAME": "DECIMALS"},
+                {"FIELDNAME": "NOTNULL"},
+            ],
+        )
+
+        data_rows = rfc_result.get("DATA", [])
+        _string_types = {
+            "CHAR", "SSTRING", "STRING", "NUMC",
+            "CLNT", "LANG", "CUKY", "UNIT",
+        }
+        _numeric_types = {"DEC", "CURR", "QUAN", "FLTP"}
+
+        result: list[ColumnMetadata] = []
+        for row in data_rows:
+            raw = row.get("WA", "")
+            parts = raw.split("|")
+            if len(parts) < 7:
+                continue
+
+            col_name = parts[0].strip()
+            if col_name.startswith(".") or not col_name:
+                # Skip internal / include-structure fields.
+                continue
+
+            position = int(parts[1].strip() or "0")
+            key_flag = parts[2].strip().upper() == "X"
+            data_type = parts[3].strip()
+            length = int(parts[4].strip() or "0")
+            decimals = int(parts[5].strip() or "0")
+            not_null = parts[6].strip().upper() == "X"
+
+            standard_type = self._map_sap_type_to_standard(
+                data_type, length, decimals,
+            )
+            result.append(
+                ColumnMetadata(
+                    column_name=col_name,
+                    native_type=data_type,
+                    standard_type=standard_type,
+                    max_length=length if data_type in _string_types else None,
+                    precision=length if data_type in _numeric_types else None,
+                    scale=decimals if decimals > 0 else None,
+                    is_nullable=not not_null,
+                    is_primary_key=key_flag,
+                    is_auto_increment=False,
+                    ordinal_position=position if position > 0 else None,
+                )
+            )
+
+        # Fall back to generic columns when the live query returned nothing.
+        return result if result else self._build_generic_columns(table_name)
+
+    def _rfc_discover_relationships(self) -> list[RelationshipMetadata]:
+        """Discover foreign-key relationships via live SAP RFC calls to DD08L.
+
+        Issues ``RFC_READ_TABLE`` against ``DD08L`` (Foreign Key Header)
+        to extract referential integrity constraint metadata for the four
+        supported ERP modules.
+
+        **Privacy (C-001):** Only dictionary metadata is accessed.
+
+        Returns:
+            List of :class:`RelationshipMetadata` for discovered FK
+            constraints.  Falls back to the well-known relationship
+            catalogue when the live query returns no results.
+        """
+        all_tables = [
+            t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables
+        ]
+
+        result: list[RelationshipMetadata] = []
+        for table_name in all_tables:
+            try:
+                rfc_result = self._connection.call(
+                    "RFC_READ_TABLE",
+                    QUERY_TABLE="DD08L",
+                    DELIMITER="|",
+                    OPTIONS=[{"TEXT": f"TABNAME EQ '{table_name}'"}],
+                    FIELDS=[
+                        {"FIELDNAME": "TABNAME"},
+                        {"FIELDNAME": "FIELDNAME"},
+                        {"FIELDNAME": "CHECKTABLE"},
+                        {"FIELDNAME": "CHECKFIELD"},
+                        {"FIELDNAME": "FRKART"},
+                    ],
+                )
+                data_rows = rfc_result.get("DATA", [])
+                for row in data_rows:
+                    raw = row.get("WA", "")
+                    parts = raw.split("|")
+                    if len(parts) < 5:
+                        continue
+
+                    source_table = parts[0].strip()
+                    source_column = parts[1].strip()
+                    target_table = parts[2].strip()
+                    target_column = parts[3].strip()
+                    fk_type = parts[4].strip()
+
+                    rel_type = (
+                        "ONE_TO_ONE" if fk_type == "TEXT" else "MANY_TO_ONE"
+                    )
+                    result.append(
+                        RelationshipMetadata(
+                            constraint_name=f"{source_table}_{target_table}_FK",
+                            source_table=source_table,
+                            source_column=source_column,
+                            target_table=target_table,
+                            target_column=target_column,
+                            relationship_type=rel_type,
+                        )
+                    )
+            except Exception as exc:
+                self._logger.debug(
+                    "sap_rfc_relationship_query_skipped",
+                    table_name=table_name,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+
+        # When no live results are obtained, fall back to the compiled
+        # well-known relationship catalogue.
+        if not result:
+            for rels in _SAP_RELATIONSHIPS.values():
+                for rel in rels:
+                    result.append(
+                        RelationshipMetadata(
+                            constraint_name=rel["constraint"],
+                            source_table=rel["source_table"],
+                            source_column=rel["source_column"],
+                            target_table=rel["target_table"],
+                            target_column=rel["target_column"],
+                            relationship_type=rel["type"],
+                        )
+                    )
+
+        return result
+
+    # -- Generic Column Fallback --------------------------------------------
 
     def _build_generic_columns(self, _table_name: str) -> list[ColumnMetadata]:
         """Return a minimal generic column set for uncached tables.
