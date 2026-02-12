@@ -33,7 +33,7 @@ Design Patterns:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from profiling_service.connectors.base import (
     BaseConnector,
@@ -276,8 +276,8 @@ class JDBCConnector(BaseConnector):
         self._password: str = config.password or ""
         self._schema_filter: str | None = config.database
 
-        # JDBC connection handle.
-        self._connection: Any = None
+        # JDBC connection handle — ``None`` until ``connect()`` succeeds.
+        self._connection: Optional[Any] = None
         self._use_live_jdbc: bool = False
 
         self._logger.info(
@@ -347,6 +347,12 @@ class JDBCConnector(BaseConnector):
         """Discover tables from a generic JDBC source.
 
         **Privacy (C-001):** Uses ``DatabaseMetaData.getTables()`` only.
+        Estimated row counts are obtained from database statistics
+        (metadata-safe), never via ``SELECT COUNT(*)``.
+
+        For live JDBC connections the discovery call is wrapped with
+        :meth:`~BaseConnector._retry_with_backoff` to tolerate transient
+        JDBC errors (network blips, busy metadata locks, etc.).
 
         Args:
             schema_name: Optional schema/catalog filter.
@@ -361,11 +367,23 @@ class JDBCConnector(BaseConnector):
         """
         self._validate_connected()
 
+        self._logger.debug(
+            "jdbc_discover_tables_start",
+            connected=self.connected,
+            schema_name=schema_name,
+            module=module.value if module else None,
+        )
+
         try:
             effective_schema = schema_name or self._schema_filter
 
             if self._use_live_jdbc and self._connection is not None:
-                return self._discover_tables_live(effective_schema, module)
+                return self._retry_with_backoff(
+                    self._discover_tables_live,
+                    effective_schema,
+                    module,
+                    operation_name="discover_tables",
+                )
 
             return self._discover_tables_offline(effective_schema, module)
 
@@ -390,14 +408,20 @@ class JDBCConnector(BaseConnector):
     ) -> list[ColumnMetadata]:
         """Discover columns via JDBC ``DatabaseMetaData.getColumns()``.
 
-        **Privacy (C-001):** Only column metadata is queried.
+        **Privacy (C-001):** Only column metadata is queried.  Primary-key
+        identification is performed via ``getPrimaryKeys()`` — no data
+        rows are inspected.
+
+        For live JDBC connections the discovery call is wrapped with
+        :meth:`~BaseConnector._retry_with_backoff` to tolerate transient
+        JDBC errors.
 
         Args:
             table_name: Table name.
             schema_name: Optional schema qualifier.
 
         Returns:
-            List of :class:`ColumnMetadata`.
+            List of :class:`ColumnMetadata`, ordered by ordinal position.
 
         Raises:
             DiscoveryError: If column metadata cannot be extracted.
@@ -405,9 +429,20 @@ class JDBCConnector(BaseConnector):
         """
         self._validate_connected()
 
+        self._logger.debug(
+            "jdbc_discover_columns_start",
+            table_name=table_name,
+            connected=self.connected,
+        )
+
         try:
             if self._use_live_jdbc and self._connection is not None:
-                return self._discover_columns_live(table_name, schema_name)
+                return self._retry_with_backoff(
+                    self._discover_columns_live,
+                    table_name,
+                    schema_name,
+                    operation_name="discover_columns",
+                )
 
             return self._discover_columns_offline(table_name)
 
@@ -432,7 +467,16 @@ class JDBCConnector(BaseConnector):
     ) -> list[RelationshipMetadata]:
         """Discover FK relationships via JDBC ``DatabaseMetaData``.
 
-        **Privacy (C-001):** Only constraint metadata is accessed.
+        Uses both ``getImportedKeys()`` (outgoing foreign keys from each
+        table) and ``getExportedKeys()`` (incoming foreign keys into each
+        table) to build a comprehensive relationship map.
+
+        **Privacy (C-001):** Only constraint metadata is accessed — no
+        data rows are followed or inspected.
+
+        For live JDBC connections the discovery call is wrapped with
+        :meth:`~BaseConnector._retry_with_backoff` to tolerate transient
+        JDBC errors.
 
         Args:
             schema_name: Optional schema filter.
@@ -446,9 +490,19 @@ class JDBCConnector(BaseConnector):
         """
         self._validate_connected()
 
+        self._logger.debug(
+            "jdbc_discover_relationships_start",
+            connected=self.connected,
+            schema_name=schema_name,
+        )
+
         try:
             if self._use_live_jdbc and self._connection is not None:
-                return self._discover_relationships_live(schema_name)
+                return self._retry_with_backoff(
+                    self._discover_relationships_live,
+                    schema_name,
+                    operation_name="discover_relationships",
+                )
 
             return self._discover_relationships_offline()
 
@@ -513,6 +567,11 @@ class JDBCConnector(BaseConnector):
     ) -> list[TableMetadata]:
         """Extract table list from a live JDBC connection.
 
+        Estimated row counts are obtained from database catalog statistics
+        (e.g. ``INFORMATION_SCHEMA.TABLES``) when available.  This is a
+        *metadata-safe* operation (C-001) — no ``SELECT COUNT(*)`` on
+        business data tables is performed.
+
         Args:
             schema: Schema filter.
             module: ERP module filter.
@@ -523,9 +582,10 @@ class JDBCConnector(BaseConnector):
         metadata = self._get_database_metadata()
         rs = metadata.getTables(None, schema, "%", ["TABLE"])
 
-        result: list[TableMetadata] = []
+        raw_tables: list[dict[str, Any]] = []
         try:
             while rs.next():
+                tbl_catalog = str(rs.getString(1) or "")
                 tbl_schema = str(rs.getString(2) or "")
                 tbl_name = str(rs.getString(3) or "")
                 tbl_type = str(rs.getString(4) or "TABLE")
@@ -534,19 +594,39 @@ class JDBCConnector(BaseConnector):
                 if module is not None and not self._matches_module(tbl_name, module):
                     continue
 
-                assigned_module = self._classify_table_by_name(tbl_name)
-                result.append(
-                    TableMetadata(
-                        table_name=tbl_name,
-                        schema_name=tbl_schema or schema or "",
-                        description=remarks,
-                        estimated_row_count=None,
-                        module=assigned_module,
-                        table_type=tbl_type,
-                    )
-                )
+                raw_tables.append({
+                    "catalog": tbl_catalog,
+                    "schema": tbl_schema,
+                    "name": tbl_name,
+                    "type": tbl_type,
+                    "remarks": remarks,
+                })
         finally:
             rs.close()
+
+        # Attempt to obtain estimated row counts from INFORMATION_SCHEMA.
+        # This is metadata-safe (C-001) — it queries catalog statistics,
+        # never executes COUNT(*) on business data tables.
+        row_count_map: dict[str, Optional[int]] = {}
+        row_count_map = self._estimate_row_counts_from_catalog(schema, raw_tables)
+
+        result: list[TableMetadata] = []
+        for entry in raw_tables:
+            tbl_name = entry["name"]
+            tbl_schema = entry["schema"]
+            assigned_module = self._classify_table_by_name(tbl_name)
+            estimated_count = row_count_map.get(tbl_name)
+
+            result.append(
+                TableMetadata(
+                    table_name=tbl_name,
+                    schema_name=tbl_schema or schema or "",
+                    description=entry["remarks"],
+                    estimated_row_count=estimated_count,
+                    module=assigned_module,
+                    table_type=entry["type"],
+                )
+            )
 
         self._logger.info(
             "jdbc_tables_discovered_live",
@@ -630,6 +710,13 @@ class JDBCConnector(BaseConnector):
     ) -> list[RelationshipMetadata]:
         """Extract FK relationships from a live JDBC connection.
 
+        Uses both ``getImportedKeys()`` (outgoing foreign keys from each
+        table) and ``getExportedKeys()`` (incoming foreign keys referencing
+        each table) to build a comprehensive relationship map.  Duplicate
+        constraints are deduplicated by constraint name.
+
+        **Privacy (C-001):** Only constraint catalogue metadata is read.
+
         Args:
             schema: Optional schema filter.
 
@@ -638,7 +725,7 @@ class JDBCConnector(BaseConnector):
         """
         metadata = self._get_database_metadata()
 
-        # Discover tables first, then get imported keys for each.
+        # Discover all tables first.
         tables_rs = metadata.getTables(None, schema, "%", ["TABLE"])
         table_names: list[str] = []
         try:
@@ -651,6 +738,7 @@ class JDBCConnector(BaseConnector):
         result: list[RelationshipMetadata] = []
 
         for tbl in table_names:
+            # --- Imported keys (outgoing FKs FROM this table) ---
             try:
                 fk_rs = metadata.getImportedKeys(None, schema, tbl)
                 try:
@@ -665,6 +753,14 @@ class JDBCConnector(BaseConnector):
                             continue
                         seen_constraints.add(fk_name)
 
+                        # Determine referential actions when available.
+                        on_update: Optional[str] = self._map_referential_action(
+                            fk_rs.getInt(10)  # UPDATE_RULE
+                        )
+                        on_delete: Optional[str] = self._map_referential_action(
+                            fk_rs.getInt(11)  # DELETE_RULE
+                        )
+
                         result.append(
                             RelationshipMetadata(
                                 constraint_name=fk_name,
@@ -673,6 +769,8 @@ class JDBCConnector(BaseConnector):
                                 target_table=pk_table,
                                 target_column=pk_col,
                                 relationship_type="MANY_TO_ONE",
+                                on_update=on_update,
+                                on_delete=on_delete,
                             )
                         )
                 finally:
@@ -684,9 +782,54 @@ class JDBCConnector(BaseConnector):
                     error=str(inner_exc),
                 )
 
+            # --- Exported keys (incoming FKs INTO this table) ---
+            try:
+                ek_rs = metadata.getExportedKeys(None, schema, tbl)
+                try:
+                    while ek_rs.next():
+                        pk_table = str(ek_rs.getString(3) or "")
+                        pk_col = str(ek_rs.getString(4) or "")
+                        fk_table = str(ek_rs.getString(7) or "")
+                        fk_col = str(ek_rs.getString(8) or "")
+                        fk_name = str(ek_rs.getString(12) or f"{fk_table}_{pk_table}_FK")
+
+                        # Skip if already recorded from the imported-keys pass.
+                        if fk_name in seen_constraints:
+                            continue
+                        seen_constraints.add(fk_name)
+
+                        on_update_ek: Optional[str] = self._map_referential_action(
+                            ek_rs.getInt(10)
+                        )
+                        on_delete_ek: Optional[str] = self._map_referential_action(
+                            ek_rs.getInt(11)
+                        )
+
+                        result.append(
+                            RelationshipMetadata(
+                                constraint_name=fk_name,
+                                source_table=fk_table,
+                                source_column=fk_col,
+                                target_table=pk_table,
+                                target_column=pk_col,
+                                relationship_type="MANY_TO_ONE",
+                                on_update=on_update_ek,
+                                on_delete=on_delete_ek,
+                            )
+                        )
+                finally:
+                    ek_rs.close()
+            except Exception as inner_exc:
+                self._logger.debug(
+                    "jdbc_exported_keys_skip",
+                    table=tbl,
+                    error=str(inner_exc),
+                )
+
         self._logger.info(
             "jdbc_relationships_discovered_live",
             relationship_count=len(result),
+            tables_inspected=len(table_names),
         )
         return result
 
@@ -808,6 +951,106 @@ class JDBCConnector(BaseConnector):
         return result
 
     # -- Shared Private Helpers ---------------------------------------------
+
+    def _estimate_row_counts_from_catalog(
+        self,
+        schema: str | None,
+        raw_tables: list[dict[str, Any]],
+    ) -> dict[str, Optional[int]]:
+        """Attempt to obtain estimated row counts from database catalog statistics.
+
+        Tries the JDBC standard ``INFORMATION_SCHEMA.TABLES`` approach first.
+        On failure (unsupported, permissions), returns empty estimates.
+
+        **Privacy (C-001):** This method queries *catalog statistics only*
+        — it never executes ``SELECT COUNT(*)`` or scans data tables.
+
+        Args:
+            schema: Optional schema filter.
+            raw_tables: The list of table dicts already discovered.
+
+        Returns:
+            Mapping of table_name → estimated_row_count (``None`` when the
+            estimate is unavailable).
+        """
+        counts: dict[str, Optional[int]] = {}
+
+        if self._connection is None:
+            return counts
+
+        for entry in raw_tables:
+            counts[entry["name"]] = None
+
+        try:
+            # Many JDBC-compliant databases expose row estimates through
+            # the INFORMATION_SCHEMA.TABLES view (TABLE_ROWS column).
+            # This is a catalogue query and does NOT scan business data.
+            cursor = self._connection.cursor()
+            try:
+                if schema:
+                    cursor.execute(
+                        "SELECT TABLE_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES "
+                        "WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'",
+                        [schema],
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT TABLE_NAME, TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES "
+                        "WHERE TABLE_TYPE = 'BASE TABLE'"
+                    )
+
+                for row in cursor.fetchall():
+                    tbl_name = str(row[0])
+                    try:
+                        row_count = int(row[1]) if row[1] is not None else None
+                    except (ValueError, TypeError):
+                        row_count = None
+                    if tbl_name in counts:
+                        counts[tbl_name] = row_count
+            finally:
+                cursor.close()
+
+            self._logger.debug(
+                "jdbc_row_count_estimates_obtained",
+                schema=schema,
+                estimated_tables=sum(1 for v in counts.values() if v is not None),
+            )
+        except Exception as exc:
+            # Graceful degradation: row count estimation is best-effort.
+            # Not all JDBC drivers / databases support INFORMATION_SCHEMA.
+            self._logger.debug(
+                "jdbc_row_count_estimation_unavailable",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+        return counts
+
+    @staticmethod
+    def _map_referential_action(action_code: int) -> Optional[str]:
+        """Map a JDBC referential action code to a human-readable string.
+
+        The codes are defined in ``java.sql.DatabaseMetaData`` for the
+        ``UPDATE_RULE`` and ``DELETE_RULE`` columns of
+        ``getImportedKeys()`` / ``getExportedKeys()``.
+
+        Args:
+            action_code: JDBC referential action integer:
+                0 = CASCADE, 1 = RESTRICT, 2 = SET NULL,
+                3 = NO ACTION, 4 = SET DEFAULT.
+
+        Returns:
+            Human-readable action string, or ``None`` when the code is
+            unrecognised.
+        """
+        action_map: dict[int, str] = {
+            0: "CASCADE",
+            1: "RESTRICT",
+            2: "SET NULL",
+            3: "NO ACTION",
+            4: "SET DEFAULT",
+        }
+        return action_map.get(action_code)
 
     def _map_jdbc_type(
         self,
