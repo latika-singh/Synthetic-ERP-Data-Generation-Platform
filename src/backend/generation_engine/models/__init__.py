@@ -46,21 +46,21 @@ from typing import Any
 __version__: str = "1.0.0"
 
 __all__: list[str] = [
-    "Discriminator",
-    # GAN
+    # GAN components (from gan_model)
+    "TabularGAN",
     "GANConfig",
     "Generator",
-    "ModelLoadError",
-    "ModelMetadata",
-    "ModelRegistrationError",
-    # Registry
-    "ModelRegistry",
-    "Sampling",
-    "TabularGAN",
+    "Discriminator",
+    # VAE components (from vae_model)
     "TabularVAE",
-    # VAE
     "VAEConfig",
+    "Sampling",
+    # Registry components (from model_registry)
+    "ModelRegistry",
     "get_model_registry",
+    "ModelMetadata",
+    "ModelLoadError",
+    "ModelRegistrationError",
 ]
 
 # ---------------------------------------------------------------------------
