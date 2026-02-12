@@ -648,15 +648,23 @@ class StatisticalProfiler:
 
         # Anderson‑Darling.
         try:
-            ad_result = scipy_stats.anderson(values, dist="norm")
+            ad_result = scipy_stats.anderson(
+                values, dist="norm", method="interpolate",
+            )
             result["anderson_stat"] = round(float(ad_result.statistic), 6)
-            result["anderson_critical_values"] = [
-                round(float(cv), 6) for cv in ad_result.critical_values
-            ]
-            # Compare against 5% significance level (index 2).
-            if len(ad_result.critical_values) > 2:
-                if ad_result.statistic < ad_result.critical_values[2]:
+            # SciPy ≥ 1.17 returns ``pvalue`` when ``method`` is given.
+            if hasattr(ad_result, "pvalue") and ad_result.pvalue is not None:
+                result["anderson_pvalue"] = round(float(ad_result.pvalue), 6)
+                if ad_result.pvalue > 0.05:
                     normal_votes += 1
+            elif hasattr(ad_result, "critical_values"):
+                result["anderson_critical_values"] = [
+                    round(float(cv), 6) for cv in ad_result.critical_values
+                ]
+                # Compare against 5% significance level (index 2).
+                if len(ad_result.critical_values) > 2:
+                    if ad_result.statistic < ad_result.critical_values[2]:
+                        normal_votes += 1
         except Exception:
             pass
 
@@ -1276,10 +1284,19 @@ def _fit_poisson(values: np.ndarray) -> Optional[float]:
 
         from scipy.stats import poisson as _poisson_dist
 
-        expected = np.array([
+        expected_raw = np.array([
             _poisson_dist.pmf(k, lam) * len(int_vals)
             for k in range(max_bin)
         ])
+
+        # Normalize expected frequencies so their sum matches the observed
+        # total exactly.  SciPy ≥ 1.17 enforces strict agreement between
+        # observed and expected sums in ``chisquare``.
+        obs_total = float(np.sum(observed))
+        exp_total = float(np.sum(expected_raw))
+        if exp_total <= 0:
+            return None
+        expected = expected_raw * (obs_total / exp_total)
 
         # Merge bins with expected counts < 5 (chi‑square requirement).
         obs_merged: list[float] = []
