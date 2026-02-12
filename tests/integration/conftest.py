@@ -38,57 +38,29 @@ from jose import jwt
 # defaults for local development.  Each variable maps to the service name
 # and port defined in the project's docker-compose.yml.
 
-API_GATEWAY_URL: str = os.environ.get(
-    "API_GATEWAY_URL", "http://localhost:5000"
-)
-GENERATION_ENGINE_URL: str = os.environ.get(
-    "GENERATION_ENGINE_URL", "http://localhost:5001"
-)
-PROFILING_SERVICE_URL: str = os.environ.get(
-    "PROFILING_SERVICE_URL", "http://localhost:5002"
-)
-QUALITY_SERVICE_URL: str = os.environ.get(
-    "QUALITY_SERVICE_URL", "http://localhost:5003"
-)
-COMPLIANCE_SERVICE_URL: str = os.environ.get(
-    "COMPLIANCE_SERVICE_URL", "http://localhost:5004"
-)
-PROVISIONING_SERVICE_URL: str = os.environ.get(
-    "PROVISIONING_SERVICE_URL", "http://localhost:5005"
-)
+API_GATEWAY_URL: str = os.environ.get("API_GATEWAY_URL", "http://localhost:5000")
+GENERATION_ENGINE_URL: str = os.environ.get("GENERATION_ENGINE_URL", "http://localhost:5001")
+PROFILING_SERVICE_URL: str = os.environ.get("PROFILING_SERVICE_URL", "http://localhost:5002")
+QUALITY_SERVICE_URL: str = os.environ.get("QUALITY_SERVICE_URL", "http://localhost:5003")
+COMPLIANCE_SERVICE_URL: str = os.environ.get("COMPLIANCE_SERVICE_URL", "http://localhost:5004")
+PROVISIONING_SERVICE_URL: str = os.environ.get("PROVISIONING_SERVICE_URL", "http://localhost:5005")
 
 # Data store URIs
-MONGODB_TEST_URI: str = os.environ.get(
-    "MONGODB_TEST_URI", "mongodb://localhost:27017"
-)
-MONGODB_TEST_DB: str = os.environ.get(
-    "MONGODB_TEST_DB", "synthetic_erp_test"
-)
-REDIS_TEST_URL: str = os.environ.get(
-    "REDIS_TEST_URL", "redis://localhost:6379/1"
-)
+MONGODB_TEST_URI: str = os.environ.get("MONGODB_TEST_URI", "mongodb://localhost:27017")
+MONGODB_TEST_DB: str = os.environ.get("MONGODB_TEST_DB", "synthetic_erp_test")
+REDIS_TEST_URL: str = os.environ.get("REDIS_TEST_URL", "redis://localhost:6379/1")
 
 # JWT signing secret used exclusively for integration tests.  In production,
 # tokens are issued by Auth0 and verified with RS256 public keys; here we
 # use HS256 with a shared secret for deterministic token generation.
-JWT_TEST_SECRET: str = os.environ.get(
-    "JWT_TEST_SECRET", "integration-test-secret-key-do-not-use-in-prod"
-)
+JWT_TEST_SECRET: str = os.environ.get("JWT_TEST_SECRET", "integration-test-secret-key-do-not-use-in-prod")
 JWT_TEST_ALGORITHM: str = "HS256"
-JWT_TEST_ISSUER: str = os.environ.get(
-    "JWT_TEST_ISSUER", "https://synthetic-erp-test.auth0.com/"
-)
-JWT_TEST_AUDIENCE: str = os.environ.get(
-    "JWT_TEST_AUDIENCE", "https://api.synthetic-erp-test.local"
-)
+JWT_TEST_ISSUER: str = os.environ.get("JWT_TEST_ISSUER", "https://synthetic-erp-test.auth0.com/")
+JWT_TEST_AUDIENCE: str = os.environ.get("JWT_TEST_AUDIENCE", "https://api.synthetic-erp-test.local")
 
 # Timeout and retry settings for service readiness checks
-SERVICE_READINESS_TIMEOUT: int = int(
-    os.environ.get("SERVICE_READINESS_TIMEOUT", "60")
-)
-SERVICE_READINESS_INTERVAL: int = int(
-    os.environ.get("SERVICE_READINESS_INTERVAL", "2")
-)
+SERVICE_READINESS_TIMEOUT: int = int(os.environ.get("SERVICE_READINESS_TIMEOUT", "60"))
+SERVICE_READINESS_INTERVAL: int = int(os.environ.get("SERVICE_READINESS_INTERVAL", "2"))
 
 # Core MongoDB collection names aligned with the data-layer specification
 COLLECTION_GENERATION_PROFILES = "generation_profiles"
@@ -101,6 +73,7 @@ COLLECTION_TENANT_CONFIGURATIONS = "tenant_configurations"
 # ---------------------------------------------------------------------------
 # 2. Pytest Marker Registration
 # ---------------------------------------------------------------------------
+
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register custom markers used across integration tests."""
@@ -117,6 +90,7 @@ def pytest_configure(config: pytest.Config) -> None:
 # ---------------------------------------------------------------------------
 # 3. Service Readiness Fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session", autouse=True)
 def wait_for_services() -> None:
@@ -171,14 +145,14 @@ def wait_for_services() -> None:
 
     missing = set(service_urls.keys()) - healthy_services
     pytest.skip(
-        f"Integration test services not ready after "
-        f"{SERVICE_READINESS_TIMEOUT}s. Missing: {', '.join(sorted(missing))}"
+        f"Integration test services not ready after {SERVICE_READINESS_TIMEOUT}s. Missing: {', '.join(sorted(missing))}"
     )
 
 
 # ---------------------------------------------------------------------------
 # 4. MongoDB Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def mongo_client() -> Generator[pymongo.MongoClient, None, None]:
@@ -187,9 +161,7 @@ def mongo_client() -> Generator[pymongo.MongoClient, None, None]:
     Uses ``pymongo.MongoClient`` with ``maxPoolSize=10`` suitable for a
     test runner.  The client is closed at session teardown.
     """
-    client: pymongo.MongoClient = pymongo.MongoClient(
-        MONGODB_TEST_URI, maxPoolSize=10
-    )
+    client: pymongo.MongoClient = pymongo.MongoClient(MONGODB_TEST_URI, maxPoolSize=10)
     # Verify connectivity immediately so failures surface early.
     client.admin.command("ping")
     yield client
@@ -262,53 +234,63 @@ def setup_indexes(
       - ``tenant_configurations``: unique on tenant_id
     """
     # generation_profiles indexes
-    generation_profiles_collection.create_indexes([
-        pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
-        pymongo.IndexModel([("status", pymongo.ASCENDING)], name="idx_status"),
-        pymongo.IndexModel(
-            [("tenant_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)],
-            name="idx_tenant_status",
-        ),
-        pymongo.IndexModel(
-            [("tenant_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
-            name="idx_tenant_created",
-        ),
-    ])
+    generation_profiles_collection.create_indexes(
+        [
+            pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
+            pymongo.IndexModel([("status", pymongo.ASCENDING)], name="idx_status"),
+            pymongo.IndexModel(
+                [("tenant_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)],
+                name="idx_tenant_status",
+            ),
+            pymongo.IndexModel(
+                [("tenant_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
+                name="idx_tenant_created",
+            ),
+        ]
+    )
 
     # statistical_profiles indexes
-    statistical_profiles_collection.create_indexes([
-        pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
-        pymongo.IndexModel([("schema_id", pymongo.ASCENDING)], name="idx_schema_id"),
-    ])
+    statistical_profiles_collection.create_indexes(
+        [
+            pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
+            pymongo.IndexModel([("schema_id", pymongo.ASCENDING)], name="idx_schema_id"),
+        ]
+    )
 
     # schema_definitions indexes
-    schema_definitions_collection.create_indexes([
-        pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
-        pymongo.IndexModel([("erp_system", pymongo.ASCENDING)], name="idx_erp_system"),
-    ])
+    schema_definitions_collection.create_indexes(
+        [
+            pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
+            pymongo.IndexModel([("erp_system", pymongo.ASCENDING)], name="idx_erp_system"),
+        ]
+    )
 
     # audit_logs indexes
     # 7-year TTL = 7 * 365 * 24 * 3600 = 220_752_000 seconds
-    audit_logs_collection.create_indexes([
-        pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
-        pymongo.IndexModel([("timestamp", pymongo.ASCENDING)], name="idx_timestamp"),
-        pymongo.IndexModel([("user_id", pymongo.ASCENDING)], name="idx_user_id"),
-        pymongo.IndexModel([("action", pymongo.ASCENDING)], name="idx_action"),
-        pymongo.IndexModel(
-            [("created_at", pymongo.ASCENDING)],
-            name="idx_ttl_7yr",
-            expireAfterSeconds=220_752_000,
-        ),
-    ])
+    audit_logs_collection.create_indexes(
+        [
+            pymongo.IndexModel([("tenant_id", pymongo.ASCENDING)], name="idx_tenant_id"),
+            pymongo.IndexModel([("timestamp", pymongo.ASCENDING)], name="idx_timestamp"),
+            pymongo.IndexModel([("user_id", pymongo.ASCENDING)], name="idx_user_id"),
+            pymongo.IndexModel([("action", pymongo.ASCENDING)], name="idx_action"),
+            pymongo.IndexModel(
+                [("created_at", pymongo.ASCENDING)],
+                name="idx_ttl_7yr",
+                expireAfterSeconds=220_752_000,
+            ),
+        ]
+    )
 
     # tenant_configurations indexes — unique on tenant_id
-    tenant_configurations_collection.create_indexes([
-        pymongo.IndexModel(
-            [("tenant_id", pymongo.ASCENDING)],
-            name="idx_unique_tenant_id",
-            unique=True,
-        ),
-    ])
+    tenant_configurations_collection.create_indexes(
+        [
+            pymongo.IndexModel(
+                [("tenant_id", pymongo.ASCENDING)],
+                name="idx_unique_tenant_id",
+                unique=True,
+            ),
+        ]
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -333,6 +315,7 @@ def clean_collections(mongo_db: pymongo.database.Database) -> None:
 # 5. Redis Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def redis_client() -> Generator[redis_lib.Redis, None, None]:
     """Session-scoped real Redis client connected to the test instance.
@@ -341,9 +324,7 @@ def redis_client() -> Generator[redis_lib.Redis, None, None]:
     string values are returned as Python ``str`` instead of ``bytes``.
     Connectivity is verified with a ``PING`` command immediately.
     """
-    client: redis_lib.Redis = redis_lib.Redis.from_url(
-        REDIS_TEST_URL, decode_responses=True
-    )
+    client: redis_lib.Redis = redis_lib.Redis.from_url(REDIS_TEST_URL, decode_responses=True)
     client.ping()
     yield client
     client.close()
@@ -362,6 +343,7 @@ def clean_redis(redis_client: redis_lib.Redis) -> None:
 # ---------------------------------------------------------------------------
 # 6. HTTP Client Fixtures (one per backend service)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def api_client() -> Generator[httpx.Client, None, None]:
@@ -435,6 +417,7 @@ def provisioning_client() -> Generator[httpx.Client, None, None]:
 # 7. Multi-Tenant Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def sample_tenant_id() -> str:
     """Deterministic primary tenant identifier used across integration tests.
@@ -457,6 +440,7 @@ def secondary_tenant_id() -> str:
 # ---------------------------------------------------------------------------
 # 8. JWT Token Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _create_test_jwt(
     roles: list[str],
@@ -612,6 +596,7 @@ def secondary_tenant_headers(secondary_tenant_id: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # 9. Test Data Seeding Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def seed_schema_definition(
@@ -1023,6 +1008,7 @@ def seed_test_data(
 # ---------------------------------------------------------------------------
 # 10. Sample Request Payload Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sample_generation_job_request(

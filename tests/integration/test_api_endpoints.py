@@ -50,6 +50,7 @@ import httpx
 import pytest
 from jose import jwt as jose_jwt
 
+
 # ---------------------------------------------------------------------------
 # Module-Level Constants
 # ---------------------------------------------------------------------------
@@ -65,16 +66,10 @@ service endpoint.
 # JWT configuration for *local* token creation in negative-path tests.
 # These must match the values used by conftest.py so that the API Gateway
 # can validate (or correctly reject) the tokens.
-_JWT_TEST_SECRET: str = os.environ.get(
-    "JWT_TEST_SECRET", "integration-test-secret-key-do-not-use-in-prod"
-)
+_JWT_TEST_SECRET: str = os.environ.get("JWT_TEST_SECRET", "integration-test-secret-key-do-not-use-in-prod")
 _JWT_TEST_ALGORITHM: str = "HS256"
-_JWT_TEST_ISSUER: str = os.environ.get(
-    "JWT_TEST_ISSUER", "https://synthetic-erp-test.auth0.com/"
-)
-_JWT_TEST_AUDIENCE: str = os.environ.get(
-    "JWT_TEST_AUDIENCE", "https://api.synthetic-erp-test.local"
-)
+_JWT_TEST_ISSUER: str = os.environ.get("JWT_TEST_ISSUER", "https://synthetic-erp-test.auth0.com/")
+_JWT_TEST_AUDIENCE: str = os.environ.get("JWT_TEST_AUDIENCE", "https://api.synthetic-erp-test.local")
 
 # Common API version prefix used across all endpoint paths
 _API_V1: str = "/api/v1"
@@ -89,6 +84,7 @@ _CREATED_CODES: tuple[int, ...] = (200, 201, 202)
 # ===================================================================
 # Module-Level Fixtures
 # ===================================================================
+
 
 @pytest.fixture(scope="module")
 def api_base_url() -> str:
@@ -105,6 +101,7 @@ def api_base_url() -> str:
 # ===================================================================
 # Helper Utilities
 # ===================================================================
+
 
 def _extract_id(body: dict, *keys: str) -> str | None:
     """Try multiple key names (including a ``data`` wrapper) to find an ID.
@@ -144,8 +141,15 @@ def _extract_items(body: dict | list) -> list:
     if isinstance(body, list):
         return body
     for key in (
-        "data", "items", "results", "jobs", "profiles",
-        "schemas", "templates", "exports", "users",
+        "data",
+        "items",
+        "results",
+        "jobs",
+        "profiles",
+        "schemas",
+        "templates",
+        "exports",
+        "users",
     ):
         val = body.get(key)
         if isinstance(val, list):
@@ -156,6 +160,7 @@ def _extract_items(body: dict | list) -> list:
 # ===================================================================
 # 1. Generation Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestGenerationEndpoints:
@@ -178,9 +183,7 @@ class TestGenerationEndpoints:
             json=sample_generation_job_request,
             headers=admin_jwt_headers,
         )
-        assert resp.status_code in (200, 201, 202), (
-            f"Expected 2xx, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 201, 202), f"Expected 2xx, got {resp.status_code}: {resp.text}"
         body = resp.json()
         job_id = _extract_id(body, "job_id", "id")
         assert job_id is not None, f"Response missing job identifier: {json.dumps(body)}"
@@ -209,9 +212,7 @@ class TestGenerationEndpoints:
         if doc is None:
             # The API might store with ``_id`` as the primary key
             doc = generation_profiles_collection.find_one({"_id": job_id})
-        assert doc is not None, (
-            f"Job {job_id} not found in generation_profiles collection"
-        )
+        assert doc is not None, f"Job {job_id} not found in generation_profiles collection"
         # Tenant scoping must be present on the persisted document
         assert doc.get("tenant_id") == sample_tenant_id
 
@@ -227,9 +228,7 @@ class TestGenerationEndpoints:
             f"{_API_V1}/generation/jobs/{job_id}",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         body = resp.json()
         returned_id = _extract_id(body, "job_id", "id")
         assert returned_id == job_id
@@ -249,18 +248,20 @@ class TestGenerationEndpoints:
         now = datetime.now(tz=UTC)
         # Seed 5 jobs directly in MongoDB for pagination testing
         for i in range(5):
-            generation_profiles_collection.insert_one({
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": sample_tenant_id,
-                "name": f"Pagination Test Job {i}",
-                "status": "completed",
-                "generation_method": "statistical",
-                "record_count": 1000 * (i + 1),
-                "output_format": "csv",
-                "created_at": now - timedelta(minutes=5 - i),
-                "updated_at": now,
-                "created_by": "admin@integration.test",
-            })
+            generation_profiles_collection.insert_one(
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": sample_tenant_id,
+                    "name": f"Pagination Test Job {i}",
+                    "status": "completed",
+                    "generation_method": "statistical",
+                    "record_count": 1000 * (i + 1),
+                    "output_format": "csv",
+                    "created_at": now - timedelta(minutes=5 - i),
+                    "updated_at": now,
+                    "created_by": "admin@integration.test",
+                }
+            )
 
         # Request with limit=2 to verify pagination
         resp = api_client.get(
@@ -284,16 +285,18 @@ class TestGenerationEndpoints:
         now = datetime.now(tz=UTC)
         statuses = ["submitted", "generating", "completed", "completed", "failed"]
         for idx, status in enumerate(statuses):
-            generation_profiles_collection.insert_one({
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": sample_tenant_id,
-                "name": f"Status Filter Job {idx}",
-                "status": status,
-                "generation_method": "statistical",
-                "record_count": 1000,
-                "created_at": now - timedelta(minutes=5 - idx),
-                "updated_at": now,
-            })
+            generation_profiles_collection.insert_one(
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": sample_tenant_id,
+                    "name": f"Status Filter Job {idx}",
+                    "status": status,
+                    "generation_method": "statistical",
+                    "record_count": 1000,
+                    "created_at": now - timedelta(minutes=5 - idx),
+                    "updated_at": now,
+                }
+            )
 
         resp = api_client.get(
             f"{_API_V1}/generation/jobs",
@@ -304,9 +307,7 @@ class TestGenerationEndpoints:
         body = resp.json()
         items = _extract_items(body)
         for item in items:
-            assert item.get("status") == "completed", (
-                f"Expected status=completed, got {item.get('status')}"
-            )
+            assert item.get("status") == "completed", f"Expected status=completed, got {item.get('status')}"
 
     def test_list_generation_jobs_filter_by_method(
         self,
@@ -319,16 +320,18 @@ class TestGenerationEndpoints:
         now = datetime.now(tz=UTC)
         methods = ["statistical", "ai_ml", "rules_based", "ai_ml", "masking"]
         for idx, method in enumerate(methods):
-            generation_profiles_collection.insert_one({
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": sample_tenant_id,
-                "name": f"Method Filter Job {idx}",
-                "status": "completed",
-                "generation_method": method,
-                "record_count": 1000,
-                "created_at": now - timedelta(minutes=5 - idx),
-                "updated_at": now,
-            })
+            generation_profiles_collection.insert_one(
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": sample_tenant_id,
+                    "name": f"Method Filter Job {idx}",
+                    "status": "completed",
+                    "generation_method": method,
+                    "record_count": 1000,
+                    "created_at": now - timedelta(minutes=5 - idx),
+                    "updated_at": now,
+                }
+            )
 
         resp = api_client.get(
             f"{_API_V1}/generation/jobs",
@@ -359,18 +362,19 @@ class TestGenerationEndpoints:
             f"Expected 400/422 for validation error, got {resp.status_code}: {resp.text}"
         )
         body = resp.json()
-        has_error_info = any(
-            key in body for key in ("error", "errors", "message", "detail", "details")
-        )
+        has_error_info = any(key in body for key in ("error", "errors", "message", "detail", "details"))
         assert has_error_info, f"Error response missing error details: {json.dumps(body)}"
 
-    @pytest.mark.parametrize("bad_method", [
-        "unsupported_method_xyz",
-        "",
-        "AI_ML",  # wrong casing
-        "hybrid",
-        "deep_learning",
-    ])
+    @pytest.mark.parametrize(
+        "bad_method",
+        [
+            "unsupported_method_xyz",
+            "",
+            "AI_ML",  # wrong casing
+            "hybrid",
+            "deep_learning",
+        ],
+    )
     def test_generation_job_invalid_method(
         self,
         api_client: httpx.Client,
@@ -392,14 +396,14 @@ class TestGenerationEndpoints:
             headers=admin_jwt_headers,
         )
         assert resp.status_code in (400, 422), (
-            f"Expected 400/422 for invalid method '{bad_method}', "
-            f"got {resp.status_code}: {resp.text}"
+            f"Expected 400/422 for invalid method '{bad_method}', got {resp.status_code}: {resp.text}"
         )
 
 
 # ===================================================================
 # 2. Profile Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestProfileEndpoints:
@@ -421,14 +425,10 @@ class TestProfileEndpoints:
             json=sample_profile_request,
             headers=admin_jwt_headers,
         )
-        assert resp.status_code in (200, 201, 202), (
-            f"Expected 2xx, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 201, 202), f"Expected 2xx, got {resp.status_code}: {resp.text}"
         body = resp.json()
         profile_id = _extract_id(body, "profile_id", "id")
-        assert profile_id is not None, (
-            f"Response missing profile identifier: {json.dumps(body)}"
-        )
+        assert profile_id is not None, f"Response missing profile identifier: {json.dumps(body)}"
 
     def test_get_profile_by_id(
         self,
@@ -442,9 +442,7 @@ class TestProfileEndpoints:
             f"{_API_V1}/profiles/{profile_id}",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         body = resp.json()
         returned_id = _extract_id(body, "profile_id", "id")
         assert returned_id == profile_id
@@ -460,9 +458,7 @@ class TestProfileEndpoints:
             f"{_API_V1}/profiles/{fake_id}",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 404, (
-            f"Expected 404, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
 
     def test_profile_stored_in_mongodb(
         self,
@@ -486,15 +482,14 @@ class TestProfileEndpoints:
         doc = statistical_profiles_collection.find_one({"profile_id": profile_id})
         if doc is None:
             doc = statistical_profiles_collection.find_one({"_id": profile_id})
-        assert doc is not None, (
-            f"Profile {profile_id} not found in statistical_profiles collection"
-        )
+        assert doc is not None, f"Profile {profile_id} not found in statistical_profiles collection"
         assert doc.get("tenant_id") == sample_tenant_id
 
 
 # ===================================================================
 # 3. Schema Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestSchemaEndpoints:
@@ -529,14 +524,10 @@ class TestSchemaEndpoints:
             headers=admin_jwt_headers,
         )
         # Discovery may be synchronous (200/201) or async (202)
-        assert resp.status_code in (200, 201, 202), (
-            f"Expected 2xx, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 201, 202), f"Expected 2xx, got {resp.status_code}: {resp.text}"
         body = resp.json()
         schema_id = _extract_id(body, "schema_id", "id")
-        assert schema_id is not None, (
-            f"Response missing schema identifier: {json.dumps(body)}"
-        )
+        assert schema_id is not None, f"Response missing schema identifier: {json.dumps(body)}"
 
     def test_get_schema_by_id(
         self,
@@ -550,9 +541,7 @@ class TestSchemaEndpoints:
             f"{_API_V1}/schemas/{schema_id}",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         body = resp.json()
         returned_id = _extract_id(body, "schema_id", "id")
         assert returned_id == schema_id
@@ -570,9 +559,7 @@ class TestSchemaEndpoints:
             f"{_API_V1}/schemas/{fake_id}",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 404, (
-            f"Expected 404, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
 
     def test_schema_stored_in_mongodb(
         self,
@@ -608,15 +595,14 @@ class TestSchemaEndpoints:
         doc = schema_definitions_collection.find_one({"schema_id": schema_id})
         if doc is None:
             doc = schema_definitions_collection.find_one({"_id": schema_id})
-        assert doc is not None, (
-            f"Schema {schema_id} not found in schema_definitions collection"
-        )
+        assert doc is not None, f"Schema {schema_id} not found in schema_definitions collection"
         assert doc.get("tenant_id") == sample_tenant_id
 
 
 # ===================================================================
 # 4. Template Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestTemplateEndpoints:
@@ -638,14 +624,10 @@ class TestTemplateEndpoints:
             json=sample_template_request,
             headers=admin_jwt_headers,
         )
-        assert resp.status_code in (200, 201), (
-            f"Expected 200/201, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 201), f"Expected 200/201, got {resp.status_code}: {resp.text}"
         body = resp.json()
         template_id = _extract_id(body, "template_id", "id")
-        assert template_id is not None, (
-            f"Response missing template identifier: {json.dumps(body)}"
-        )
+        assert template_id is not None, f"Response missing template identifier: {json.dumps(body)}"
 
     def test_list_templates(
         self,
@@ -664,9 +646,7 @@ class TestTemplateEndpoints:
             f"{_API_V1}/templates",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         body = resp.json()
         items = _extract_items(body)
         assert len(items) >= 1, "Expected at least 1 template in listing"
@@ -722,9 +702,7 @@ class TestTemplateEndpoints:
             json=update_payload,
             headers=admin_jwt_headers,
         )
-        assert resp.status_code in (200, 204), (
-            f"Expected 200/204, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 204), f"Expected 200/204, got {resp.status_code}: {resp.text}"
         if resp.status_code == 200:
             body = resp.json()
             template_data = body.get("data", body)
@@ -752,23 +730,20 @@ class TestTemplateEndpoints:
             f"{_API_V1}/templates/{template_id}",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code in (200, 204), (
-            f"Expected 200/204 on delete, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 204), f"Expected 200/204 on delete, got {resp.status_code}: {resp.text}"
 
         # Confirm deletion via GET → 404
         get_resp = api_client.get(
             f"{_API_V1}/templates/{template_id}",
             headers=admin_jwt_headers,
         )
-        assert get_resp.status_code == 404, (
-            f"Expected 404 after deletion, got {get_resp.status_code}"
-        )
+        assert get_resp.status_code == 404, f"Expected 404 after deletion, got {get_resp.status_code}"
 
 
 # ===================================================================
 # 5. Export Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestExportEndpoints:
@@ -789,14 +764,10 @@ class TestExportEndpoints:
             json=sample_export_request,
             headers=admin_jwt_headers,
         )
-        assert resp.status_code in (200, 201, 202), (
-            f"Expected 2xx, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 201, 202), f"Expected 2xx, got {resp.status_code}: {resp.text}"
         body = resp.json()
         export_id = _extract_id(body, "export_id", "id", "request_id")
-        assert export_id is not None, (
-            f"Response missing export identifier: {json.dumps(body)}"
-        )
+        assert export_id is not None, f"Response missing export identifier: {json.dumps(body)}"
 
     def test_get_export_status(
         self,
@@ -818,9 +789,7 @@ class TestExportEndpoints:
             f"{_API_V1}/export/{export_id}",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         body = resp.json()
         export_data = body.get("data", body)
         assert "status" in export_data or "state" in export_data, (
@@ -831,6 +800,7 @@ class TestExportEndpoints:
 # ===================================================================
 # 6. Auth Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestAuthEndpoints:
@@ -849,18 +819,13 @@ class TestAuthEndpoints:
             follow_redirects=False,
         )
         # Login should redirect (302/303) to Auth0 or return a login URL
-        assert resp.status_code in (200, 301, 302, 303), (
-            f"Expected 200/302/303, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 301, 302, 303), f"Expected 200/302/303, got {resp.status_code}: {resp.text}"
         if resp.status_code in (301, 302, 303):
             location = resp.headers.get("location", "")
             assert location, "Redirect location header is empty"
         else:
             body = resp.json()
-            has_url = any(
-                key in body
-                for key in ("url", "login_url", "redirect_url", "authorization_url")
-            )
+            has_url = any(key in body for key in ("url", "login_url", "redirect_url", "authorization_url"))
             assert has_url, f"Login response missing URL: {json.dumps(body)}"
 
     def test_token_refresh(
@@ -880,9 +845,7 @@ class TestAuthEndpoints:
             json={"refresh_token": "test-refresh-token"},
         )
         # 200 = successful refresh; 400/401 = invalid/missing refresh token
-        assert resp.status_code in (200, 400, 401), (
-            f"Expected 200/400/401, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 400, 401), f"Expected 200/400/401, got {resp.status_code}: {resp.text}"
 
     def test_logout(
         self,
@@ -894,14 +857,13 @@ class TestAuthEndpoints:
             f"{_API_V1}/auth/logout",
             headers=test_jwt_headers,
         )
-        assert resp.status_code in (200, 204, 302), (
-            f"Expected 200/204/302, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 204, 302), f"Expected 200/204/302, got {resp.status_code}: {resp.text}"
 
 
 # ===================================================================
 # 7. Admin Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestAdminEndpoints:
@@ -921,9 +883,7 @@ class TestAdminEndpoints:
             f"{_API_V1}/admin/users",
             headers=admin_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            f"Expected 200 for admin, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200 for admin, got {resp.status_code}: {resp.text}"
         body = resp.json()
         items = _extract_items(body)
         assert isinstance(items, list)
@@ -938,9 +898,7 @@ class TestAdminEndpoints:
             f"{_API_V1}/admin/users",
             headers=developer_jwt_headers,
         )
-        assert resp.status_code == 403, (
-            f"Expected 403 for developer, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 403, f"Expected 403 for developer, got {resp.status_code}: {resp.text}"
 
     def test_update_tenant_config(
         self,
@@ -955,6 +913,8 @@ class TestAdminEndpoints:
         Verifies both the HTTP response and direct MongoDB persistence of
         the updated configuration.
         """
+        # Fixture ensures tenant config is pre-seeded in MongoDB
+        _ = seed_tenant_config
         update_payload: dict = {
             "resource_quotas": {
                 "max_concurrent_jobs": 10,
@@ -968,14 +928,10 @@ class TestAdminEndpoints:
             json=update_payload,
             headers=admin_jwt_headers,
         )
-        assert resp.status_code in (200, 204), (
-            f"Expected 200/204, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code in (200, 204), f"Expected 200/204, got {resp.status_code}: {resp.text}"
 
         # Optionally verify the update was persisted in MongoDB
-        doc = tenant_configurations_collection.find_one(
-            {"tenant_id": sample_tenant_id}
-        )
+        doc = tenant_configurations_collection.find_one({"tenant_id": sample_tenant_id})
         if doc is not None:
             quotas = doc.get("resource_quotas", {})
             if quotas.get("max_concurrent_jobs") is not None:
@@ -998,31 +954,26 @@ class TestAdminEndpoints:
             f"{_API_V1}/admin/settings",
             headers=admin_jwt_headers,
         )
-        assert admin_resp.status_code == 200, (
-            f"Expected 200 for admin, got {admin_resp.status_code}: {admin_resp.text}"
-        )
+        assert admin_resp.status_code == 200, f"Expected 200 for admin, got {admin_resp.status_code}: {admin_resp.text}"
 
         # Developer should be forbidden
         dev_resp = api_client.get(
             f"{_API_V1}/admin/settings",
             headers=developer_jwt_headers,
         )
-        assert dev_resp.status_code == 403, (
-            f"Expected 403 for developer, got {dev_resp.status_code}: {dev_resp.text}"
-        )
+        assert dev_resp.status_code == 403, f"Expected 403 for developer, got {dev_resp.status_code}: {dev_resp.text}"
 
         # Check audit_logs collection for any recent activity records.
         # The audit subsystem may or may not log reads, but the collection
         # should be accessible and queryable.
         audit_count = audit_logs_collection.count_documents({})
-        assert isinstance(audit_count, int), (
-            "audit_logs collection should be queryable"
-        )
+        assert isinstance(audit_count, int), "audit_logs collection should be queryable"
 
 
 # ===================================================================
 # 8. Health Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestHealthEndpoints:
@@ -1038,9 +989,7 @@ class TestHealthEndpoints:
     ) -> None:
         """GET /health responds 200 without an Authorization header."""
         resp = api_client.get("/health")
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
     def test_health_returns_status(
         self,
@@ -1051,9 +1000,7 @@ class TestHealthEndpoints:
         assert resp.status_code == 200
         body = json.loads(resp.text)
         assert "status" in body, f"Health response missing 'status': {body}"
-        assert body["status"] in ("ok", "healthy", "up"), (
-            f"Unexpected health status: {body['status']}"
-        )
+        assert body["status"] in ("ok", "healthy", "up"), f"Unexpected health status: {body['status']}"
 
     def test_readiness_includes_dependencies(
         self,
@@ -1061,21 +1008,21 @@ class TestHealthEndpoints:
     ) -> None:
         """GET /ready reports status of MongoDB and Redis dependencies."""
         resp = api_client.get("/ready")
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         body = resp.json()
         # Readiness should include dependency-health information
         has_deps = any(
             key in body
             for key in (
-                "dependencies", "checks", "components",
-                "services", "mongodb", "redis",
+                "dependencies",
+                "checks",
+                "components",
+                "services",
+                "mongodb",
+                "redis",
             )
         )
-        assert has_deps or "status" in body, (
-            f"Readiness response missing dependency info: {json.dumps(body)}"
-        )
+        assert has_deps or "status" in body, f"Readiness response missing dependency info: {json.dumps(body)}"
 
     def test_readiness_when_mongodb_down(
         self,
@@ -1100,9 +1047,7 @@ class TestHealthEndpoints:
         resp = api_client.get("/ready")
         body = resp.json()
         status = body.get("status", "ok")
-        assert status in ("ok", "healthy", "up", "ready"), (
-            f"Unexpected readiness status with MongoDB up: {status}"
-        )
+        assert status in ("ok", "healthy", "up", "ready"), f"Unexpected readiness status with MongoDB up: {status}"
         # If the endpoint provides granular dependency info, check MongoDB
         deps = body.get(
             "dependencies",
@@ -1112,7 +1057,10 @@ class TestHealthEndpoints:
             mongo_status = deps["mongodb"]
             if isinstance(mongo_status, dict):
                 assert mongo_status.get("status") in (
-                    "ok", "healthy", "up", "connected",
+                    "ok",
+                    "healthy",
+                    "up",
+                    "connected",
                 )
             else:
                 assert mongo_status in ("ok", "healthy", "up", "connected")
@@ -1137,9 +1085,7 @@ class TestHealthEndpoints:
         resp = api_client.get("/ready")
         body = resp.json()
         status = body.get("status", "ok")
-        assert status in ("ok", "healthy", "up", "ready"), (
-            f"Unexpected readiness status with Redis up: {status}"
-        )
+        assert status in ("ok", "healthy", "up", "ready"), f"Unexpected readiness status with Redis up: {status}"
         deps = body.get(
             "dependencies",
             body.get("checks", body.get("components", {})),
@@ -1148,7 +1094,10 @@ class TestHealthEndpoints:
             redis_status = deps["redis"]
             if isinstance(redis_status, dict):
                 assert redis_status.get("status") in (
-                    "ok", "healthy", "up", "connected",
+                    "ok",
+                    "healthy",
+                    "up",
+                    "connected",
                 )
             else:
                 assert redis_status in ("ok", "healthy", "up", "connected")
@@ -1157,6 +1106,7 @@ class TestHealthEndpoints:
 # ===================================================================
 # 9. Monitoring Endpoint Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestMonitoringEndpoints:
@@ -1179,9 +1129,7 @@ class TestMonitoringEndpoints:
             # Retry with auth
             resp = api_client.get("/metrics", headers=admin_jwt_headers)
 
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
         content_type = resp.headers.get("content-type", "")
         body_text = resp.text
@@ -1195,14 +1143,13 @@ class TestMonitoringEndpoints:
             or "python_" in body_text
         )
         is_json_format = "application/json" in content_type
-        assert is_prometheus or is_json_format, (
-            f"Metrics returned unexpected content type: {content_type}"
-        )
+        assert is_prometheus or is_json_format, f"Metrics returned unexpected content type: {content_type}"
 
 
 # ===================================================================
 # 10. JWT Authentication Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestJWTAuthentication:
@@ -1223,9 +1170,7 @@ class TestJWTAuthentication:
             f"{_API_V1}/generation/jobs",
             headers=test_jwt_headers,
         )
-        assert 200 <= resp.status_code < 300, (
-            f"Expected 2xx with valid JWT, got {resp.status_code}: {resp.text}"
-        )
+        assert 200 <= resp.status_code < 300, f"Expected 2xx with valid JWT, got {resp.status_code}: {resp.text}"
 
     def test_expired_jwt_rejected(
         self,
@@ -1245,7 +1190,9 @@ class TestJWTAuthentication:
             "email": "expired@integration.test",
         }
         expired_token: str = jose_jwt.encode(
-            expired_payload, _JWT_TEST_SECRET, algorithm=_JWT_TEST_ALGORITHM,
+            expired_payload,
+            _JWT_TEST_SECRET,
+            algorithm=_JWT_TEST_ALGORITHM,
         )
         headers = {
             "Authorization": f"Bearer {expired_token}",
@@ -1256,9 +1203,7 @@ class TestJWTAuthentication:
             f"{_API_V1}/generation/jobs",
             headers=headers,
         )
-        assert resp.status_code == 401, (
-            f"Expected 401 for expired JWT, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 401, f"Expected 401 for expired JWT, got {resp.status_code}: {resp.text}"
 
     def test_invalid_signature_rejected(
         self,
@@ -1278,7 +1223,9 @@ class TestJWTAuthentication:
             "email": "wrongkey@integration.test",
         }
         bad_token: str = jose_jwt.encode(
-            payload, "completely-wrong-secret-key", algorithm=_JWT_TEST_ALGORITHM,
+            payload,
+            "completely-wrong-secret-key",
+            algorithm=_JWT_TEST_ALGORITHM,
         )
         headers = {
             "Authorization": f"Bearer {bad_token}",
@@ -1289,9 +1236,7 @@ class TestJWTAuthentication:
             f"{_API_V1}/generation/jobs",
             headers=headers,
         )
-        assert resp.status_code == 401, (
-            f"Expected 401 for invalid signature, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 401, f"Expected 401 for invalid signature, got {resp.status_code}: {resp.text}"
 
     def test_missing_authorization_header(
         self,
@@ -1302,9 +1247,7 @@ class TestJWTAuthentication:
             f"{_API_V1}/generation/jobs",
             headers={"Content-Type": "application/json"},
         )
-        assert resp.status_code == 401, (
-            f"Expected 401 for missing auth, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 401, f"Expected 401 for missing auth, got {resp.status_code}: {resp.text}"
 
     def test_role_based_access_control(
         self,
@@ -1323,48 +1266,44 @@ class TestJWTAuthentication:
         """
         # Platform Admin → admin endpoints
         resp = api_client.get(
-            f"{_API_V1}/admin/users", headers=admin_jwt_headers,
+            f"{_API_V1}/admin/users",
+            headers=admin_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            "platform_admin should access /admin/users"
-        )
+        assert resp.status_code == 200, "platform_admin should access /admin/users"
 
         # Data Engineer → generation endpoints
         resp = api_client.get(
-            f"{_API_V1}/generation/jobs", headers=data_engineer_jwt_headers,
+            f"{_API_V1}/generation/jobs",
+            headers=data_engineer_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            "data_engineer should access /generation/jobs"
-        )
+        assert resp.status_code == 200, "data_engineer should access /generation/jobs"
 
         # Developer → admin endpoints forbidden
         resp = api_client.get(
-            f"{_API_V1}/admin/users", headers=developer_jwt_headers,
+            f"{_API_V1}/admin/users",
+            headers=developer_jwt_headers,
         )
-        assert resp.status_code == 403, (
-            "developer should NOT access /admin/users"
-        )
+        assert resp.status_code == 403, "developer should NOT access /admin/users"
 
         # QA Engineer → generation endpoints
         resp = api_client.get(
-            f"{_API_V1}/generation/jobs", headers=qa_engineer_jwt_headers,
+            f"{_API_V1}/generation/jobs",
+            headers=qa_engineer_jwt_headers,
         )
-        assert resp.status_code == 200, (
-            "qa_engineer should access /generation/jobs"
-        )
+        assert resp.status_code == 200, "qa_engineer should access /generation/jobs"
 
         # Data Analyst → admin endpoints forbidden
         resp = api_client.get(
-            f"{_API_V1}/admin/users", headers=data_analyst_jwt_headers,
+            f"{_API_V1}/admin/users",
+            headers=data_analyst_jwt_headers,
         )
-        assert resp.status_code == 403, (
-            "data_analyst should NOT access /admin/users"
-        )
+        assert resp.status_code == 403, "data_analyst should NOT access /admin/users"
 
 
 # ===================================================================
 # 11. Rate Limiting Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestRateLimiting:
@@ -1391,7 +1330,8 @@ class TestRateLimiting:
         """
         # Make a request to trigger counter increment
         api_client.get(
-            f"{_API_V1}/generation/jobs", headers=admin_jwt_headers,
+            f"{_API_V1}/generation/jobs",
+            headers=admin_jwt_headers,
         )
 
         # Inspect Redis for any rate-limit-related keys
@@ -1402,9 +1342,7 @@ class TestRateLimiting:
         if all_keys:
             first_key = all_keys[0]
             val = redis_client.get(first_key)
-            assert val is not None, (
-                f"Rate limit key '{first_key}' exists but has no value"
-            )
+            assert val is not None, f"Rate limit key '{first_key}' exists but has no value"
 
     def test_rate_limit_not_exceeded(
         self,
@@ -1418,9 +1356,7 @@ class TestRateLimiting:
                 f"{_API_V1}/generation/jobs",
                 headers=data_engineer_jwt_headers,
             )
-            assert resp.status_code != 429, (
-                f"Rate limit hit unexpectedly on request {i + 1} of 5"
-            )
+            assert resp.status_code != 429, f"Rate limit hit unexpectedly on request {i + 1} of 5"
         elapsed = time.time() - start_time
         # Sanity check: 5 requests should complete quickly
         assert elapsed < 30, f"5 requests took {elapsed:.1f}s — unexpectedly slow"
@@ -1437,7 +1373,7 @@ class TestRateLimiting:
         not enforce rate limiting at this threshold, the test is skipped.
         """
         hit_429 = False
-        for i in range(70):
+        for _i in range(70):
             resp = api_client.get(
                 "/health",  # Use a lightweight endpoint
                 headers=developer_jwt_headers,
@@ -1448,8 +1384,7 @@ class TestRateLimiting:
 
         if not hit_429:
             pytest.skip(
-                "Rate limit not triggered within 70 requests; "
-                "rate limiting may use a higher threshold or be disabled"
+                "Rate limit not triggered within 70 requests; rate limiting may use a higher threshold or be disabled"
             )
         assert hit_429, "Expected 429 after exceeding rate limit"
 
@@ -1464,19 +1399,11 @@ class TestRateLimiting:
             headers=developer_jwt_headers,
         )
         # Rate-limit metadata is commonly exposed via X-RateLimit-* headers
-        limit = (
-            resp.headers.get("X-RateLimit-Limit")
-            or resp.headers.get("X-Rate-Limit-Limit")
-        )
-        remaining = (
-            resp.headers.get("X-RateLimit-Remaining")
-            or resp.headers.get("X-Rate-Limit-Remaining")
-        )
+        limit = resp.headers.get("X-RateLimit-Limit") or resp.headers.get("X-Rate-Limit-Limit")
+        remaining = resp.headers.get("X-RateLimit-Remaining") or resp.headers.get("X-Rate-Limit-Remaining")
         if limit is not None:
             # Developer tier should be ≤300 (spec says 60)
-            assert int(limit) <= 300, (
-                f"Developer rate limit unexpectedly high: {limit}"
-            )
+            assert int(limit) <= 300, f"Developer rate limit unexpectedly high: {limit}"
         if remaining is not None:
             assert int(remaining) >= 0
         # If headers aren't present, just verify the request succeeded
@@ -1494,21 +1421,17 @@ class TestRateLimiting:
             f"{_API_V1}/generation/jobs",
             headers=admin_jwt_headers,
         )
-        limit = (
-            resp.headers.get("X-RateLimit-Limit")
-            or resp.headers.get("X-Rate-Limit-Limit")
-        )
+        limit = resp.headers.get("X-RateLimit-Limit") or resp.headers.get("X-Rate-Limit-Limit")
         if limit is not None:
             # Admin tier should be ≥ developer tier (spec says 1000)
-            assert int(limit) >= 60, (
-                f"Admin rate limit unexpectedly low: {limit}"
-            )
+            assert int(limit) >= 60, f"Admin rate limit unexpectedly low: {limit}"
         assert resp.status_code in (200, 401, 403)
 
 
 # ===================================================================
 # 12. Multi-Tenancy Tests
 # ===================================================================
+
 
 @pytest.mark.integration
 class TestMultiTenancy:
@@ -1530,6 +1453,8 @@ class TestMultiTenancy:
         Uses the ``seed_test_data`` convenience fixture which populates
         all five MongoDB collections.
         """
+        # Fixture pre-populates all five MongoDB collections for assertions
+        _ = seed_test_data
         resp = api_client.get(
             f"{_API_V1}/generation/jobs",
             headers=admin_jwt_headers,
@@ -1541,8 +1466,7 @@ class TestMultiTenancy:
         for item in items:
             if "tenant_id" in item:
                 assert item["tenant_id"] == sample_tenant_id, (
-                    f"Tenant leak: expected {sample_tenant_id}, "
-                    f"got {item['tenant_id']}"
+                    f"Tenant leak: expected {sample_tenant_id}, got {item['tenant_id']}"
                 )
 
     def test_cross_tenant_access_denied(
@@ -1555,18 +1479,24 @@ class TestMultiTenancy:
         secondary_tenant_id: str,
     ) -> None:
         """Data from the primary tenant must be invisible to the secondary."""
+        # admin_jwt_headers kept to ensure admin auth context is initialized
+        _ = admin_jwt_headers
+        # secondary_tenant_id kept for fixture dependency chain resolution
+        _ = secondary_tenant_id
         now = datetime.now(tz=UTC)
         primary_job_id = str(uuid.uuid4())
-        generation_profiles_collection.insert_one({
-            "job_id": primary_job_id,
-            "tenant_id": sample_tenant_id,
-            "name": "Primary Tenant Job",
-            "status": "completed",
-            "generation_method": "statistical",
-            "record_count": 1000,
-            "created_at": now,
-            "updated_at": now,
-        })
+        generation_profiles_collection.insert_one(
+            {
+                "job_id": primary_job_id,
+                "tenant_id": sample_tenant_id,
+                "name": "Primary Tenant Job",
+                "status": "completed",
+                "generation_method": "statistical",
+                "record_count": 1000,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
 
         # Query as the secondary tenant
         resp = api_client.get(
@@ -1576,12 +1506,8 @@ class TestMultiTenancy:
         assert resp.status_code == 200
         body = resp.json()
         items = _extract_items(body)
-        returned_ids = [
-            item.get("job_id") or item.get("id") for item in items
-        ]
-        assert primary_job_id not in returned_ids, (
-            f"Cross-tenant leak: job {primary_job_id} visible to secondary"
-        )
+        returned_ids = [item.get("job_id") or item.get("id") for item in items]
+        assert primary_job_id not in returned_ids, f"Cross-tenant leak: job {primary_job_id} visible to secondary"
 
     def test_tenant_id_from_header(
         self,
@@ -1617,41 +1543,39 @@ class TestMultiTenancy:
         count to validate the underlying data.
         """
         now = datetime.now(tz=UTC)
-        generation_profiles_collection.insert_many([
-            {
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": sample_tenant_id,
-                "name": "Primary Tenant Scoped Job",
-                "status": "completed",
-                "generation_method": "statistical",
-                "record_count": 1000,
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": secondary_tenant_id,
-                "name": "Secondary Tenant Scoped Job",
-                "status": "completed",
-                "generation_method": "ai_ml",
-                "record_count": 2000,
-                "created_at": now,
-                "updated_at": now,
-            },
-        ])
+        generation_profiles_collection.insert_many(
+            [
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": sample_tenant_id,
+                    "name": "Primary Tenant Scoped Job",
+                    "status": "completed",
+                    "generation_method": "statistical",
+                    "record_count": 1000,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": secondary_tenant_id,
+                    "name": "Secondary Tenant Scoped Job",
+                    "status": "completed",
+                    "generation_method": "ai_ml",
+                    "record_count": 2000,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            ]
+        )
 
         # Direct MongoDB verification: both docs exist
         total = mongo_db["generation_profiles"].count_documents({})
         assert total == 2
 
-        primary_count = mongo_db["generation_profiles"].count_documents(
-            {"tenant_id": sample_tenant_id}
-        )
+        primary_count = mongo_db["generation_profiles"].count_documents({"tenant_id": sample_tenant_id})
         assert primary_count == 1
 
-        secondary_count = mongo_db["generation_profiles"].count_documents(
-            {"tenant_id": secondary_tenant_id}
-        )
+        secondary_count = mongo_db["generation_profiles"].count_documents({"tenant_id": secondary_tenant_id})
         assert secondary_count == 1
 
         # API queries should be tenant-scoped
@@ -1679,6 +1603,7 @@ class TestMultiTenancy:
 # 13. Pagination Tests
 # ===================================================================
 
+
 @pytest.mark.integration
 class TestPagination:
     """Integration tests for cursor-based pagination.
@@ -1698,16 +1623,18 @@ class TestPagination:
         now = datetime.now(tz=UTC)
         total_jobs = 10
         for i in range(total_jobs):
-            generation_profiles_collection.insert_one({
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": sample_tenant_id,
-                "name": f"Cursor Pagination Job {i:02d}",
-                "status": "completed",
-                "generation_method": "statistical",
-                "record_count": 1000,
-                "created_at": now - timedelta(minutes=total_jobs - i),
-                "updated_at": now,
-            })
+            generation_profiles_collection.insert_one(
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": sample_tenant_id,
+                    "name": f"Cursor Pagination Job {i:02d}",
+                    "status": "completed",
+                    "generation_method": "statistical",
+                    "record_count": 1000,
+                    "created_at": now - timedelta(minutes=total_jobs - i),
+                    "updated_at": now,
+                }
+            )
 
         all_ids: set[str] = set()
         cursor: str | None = None
@@ -1738,9 +1665,7 @@ class TestPagination:
 
             # Extract the next cursor for subsequent page
             next_cursor = (
-                body.get("next_cursor")
-                or body.get("cursor")
-                or (body.get("pagination", {}) or {}).get("next_cursor")
+                body.get("next_cursor") or body.get("cursor") or (body.get("pagination", {}) or {}).get("next_cursor")
             )
             page_count += 1
             if not next_cursor or next_cursor == cursor:
@@ -1760,16 +1685,18 @@ class TestPagination:
         """Custom limit parameter restricts the returned page size."""
         now = datetime.now(tz=UTC)
         for i in range(5):
-            generation_profiles_collection.insert_one({
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": sample_tenant_id,
-                "name": f"Limit Test Job {i}",
-                "status": "completed",
-                "generation_method": "statistical",
-                "record_count": 1000,
-                "created_at": now - timedelta(minutes=5 - i),
-                "updated_at": now,
-            })
+            generation_profiles_collection.insert_one(
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": sample_tenant_id,
+                    "name": f"Limit Test Job {i}",
+                    "status": "completed",
+                    "generation_method": "statistical",
+                    "record_count": 1000,
+                    "created_at": now - timedelta(minutes=5 - i),
+                    "updated_at": now,
+                }
+            )
 
         resp = api_client.get(
             f"{_API_V1}/generation/jobs",
@@ -1791,16 +1718,18 @@ class TestPagination:
         """Without an explicit limit, a sensible default page size is used."""
         now = datetime.now(tz=UTC)
         for i in range(30):
-            generation_profiles_collection.insert_one({
-                "job_id": str(uuid.uuid4()),
-                "tenant_id": sample_tenant_id,
-                "name": f"Default Limit Job {i:02d}",
-                "status": "completed",
-                "generation_method": "statistical",
-                "record_count": 1000,
-                "created_at": now - timedelta(minutes=30 - i),
-                "updated_at": now,
-            })
+            generation_profiles_collection.insert_one(
+                {
+                    "job_id": str(uuid.uuid4()),
+                    "tenant_id": sample_tenant_id,
+                    "name": f"Default Limit Job {i:02d}",
+                    "status": "completed",
+                    "generation_method": "statistical",
+                    "record_count": 1000,
+                    "created_at": now - timedelta(minutes=30 - i),
+                    "updated_at": now,
+                }
+            )
 
         resp = api_client.get(
             f"{_API_V1}/generation/jobs",
@@ -1809,10 +1738,8 @@ class TestPagination:
         assert resp.status_code == 200
         body = resp.json()
         items = _extract_items(body)
-        # A default limit should cap the result set (typically 10–50)
-        assert len(items) <= 100, (
-            f"Default limit seems too high: {len(items)} items returned"
-        )
+        # A default limit should cap the result set (typically 10-50)
+        assert len(items) <= 100, f"Default limit seems too high: {len(items)} items returned"
 
     def test_pagination_empty_result(
         self,
@@ -1835,6 +1762,7 @@ class TestPagination:
 # 14. CORS Tests
 # ===================================================================
 
+
 @pytest.mark.integration
 class TestCORS:
     """Integration tests for Cross-Origin Resource Sharing headers.
@@ -1854,14 +1782,13 @@ class TestCORS:
             "Origin": "http://localhost:3000",
         }
         resp = api_client.get(
-            f"{_API_V1}/generation/jobs", headers=headers,
+            f"{_API_V1}/generation/jobs",
+            headers=headers,
         )
         cors_origin = resp.headers.get("access-control-allow-origin")
         if cors_origin is not None:
             # Should echo back the allowed origin or use wildcard
-            assert cors_origin in ("*", "http://localhost:3000"), (
-                f"Unexpected CORS origin: {cors_origin}"
-            )
+            assert cors_origin in ("*", "http://localhost:3000"), f"Unexpected CORS origin: {cors_origin}"
 
     def test_cors_preflight(self) -> None:
         """OPTIONS preflight request returns CORS headers."""
@@ -1872,21 +1799,19 @@ class TestCORS:
                 "Access-Control-Request-Headers": "Authorization, Content-Type",
             }
             resp = client.options(
-                f"{_API_V1}/generation/jobs", headers=headers,
+                f"{_API_V1}/generation/jobs",
+                headers=headers,
             )
             # Preflight should return 200, 204, or possibly 405 if not configured
-            assert resp.status_code in (200, 204, 405), (
-                f"CORS preflight returned {resp.status_code}: {resp.text}"
-            )
+            assert resp.status_code in (200, 204, 405), f"CORS preflight returned {resp.status_code}: {resp.text}"
             if resp.status_code in (200, 204):
                 allow_methods = resp.headers.get(
-                    "access-control-allow-methods", "",
+                    "access-control-allow-methods",
+                    "",
                 )
                 # POST should be in the allowed methods
                 if allow_methods:
-                    assert "POST" in allow_methods.upper(), (
-                        f"POST not in allowed methods: {allow_methods}"
-                    )
+                    assert "POST" in allow_methods.upper(), f"POST not in allowed methods: {allow_methods}"
 
     def test_cors_credentials(
         self,
@@ -1899,10 +1824,9 @@ class TestCORS:
             "Origin": "http://localhost:3000",
         }
         resp = api_client.get(
-            f"{_API_V1}/generation/jobs", headers=headers,
+            f"{_API_V1}/generation/jobs",
+            headers=headers,
         )
         credentials = resp.headers.get("access-control-allow-credentials")
         if credentials is not None:
-            assert credentials.lower() == "true", (
-                f"Expected credentials=true, got {credentials}"
-            )
+            assert credentials.lower() == "true", f"Expected credentials=true, got {credentials}"
