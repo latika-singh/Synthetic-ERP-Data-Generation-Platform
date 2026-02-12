@@ -34,15 +34,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
+from torch import nn, optim
 from torch.utils.data import DataLoader, TensorDataset
 
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — used for events that occur outside class instances
@@ -129,7 +129,7 @@ class _ResidualBlock(nn.Module):
         self.bn = nn.BatchNorm1d(out_dim)
         self.act = nn.LeakyReLU(0.2, inplace=True)
         # Learnable projection shortcut when dimensions differ
-        self.shortcut: Optional[nn.Linear] = (
+        self.shortcut: nn.Linear | None = (
             nn.Linear(in_dim, out_dim) if in_dim != out_dim else None
         )
 
@@ -173,10 +173,10 @@ class Generator(nn.Module):
     def __init__(self, config: GANConfig) -> None:
         super().__init__()
         self.config = config
-        self._numerical_indices: List[int] = []
-        self._categorical_slices: List[Tuple[int, int]] = []
+        self._numerical_indices: list[int] = []
+        self._categorical_slices: list[tuple[int, int]] = []
 
-        hidden_dims: List[int] = config.generator_hidden_dims
+        hidden_dims: list[int] = config.generator_hidden_dims
 
         # Input projection: latent_dim → first hidden dim
         self.input_proj = nn.Sequential(
@@ -186,7 +186,7 @@ class Generator(nn.Module):
         )
 
         # Residual hidden blocks for improved gradient flow
-        res_blocks: List[nn.Module] = []
+        res_blocks: list[nn.Module] = []
         for i in range(len(hidden_dims) - 1):
             res_blocks.append(_ResidualBlock(hidden_dims[i], hidden_dims[i + 1]))
         self.res_layers: nn.Module = (
@@ -244,14 +244,14 @@ class Generator(nn.Module):
             return self._sigmoid(raw)
 
         # Build a sorted list of (start, end, kind) column segments
-        segments: List[Tuple[int, int, str]] = []
+        segments: list[tuple[int, int, str]] = []
         for idx in self._numerical_indices:
             segments.append((idx, idx + 1, "numerical"))
         for start, end in self._categorical_slices:
             segments.append((start, end, "categorical"))
         segments.sort(key=lambda s: s[0])
 
-        parts: List[torch.Tensor] = []
+        parts: list[torch.Tensor] = []
         last = 0
         for start, end, kind in segments:
             # Fill any gap between segments with sigmoid
@@ -281,11 +281,11 @@ class Generator(nn.Module):
     def generate(
         self,
         num_samples: int,
-        device: Optional[str] = None,
+        device: str | None = None,
     ) -> torch.Tensor:
         """Generate samples in eval mode without gradient tracking.
 
-        Creates a random noise vector z ∼ N(0, 1) of shape
+        Creates a random noise vector z ~ N(0, 1) of shape
         ``(num_samples, latent_dim)``, runs the forward pass in evaluation
         mode with :func:`torch.no_grad`, and returns results on CPU.
 
@@ -326,7 +326,7 @@ class Discriminator(nn.Module):
         super().__init__()
         self.config = config
 
-        layers: List[nn.Module] = []
+        layers: list[nn.Module] = []
         in_dim = config.output_dim
         for h_dim in config.discriminator_hidden_dims:
             layers.append(nn.utils.spectral_norm(nn.Linear(in_dim, h_dim)))
@@ -386,32 +386,32 @@ class TabularGAN:
         self._device: torch.device = torch.device(config.device)
 
         # Network placeholders (built during train() or load())
-        self.generator: Optional[Generator] = None
-        self.discriminator: Optional[Discriminator] = None
-        self.opt_g: Optional[optim.Adam] = None
-        self.opt_d: Optional[optim.Adam] = None
+        self.generator: Generator | None = None
+        self.discriminator: Discriminator | None = None
+        self.opt_g: optim.Adam | None = None
+        self.opt_d: optim.Adam | None = None
 
         # Mixed-precision training support — enabled on CUDA devices
         self._use_amp: bool = self._device.type == "cuda"
-        self._scaler: Optional[torch.cuda.amp.GradScaler] = (
+        self._scaler: torch.cuda.amp.GradScaler | None = (
             torch.cuda.amp.GradScaler() if self._use_amp else None
         )
 
         # Normalisation / encoding state (populated in _preprocess_data)
-        self._num_mins: Optional[np.ndarray] = None
-        self._num_maxs: Optional[np.ndarray] = None
-        self._num_ranges: Optional[np.ndarray] = None
-        self._category_maps: Dict[int, Dict[int, Any]] = {}
+        self._num_mins: np.ndarray | None = None
+        self._num_maxs: np.ndarray | None = None
+        self._num_ranges: np.ndarray | None = None
+        self._category_maps: dict[int, dict[int, Any]] = {}
         self._preprocessed_dim: int = 0
         self._original_num_columns: int = 0
-        self._numerical_output_indices: List[int] = []
-        self._categorical_output_slices: List[Tuple[int, int]] = []
+        self._numerical_output_indices: list[int] = []
+        self._categorical_output_slices: list[tuple[int, int]] = []
 
         # Training state tracking
         self._is_trained: bool = False
         self._final_epoch: int = 0
-        self._g_losses: List[float] = []
-        self._d_losses: List[float] = []
+        self._g_losses: list[float] = []
+        self._d_losses: list[float] = []
 
         self._logger = get_logger(__name__)
         self._logger.info(
@@ -450,7 +450,7 @@ class TabularGAN:
             )
 
         self._original_num_columns = data.shape[1]
-        parts: List[np.ndarray] = []
+        parts: list[np.ndarray] = []
         self._numerical_output_indices = []
         self._categorical_output_slices = []
         offset = 0
@@ -485,7 +485,7 @@ class TabularGAN:
             col_data = data[:, col_idx].astype(int)
 
             unique_vals = sorted(set(col_data.tolist()))
-            cat_map: Dict[int, Any] = {
+            cat_map: dict[int, Any] = {
                 v: idx for idx, v in enumerate(unique_vals)
             }
             self._category_maps[col_idx] = cat_map
@@ -545,7 +545,7 @@ class TabularGAN:
 
         # --- Categorical columns ----------------------------------------------
         for cat_meta, (start, end) in zip(
-            cat_cols, self._categorical_output_slices,
+            cat_cols, self._categorical_output_slices, strict=False,
         ):
             col_idx: int = cat_meta["index"]
             cat_probs = generated[:, start:end]
@@ -583,7 +583,7 @@ class TabularGAN:
 
         Returns:
             Scalar gradient penalty tensor:
-            ``λ · E[(‖∇D(x̃)‖₂ − 1)²]``.
+            ``lambda * E[(||grad_D(x_hat)||_2 - 1)^2]``.
         """
         alpha = torch.rand(real.size(0), 1, device=self._device)
         interpolated = (alpha * real + (1 - alpha) * fake).requires_grad_(True)
@@ -601,19 +601,211 @@ class TabularGAN:
         return self.config.gradient_penalty_lambda * gradient_penalty
 
     # ------------------------------------------------------------------
+    # Training helpers (extracted to satisfy branch/statement limits)
+    # ------------------------------------------------------------------
+
+    def _validate_training_input(self, real_data: np.ndarray) -> np.ndarray:
+        """Validate and coerce *real_data* into a well-formed 2-D array.
+
+        Args:
+            real_data: Raw input array.
+
+        Returns:
+            Validated numpy array guaranteed to be 2-D with at least one
+            row and one column.
+
+        Raises:
+            ValueError: If the data is ``None``, empty, or not 2-D.
+        """
+        if real_data is None or (
+            hasattr(real_data, "size") and real_data.size == 0
+        ):
+            raise ValueError("real_data must be a non-empty numpy array")
+
+        if not isinstance(real_data, np.ndarray):
+            real_data = np.asarray(real_data)
+        if real_data.ndim != 2 or real_data.shape[0] < 1 or real_data.shape[1] < 1:
+            raise ValueError(
+                f"real_data must be a 2-D array with >=1 row and >=1 column, "
+                f"got shape {real_data.shape}"
+            )
+        return real_data
+
+    def _build_training_components(
+        self,
+        preprocessed: np.ndarray,
+    ) -> DataLoader:
+        """Build networks, optimisers, and return a DataLoader.
+
+        Initialises :pyattr:`generator`, :pyattr:`discriminator`,
+        :pyattr:`opt_g`, and :pyattr:`opt_d` as side effects.
+
+        Args:
+            preprocessed: Preprocessed training data of shape ``(N, D)``.
+
+        Returns:
+            A :class:`DataLoader` wrapping *preprocessed* as a
+            :class:`TensorDataset`.
+        """
+        self.config.output_dim = preprocessed.shape[1]
+
+        self._logger.info(
+            "gan_data_preprocessed",
+            preprocessed_dim=self.config.output_dim,
+            numerical_indices_count=len(self._numerical_output_indices),
+            categorical_slices_count=len(self._categorical_output_slices),
+        )
+
+        # Build networks
+        self.generator = Generator(self.config).to(self._device)
+        self.discriminator = Discriminator(self.config).to(self._device)
+        self.generator._numerical_indices = self._numerical_output_indices
+        self.generator._categorical_slices = self._categorical_output_slices
+
+        # Optimisers
+        self.opt_g = optim.Adam(
+            self.generator.parameters(),
+            lr=self.config.learning_rate_g,
+            betas=(self.config.beta1, self.config.beta2),
+        )
+        self.opt_d = optim.Adam(
+            self.discriminator.parameters(),
+            lr=self.config.learning_rate_d,
+            betas=(self.config.beta1, self.config.beta2),
+        )
+
+        dataset = TensorDataset(
+            torch.tensor(preprocessed, dtype=torch.float32),
+        )
+        return DataLoader(
+            dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            drop_last=True,
+        )
+
+    def _discriminator_step(
+        self,
+        real_batch: torch.Tensor,
+        batch_size: int,
+    ) -> torch.Tensor:
+        """Execute one discriminator optimisation step (n_critic inner steps).
+
+        Args:
+            real_batch: Real data tensor already on ``self._device``.
+            batch_size: Number of rows in *real_batch*.
+
+        Returns:
+            The last discriminator loss tensor (for epoch accumulation).
+        """
+        d_loss = torch.tensor(0.0, device=self._device)
+        for _ in range(self.config.n_critic):
+            z = torch.randn(
+                batch_size, self.config.latent_dim, device=self._device,
+            )
+
+            if self._use_amp and self._scaler is not None:
+                with torch.cuda.amp.autocast():
+                    fake = self.generator(z).detach()
+                    d_real = self.discriminator(real_batch).mean()
+                    d_fake = self.discriminator(fake).mean()
+                gp = self._compute_gradient_penalty(real_batch, fake)
+                d_loss = d_fake - d_real + gp
+
+                self.opt_d.zero_grad()
+                self._scaler.scale(d_loss).backward()
+                self._scaler.step(self.opt_d)
+                self._scaler.update()
+            else:
+                fake = self.generator(z).detach()
+                d_real = self.discriminator(real_batch).mean()
+                d_fake = self.discriminator(fake).mean()
+                gp = self._compute_gradient_penalty(real_batch, fake)
+                d_loss = d_fake - d_real + gp
+
+                self.opt_d.zero_grad()
+                d_loss.backward()
+                self.opt_d.step()
+        return d_loss
+
+    def _generator_step(self, batch_size: int) -> torch.Tensor:
+        """Execute one generator optimisation step.
+
+        Args:
+            batch_size: Number of samples for the noise vector.
+
+        Returns:
+            The generator loss tensor.
+        """
+        z = torch.randn(
+            batch_size, self.config.latent_dim, device=self._device,
+        )
+
+        if self._use_amp and self._scaler is not None:
+            with torch.cuda.amp.autocast():
+                fake = self.generator(z)
+                g_loss = -self.discriminator(fake).mean()
+
+            self.opt_g.zero_grad()
+            self._scaler.scale(g_loss).backward()
+            self._scaler.step(self.opt_g)
+            self._scaler.update()
+        else:
+            fake = self.generator(z)
+            g_loss = -self.discriminator(fake).mean()
+
+            self.opt_g.zero_grad()
+            g_loss.backward()
+            self.opt_g.step()
+
+        return g_loss
+
+    def _handle_training_error(self, exc: BaseException) -> None:
+        """Log training errors with structured context and clean up GPU.
+
+        Args:
+            exc: The caught exception.
+        """
+        if isinstance(exc, RuntimeError):
+            error_msg = str(exc)
+            if "out of memory" in error_msg.lower():
+                self._logger.error(
+                    "gan_cuda_oom_during_training",
+                    error=error_msg,
+                    batch_size=self.config.batch_size,
+                    latent_dim=self.config.latent_dim,
+                    output_dim=self.config.output_dim,
+                    device=self.config.device,
+                )
+                if self._device.type == "cuda":
+                    torch.cuda.empty_cache()
+            else:
+                self._logger.error(
+                    "gan_training_runtime_error",
+                    error=error_msg,
+                    error_type="RuntimeError",
+                )
+        elif not isinstance(exc, ValueError):
+            self._logger.error(
+                "gan_training_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+    # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
 
     def train(
         self,
         real_data: np.ndarray,
-        callbacks: Optional[List[Any]] = None,
-    ) -> Dict[str, Any]:
+        callbacks: list[Any] | None = None,
+    ) -> dict[str, Any]:
         """Train the GAN on *real_data* using WGAN-GP.
 
         Supports mixed-precision training via ``torch.cuda.amp`` when
         running on a CUDA device.  Implements early stopping when the
-        generator loss converges (change < 1 × 10⁻⁵ over 20 consecutive
+        generator loss converges (change < 1e-5 over 20 consecutive
         epochs).
 
         Args:
@@ -633,19 +825,7 @@ class TabularGAN:
             RuntimeError: On unrecoverable CUDA / OOM errors (after
                 attempting to free GPU memory).
         """
-        if real_data is None or (
-            hasattr(real_data, "size") and real_data.size == 0
-        ):
-            raise ValueError("real_data must be a non-empty numpy array")
-
-        # Validate shape before accessing shape[1] for logging
-        if not isinstance(real_data, np.ndarray):
-            real_data = np.asarray(real_data)
-        if real_data.ndim != 2 or real_data.shape[0] < 1 or real_data.shape[1] < 1:
-            raise ValueError(
-                f"real_data must be a 2-D array with ≥1 row and ≥1 column, "
-                f"got shape {real_data.shape}"
-            )
+        real_data = self._validate_training_input(real_data)
 
         self._logger.info(
             "gan_training_started",
@@ -659,227 +839,175 @@ class TabularGAN:
         )
 
         try:
-            # --- Preprocessing ------------------------------------------------
             preprocessed = self._preprocess_data(real_data)
-            self.config.output_dim = preprocessed.shape[1]
-
-            self._logger.info(
-                "gan_data_preprocessed",
-                preprocessed_dim=self.config.output_dim,
-                numerical_indices_count=len(self._numerical_output_indices),
-                categorical_slices_count=len(self._categorical_output_slices),
-            )
-
-            # --- Build networks -----------------------------------------------
-            self.generator = Generator(self.config).to(self._device)
-            self.discriminator = Discriminator(self.config).to(self._device)
-
-            # Wire column-type metadata into the Generator for per-column
-            # activations in the forward pass
-            self.generator._numerical_indices = self._numerical_output_indices
-            self.generator._categorical_slices = self._categorical_output_slices
-
-            # --- Optimisers ---------------------------------------------------
-            self.opt_g = optim.Adam(
-                self.generator.parameters(),
-                lr=self.config.learning_rate_g,
-                betas=(self.config.beta1, self.config.beta2),
-            )
-            self.opt_d = optim.Adam(
-                self.discriminator.parameters(),
-                lr=self.config.learning_rate_d,
-                betas=(self.config.beta1, self.config.beta2),
-            )
-
-            # --- DataLoader ---------------------------------------------------
-            dataset = TensorDataset(
-                torch.tensor(preprocessed, dtype=torch.float32),
-            )
-            loader = DataLoader(
-                dataset,
-                batch_size=self.config.batch_size,
-                shuffle=True,
-                drop_last=True,
-            )
-
-            # --- Early-stopping state -----------------------------------------
-            early_stop_patience: int = 20
-            early_stop_min_delta: float = 1e-5
-            patience_counter: int = 0
-            best_g_loss: Optional[float] = None
-
-            # --- Training loop ------------------------------------------------
-            self._g_losses = []
-            self._d_losses = []
-            final_epoch: int = 0
-
-            for epoch in range(self.config.num_epochs):
-                epoch_g_loss = 0.0
-                epoch_d_loss = 0.0
-                n_batches = 0
-
-                for (real_batch,) in loader:
-                    real_batch = real_batch.to(self._device)
-                    bs = real_batch.size(0)
-
-                    # ---- Discriminator training (n_critic steps) -------------
-                    for _ in range(self.config.n_critic):
-                        z = torch.randn(
-                            bs, self.config.latent_dim, device=self._device,
-                        )
-
-                        if self._use_amp and self._scaler is not None:
-                            with torch.cuda.amp.autocast():
-                                fake = self.generator(z).detach()
-                                d_real = self.discriminator(real_batch).mean()
-                                d_fake = self.discriminator(fake).mean()
-                            # Gradient penalty must run in fp32
-                            gp = self._compute_gradient_penalty(real_batch, fake)
-                            d_loss = d_fake - d_real + gp
-
-                            self.opt_d.zero_grad()
-                            self._scaler.scale(d_loss).backward()
-                            self._scaler.step(self.opt_d)
-                            self._scaler.update()
-                        else:
-                            fake = self.generator(z).detach()
-                            d_real = self.discriminator(real_batch).mean()
-                            d_fake = self.discriminator(fake).mean()
-                            gp = self._compute_gradient_penalty(real_batch, fake)
-                            d_loss = d_fake - d_real + gp
-
-                            self.opt_d.zero_grad()
-                            d_loss.backward()
-                            self.opt_d.step()
-
-                    # ---- Generator training ----------------------------------
-                    z = torch.randn(
-                        bs, self.config.latent_dim, device=self._device,
-                    )
-
-                    if self._use_amp and self._scaler is not None:
-                        with torch.cuda.amp.autocast():
-                            fake = self.generator(z)
-                            g_loss = -self.discriminator(fake).mean()
-
-                        self.opt_g.zero_grad()
-                        self._scaler.scale(g_loss).backward()
-                        self._scaler.step(self.opt_g)
-                        self._scaler.update()
-                    else:
-                        fake = self.generator(z)
-                        g_loss = -self.discriminator(fake).mean()
-
-                        self.opt_g.zero_grad()
-                        g_loss.backward()
-                        self.opt_g.step()
-
-                    epoch_g_loss += g_loss.item()
-                    epoch_d_loss += d_loss.item()
-                    n_batches += 1
-
-                avg_g = epoch_g_loss / max(n_batches, 1)
-                avg_d = epoch_d_loss / max(n_batches, 1)
-                self._g_losses.append(avg_g)
-                self._d_losses.append(avg_d)
-                final_epoch = epoch + 1
-
-                # Periodic logging (every 10 epochs and final epoch)
-                if epoch % 10 == 0 or epoch == self.config.num_epochs - 1:
-                    wasserstein_est = abs(avg_d - gp.item()) if isinstance(
-                        gp, torch.Tensor,
-                    ) else abs(avg_d)
-                    self._logger.debug(
-                        "gan_epoch_completed",
-                        epoch=epoch,
-                        g_loss=round(avg_g, 6),
-                        d_loss=round(avg_d, 6),
-                        gradient_penalty=round(
-                            gp.item() if isinstance(gp, torch.Tensor) else 0.0,
-                            6,
-                        ),
-                        wasserstein_distance=round(wasserstein_est, 6),
-                    )
-
-                # Execute callbacks
-                if callbacks:
-                    for cb in callbacks:
-                        cb(epoch, avg_g, avg_d)
-
-                # Early-stopping check — convergence of generator loss
-                if best_g_loss is None:
-                    best_g_loss = avg_g
-                elif abs(best_g_loss - avg_g) < early_stop_min_delta:
-                    patience_counter += 1
-                    if patience_counter >= early_stop_patience:
-                        self._logger.info(
-                            "gan_early_stopping_triggered",
-                            epoch=epoch,
-                            best_g_loss=round(best_g_loss, 6),
-                            current_g_loss=round(avg_g, 6),
-                            patience=early_stop_patience,
-                        )
-                        break
-                else:
-                    best_g_loss = avg_g
-                    patience_counter = 0
-
-            # --- Post-training bookkeeping ------------------------------------
-            self._is_trained = True
-            self._final_epoch = final_epoch
-            self._logger.info(
-                "gan_training_completed",
-                epochs_trained=self._final_epoch,
-                final_g_loss=(
-                    round(self._g_losses[-1], 6) if self._g_losses else None
-                ),
-                final_d_loss=(
-                    round(self._d_losses[-1], 6) if self._d_losses else None
-                ),
-            )
-
-            # Free CUDA cache after training
-            if self._device.type == "cuda":
-                torch.cuda.empty_cache()
-                self._logger.debug("cuda_cache_cleared_after_training")
-
-            return {
-                "g_losses": self._g_losses,
-                "d_losses": self._d_losses,
-                "final_epoch": self._final_epoch,
-            }
-
-        except RuntimeError as exc:
-            error_msg = str(exc)
-            if "out of memory" in error_msg.lower():
-                self._logger.error(
-                    "gan_cuda_oom_during_training",
-                    error=error_msg,
-                    batch_size=self.config.batch_size,
-                    latent_dim=self.config.latent_dim,
-                    output_dim=self.config.output_dim,
-                    device=self.config.device,
-                )
-                # Attempt to free GPU memory before re-raising
-                if self._device.type == "cuda":
-                    torch.cuda.empty_cache()
-            else:
-                self._logger.error(
-                    "gan_training_runtime_error",
-                    error=error_msg,
-                    error_type="RuntimeError",
-                )
-            raise
-        except ValueError:
-            # Re-raise validation errors without wrapping
+            loader = self._build_training_components(preprocessed)
+            return self._run_training_loop(loader, callbacks)
+        except (RuntimeError, ValueError) as exc:
+            self._handle_training_error(exc)
             raise
         except Exception as exc:
-            self._logger.error(
-                "gan_training_failed",
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
+            self._handle_training_error(exc)
             raise
+
+    def _run_training_loop(
+        self,
+        loader: DataLoader,
+        callbacks: list[Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute the main epoch-wise training loop.
+
+        Args:
+            loader: DataLoader yielding batches of preprocessed data.
+            callbacks: Optional epoch-end callbacks.
+
+        Returns:
+            Training history dictionary.
+        """
+        early_stop_patience: int = 20
+        early_stop_min_delta: float = 1e-5
+        patience_counter: int = 0
+        best_g_loss: float | None = None
+
+        self._g_losses: list[float] = []
+        self._d_losses: list[float] = []
+        final_epoch: int = 0
+
+        for epoch in range(self.config.num_epochs):
+            avg_g, avg_d = self._run_single_epoch(loader)
+            self._g_losses.append(avg_g)
+            self._d_losses.append(avg_d)
+            final_epoch = epoch + 1
+
+            self._log_epoch(epoch, avg_g, avg_d)
+
+            if callbacks:
+                for cb in callbacks:
+                    cb(epoch, avg_g, avg_d)
+
+            should_stop, best_g_loss, patience_counter = self._check_early_stop(
+                epoch, avg_g, best_g_loss, patience_counter,
+                early_stop_patience, early_stop_min_delta,
+            )
+            if should_stop:
+                break
+
+        return self._finalise_training(final_epoch)
+
+    def _run_single_epoch(self, loader: DataLoader) -> tuple[float, float]:
+        """Run one epoch of discriminator + generator training.
+
+        Args:
+            loader: DataLoader yielding batches.
+
+        Returns:
+            Tuple of ``(avg_generator_loss, avg_discriminator_loss)``.
+        """
+        epoch_g_loss = 0.0
+        epoch_d_loss = 0.0
+        n_batches = 0
+
+        for (real_batch_cpu,) in loader:
+            real_batch = real_batch_cpu.to(self._device)
+            bs = real_batch.size(0)
+
+            d_loss = self._discriminator_step(real_batch, bs)
+            g_loss = self._generator_step(bs)
+
+            epoch_g_loss += g_loss.item()
+            epoch_d_loss += d_loss.item()
+            n_batches += 1
+
+        avg_g = epoch_g_loss / max(n_batches, 1)
+        avg_d = epoch_d_loss / max(n_batches, 1)
+        return avg_g, avg_d
+
+    def _log_epoch(self, epoch: int, avg_g: float, avg_d: float) -> None:
+        """Log training metrics every 10 epochs and on the final epoch.
+
+        Args:
+            epoch: Current epoch index (0-based).
+            avg_g: Average generator loss for this epoch.
+            avg_d: Average discriminator loss for this epoch.
+        """
+        if epoch % 10 == 0 or epoch == self.config.num_epochs - 1:
+            self._logger.debug(
+                "gan_epoch_completed",
+                epoch=epoch,
+                g_loss=round(avg_g, 6),
+                d_loss=round(avg_d, 6),
+            )
+
+    def _check_early_stop(
+        self,
+        epoch: int,
+        avg_g: float,
+        best_g_loss: float | None,
+        patience_counter: int,
+        patience: int,
+        min_delta: float,
+    ) -> tuple[bool, float | None, int]:
+        """Evaluate early-stopping criteria based on generator convergence.
+
+        Args:
+            epoch: Current epoch index.
+            avg_g: Average generator loss for this epoch.
+            best_g_loss: Best recorded generator loss so far.
+            patience_counter: Current patience counter.
+            patience: Maximum patience before stopping.
+            min_delta: Minimum loss change considered an improvement.
+
+        Returns:
+            Tuple ``(should_stop, updated_best_g_loss, updated_patience)``.
+        """
+        if best_g_loss is None:
+            return False, avg_g, patience_counter
+
+        if abs(best_g_loss - avg_g) < min_delta:
+            patience_counter += 1
+            if patience_counter >= patience:
+                self._logger.info(
+                    "gan_early_stopping_triggered",
+                    epoch=epoch,
+                    best_g_loss=round(best_g_loss, 6),
+                    current_g_loss=round(avg_g, 6),
+                    patience=patience,
+                )
+                return True, best_g_loss, patience_counter
+            return False, best_g_loss, patience_counter
+
+        return False, avg_g, 0
+
+    def _finalise_training(self, final_epoch: int) -> dict[str, Any]:
+        """Mark training as complete, log summary, and clean up.
+
+        Args:
+            final_epoch: Number of epochs that actually ran.
+
+        Returns:
+            Training history dictionary.
+        """
+        self._is_trained = True
+        self._final_epoch = final_epoch
+        self._logger.info(
+            "gan_training_completed",
+            epochs_trained=self._final_epoch,
+            final_g_loss=(
+                round(self._g_losses[-1], 6) if self._g_losses else None
+            ),
+            final_d_loss=(
+                round(self._d_losses[-1], 6) if self._d_losses else None
+            ),
+        )
+
+        if self._device.type == "cuda":
+            torch.cuda.empty_cache()
+            self._logger.debug("cuda_cache_cleared_after_training")
+
+        return {
+            "g_losses": self._g_losses,
+            "d_losses": self._d_losses,
+            "final_epoch": self._final_epoch,
+        }
 
     # ------------------------------------------------------------------
     # Generation
@@ -918,7 +1046,7 @@ class TabularGAN:
 
         try:
             self.generator.eval()
-            all_samples: List[np.ndarray] = []
+            all_samples: list[np.ndarray] = []
             remaining = num_samples
             batch_max = 10_000
 
@@ -1008,7 +1136,7 @@ class TabularGAN:
             os.makedirs(parent_dir, exist_ok=True)
 
         try:
-            checkpoint: Dict[str, Any] = {
+            checkpoint: dict[str, Any] = {
                 "generator_state": self.generator.state_dict(),
                 "discriminator_state": self.discriminator.state_dict(),
                 "config": {
@@ -1089,7 +1217,7 @@ class TabularGAN:
     # ------------------------------------------------------------------
 
     @classmethod
-    def load(cls, path: str, device: str = "cpu") -> "TabularGAN":
+    def load(cls, path: str, device: str = "cpu") -> TabularGAN:
         """Load a previously saved GAN from a checkpoint file.
 
         Reconstructs the :class:`Generator` and :class:`Discriminator`
@@ -1125,10 +1253,10 @@ class TabularGAN:
             device = "cpu"
 
         try:
-            checkpoint: Dict[str, Any] = torch.load(
+            checkpoint: dict[str, Any] = torch.load(
                 path, map_location=device, weights_only=False,
             )
-            raw_cfg: Dict[str, Any] = checkpoint["config"]
+            raw_cfg: dict[str, Any] = checkpoint["config"]
             config = GANConfig(
                 latent_dim=raw_cfg["latent_dim"],
                 generator_hidden_dims=raw_cfg["generator_hidden_dims"],
@@ -1163,7 +1291,7 @@ class TabularGAN:
             )
 
             # Restore normalisation parameters
-            norm: Dict[str, Any] = checkpoint.get("normalization", {})
+            norm: dict[str, Any] = checkpoint.get("normalization", {})
             if norm.get("num_mins") is not None:
                 instance._num_mins = np.array(
                     norm["num_mins"], dtype=np.float64,
@@ -1178,7 +1306,7 @@ class TabularGAN:
                 )
 
             # Restore category maps
-            raw_maps: Dict[str, Dict[str, str]] = checkpoint.get(
+            raw_maps: dict[str, dict[str, str]] = checkpoint.get(
                 "category_maps", {},
             )
             instance._category_maps = {
@@ -1187,7 +1315,7 @@ class TabularGAN:
             }
 
             # Restore output mappings
-            mappings: Dict[str, Any] = checkpoint.get("output_mappings", {})
+            mappings: dict[str, Any] = checkpoint.get("output_mappings", {})
             instance._numerical_output_indices = mappings.get(
                 "numerical_output_indices", [],
             )
@@ -1206,7 +1334,7 @@ class TabularGAN:
             )
 
             # Restore training state
-            ts: Dict[str, Any] = checkpoint.get("training_state", {})
+            ts: dict[str, Any] = checkpoint.get("training_state", {})
             instance._is_trained = ts.get("is_trained", True)
             instance._final_epoch = ts.get("final_epoch", 0)
             instance._original_num_columns = ts.get(
@@ -1238,7 +1366,7 @@ class TabularGAN:
     # Introspection
     # ------------------------------------------------------------------
 
-    def get_training_summary(self) -> Dict[str, Any]:
+    def get_training_summary(self) -> dict[str, Any]:
         """Return a concise summary of the training outcome.
 
         Useful for dashboards, audit logging, and model registry metadata.

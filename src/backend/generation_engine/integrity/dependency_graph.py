@@ -45,7 +45,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from shared.logging.structured_logger import get_logger
 
@@ -252,16 +252,16 @@ class DependencyGraph:
 
     def __init__(self) -> None:
         """Initialise an empty dependency graph."""
-        self._nodes: Dict[str, TableNode] = {}
-        self._adjacency_list: Dict[str, Set[str]] = defaultdict(set)
-        self._reverse_adjacency: Dict[str, Set[str]] = defaultdict(set)
-        self._edges: Dict[Tuple[str, str], DependencyEdge] = {}
-        self._topological_order: Optional[List[str]] = None
+        self._nodes: dict[str, TableNode] = {}
+        self._adjacency_list: dict[str, set[str]] = defaultdict(set)
+        self._reverse_adjacency: dict[str, set[str]] = defaultdict(set)
+        self._edges: dict[tuple[str, str], DependencyEdge] = {}
+        self._topological_order: list[str] | None = None
         self._is_dirty: bool = True
         self._cycle_resolution_strategy: CycleResolutionStrategy = (
             CycleResolutionStrategy.NULLABLE_EDGE_RELAXATION
         )
-        self._relaxed_edges: List[DependencyEdge] = []
+        self._relaxed_edges: list[DependencyEdge] = []
         self._logger = get_logger(__name__)
 
     # ------------------------------------------------------------------
@@ -514,7 +514,7 @@ class DependencyGraph:
         )
         return list(self._topological_order)
 
-    def _kahns_topological_sort(self) -> Tuple[list[str], list[str]]:
+    def _kahns_topological_sort(self) -> tuple[list[str], list[str]]:
         """Execute Kahn's algorithm for topological sorting.
 
         Computes in-degrees, enqueues zero-in-degree nodes, and iteratively
@@ -527,7 +527,7 @@ class DependencyGraph:
             presence of cycles in the graph.
         """
         # Compute in-degree for every node.
-        in_degree: Dict[str, int] = {name: 0 for name in self._nodes}
+        in_degree: dict[str, int] = dict.fromkeys(self._nodes, 0)
         for parent, children in self._adjacency_list.items():
             if parent not in self._nodes:
                 continue
@@ -588,21 +588,21 @@ class DependencyGraph:
             the loop, ordered from the node where the back-edge was detected
             back to itself.
         """
-        WHITE, GRAY, BLACK = 0, 1, 2
-        colour: Dict[str, int] = {n: WHITE for n in self._nodes}
-        parent_map: Dict[str, str | None] = {n: None for n in self._nodes}
+        white, gray, black = 0, 1, 2
+        colour: dict[str, int] = dict.fromkeys(self._nodes, white)
+        parent_map: dict[str, str | None] = dict.fromkeys(self._nodes)
         cycles: list[list[str]] = []
 
         def _dfs(node: str) -> None:
-            colour[node] = GRAY
+            colour[node] = gray
             for child in self._adjacency_list.get(node, set()):
                 if child not in colour:
                     continue
-                if colour[child] == WHITE:
+                if colour[child] == white:
                     parent_map[child] = node
                     _dfs(child)
-                elif colour[child] == GRAY:
-                    # Back-edge found — reconstruct cycle.
+                elif colour[child] == gray:
+                    # Back-edge found - reconstruct cycle.
                     cycle: list[str] = [child]
                     current = node
                     while current != child:
@@ -613,10 +613,10 @@ class DependencyGraph:
                     cycle.append(child)
                     cycle.reverse()
                     cycles.append(cycle)
-            colour[node] = BLACK
+            colour[node] = black
 
         for node in self._nodes:
-            if colour[node] == WHITE:
+            if colour[node] == white:
                 _dfs(node)
 
         if cycles:
@@ -648,8 +648,8 @@ class DependencyGraph:
         index_counter: list[int] = [0]
         stack: list[str] = []
         on_stack: set[str] = set()
-        lowlink: Dict[str, int] = {}
-        index: Dict[str, int] = {}
+        lowlink: dict[str, int] = {}
+        index: dict[str, int] = {}
         result: list[list[str]] = []
 
         def _strongconnect(node: str) -> None:
@@ -924,18 +924,12 @@ class DependencyGraph:
             List of levels, where each level is a list of table names.
         """
         order = self.get_topological_order()
-        level_map: Dict[str, int] = {}
-        levels: Dict[int, list[str]] = defaultdict(list)
+        level_map: dict[str, int] = {}
+        levels: dict[int, list[str]] = defaultdict(list)
 
         for table in order:
             parents = self._reverse_adjacency.get(table, set())
-            if not parents:
-                lvl = 0
-            else:
-                lvl = max(
-                    (level_map.get(p, 0) for p in parents if p in level_map),
-                    default=0,
-                ) + 1
+            lvl = 0 if not parents else max((level_map.get(p, 0) for p in parents if p in level_map), default=0) + 1
             level_map[table] = lvl
             levels[lvl].append(table)
 
@@ -985,7 +979,7 @@ class DependencyGraph:
             raise KeyError(f"Table '{table_name}' not found in graph.")
         return sorted(self._adjacency_list.get(table_name, set()))
 
-    def get_all_ancestors(self, table_name: str) -> Set[str]:
+    def get_all_ancestors(self, table_name: str) -> set[str]:
         """Return the transitive closure of all ancestor (parent) tables.
 
         Uses BFS over the reverse adjacency structure to traverse up the
@@ -1002,7 +996,7 @@ class DependencyGraph:
         """
         if table_name not in self._nodes:
             raise KeyError(f"Table '{table_name}' not found in graph.")
-        ancestors: Set[str] = set()
+        ancestors: set[str] = set()
         queue: deque[str] = deque(self._reverse_adjacency.get(table_name, set()))
         while queue:
             current = queue.popleft()
@@ -1015,7 +1009,7 @@ class DependencyGraph:
             )
         return ancestors
 
-    def get_all_descendants(self, table_name: str) -> Set[str]:
+    def get_all_descendants(self, table_name: str) -> set[str]:
         """Return the transitive closure of all descendant (child) tables.
 
         Uses BFS over the forward adjacency structure to traverse down the
@@ -1032,7 +1026,7 @@ class DependencyGraph:
         """
         if table_name not in self._nodes:
             raise KeyError(f"Table '{table_name}' not found in graph.")
-        descendants: Set[str] = set()
+        descendants: set[str] = set()
         queue: deque[str] = deque(self._adjacency_list.get(table_name, set()))
         while queue:
             current = queue.popleft()
@@ -1162,7 +1156,7 @@ class DependencyGraph:
         # Compute max depth via BFS from roots.
         max_depth = 0
         if root_tables:
-            depth: Dict[str, int] = {}
+            depth: dict[str, int] = {}
             queue: deque[str] = deque()
             for root in root_tables:
                 depth[root] = 0
@@ -1176,7 +1170,7 @@ class DependencyGraph:
                         queue.append(child)
             max_depth = max(depth.values()) if depth else 0
 
-        tables_per_module: Dict[str, int] = defaultdict(int)
+        tables_per_module: dict[str, int] = defaultdict(int)
         for node in self._nodes.values():
             mod = node.erp_module or "unclassified"
             tables_per_module[mod] += 1
@@ -1266,7 +1260,7 @@ class DependencyGraph:
     # Validation
     # ------------------------------------------------------------------
 
-    def validate(self) -> Tuple[bool, list[str]]:
+    def validate(self) -> tuple[bool, list[str]]:
         """Validate internal consistency of the dependency graph.
 
         Checks performed:
@@ -1283,7 +1277,7 @@ class DependencyGraph:
         issues: list[str] = []
 
         # Check edge endpoints.
-        for (parent, child), edge in self._edges.items():
+        for (parent, child), _edge in self._edges.items():
             if parent not in self._nodes:
                 issues.append(
                     f"Edge references non-existent parent table '{parent}'."
@@ -1453,7 +1447,7 @@ class DependencyGraph:
                 for mod_prefix, module_name in sorted(
                     _sys_map.items(), key=lambda kv: -len(kv[0]),
                 ):
-                    if lower_name.startswith(f"{mod_prefix}.") or lower_name.startswith(f"{mod_prefix}_"):
+                    if lower_name.startswith((f"{mod_prefix}.", f"{mod_prefix}_")):
                         return module_name
             return ""
 
@@ -1461,7 +1455,7 @@ class DependencyGraph:
         for mod_prefix, module_name in sorted(
             module_map.items(), key=lambda kv: -len(kv[0]),
         ):
-            if lower_name.startswith(f"{mod_prefix}.") or lower_name.startswith(f"{mod_prefix}_"):
+            if lower_name.startswith((f"{mod_prefix}.", f"{mod_prefix}_")):
                 return module_name
 
         return ""

@@ -33,6 +33,7 @@ Usage::
 
 from __future__ import annotations
 
+
 __version__: str = "1.0.0"
 
 # ---------------------------------------------------------------------------
@@ -50,21 +51,21 @@ ERP_MODULE_MATERIAL_MANAGEMENT: str = "material_management"
 # ---------------------------------------------------------------------------
 
 __all__: list[str] = [
-    # From dependency_graph
-    "DependencyGraph",
-    "TableNode",
-    "DependencyEdge",
-    "CycleResolutionStrategy",
-    # From relationship_manager
-    "RelationshipManager",
-    "ForeignKeyRelationship",
-    "GeneratedKeyMapping",
-    "IntegrityViolation",
     # Constants
     "ERP_MODULE_FINANCIAL_ACCOUNTING",
     "ERP_MODULE_HR",
-    "ERP_MODULE_SALES_DISTRIBUTION",
     "ERP_MODULE_MATERIAL_MANAGEMENT",
+    "ERP_MODULE_SALES_DISTRIBUTION",
+    "CycleResolutionStrategy",
+    "DependencyEdge",
+    # From dependency_graph
+    "DependencyGraph",
+    "ForeignKeyRelationship",
+    "GeneratedKeyMapping",
+    "IntegrityViolation",
+    # From relationship_manager
+    "RelationshipManager",
+    "TableNode",
 ]
 
 # Mapping from public symbol name to (module_path, attribute_name).
@@ -100,33 +101,19 @@ def __getattr__(name: str) -> object:
         AttributeError: If *name* is not a known public symbol.
     """
     if name in _DEPENDENCY_GRAPH_SYMBOLS:
-        from generation_engine.integrity.dependency_graph import (
-            CycleResolutionStrategy as _CRS,
-            DependencyEdge as _DE,
-            DependencyGraph as _DG,
-            TableNode as _TN,
+        import importlib  # noqa: PLC0415
+
+        _mod = importlib.import_module(
+            "generation_engine.integrity.dependency_graph"
         )
-        _symbol_map = {
-            "DependencyGraph": _DG,
-            "TableNode": _TN,
-            "DependencyEdge": _DE,
-            "CycleResolutionStrategy": _CRS,
-        }
-        return _symbol_map[name]
+        return getattr(_mod, name)
 
     if name in _RELATIONSHIP_MANAGER_SYMBOLS:
-        from generation_engine.integrity.relationship_manager import (
-            ForeignKeyRelationship as _FKR,
-            GeneratedKeyMapping as _GKM,
-            IntegrityViolation as _IV,
-            RelationshipManager as _RM,
+        import importlib  # noqa: PLC0415
+
+        _mod = importlib.import_module(
+            "generation_engine.integrity.relationship_manager"
         )
-        _symbol_map = {
-            "RelationshipManager": _RM,
-            "ForeignKeyRelationship": _FKR,
-            "GeneratedKeyMapping": _GKM,
-            "IntegrityViolation": _IV,
-        }
-        return _symbol_map[name]
+        return getattr(_mod, name)
 
     raise AttributeError(f"module 'generation_engine.integrity' has no attribute {name!r}")

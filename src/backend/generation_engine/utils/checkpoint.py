@@ -51,6 +51,7 @@ Usage::
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime
 import hashlib
 import json
@@ -58,12 +59,13 @@ import pickle
 import time
 import zlib
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import redis.exceptions
 
 from shared.database.redis_client import get_redis_client
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -432,7 +434,7 @@ class CheckpointManager:
             intermediate_data=compressed_intermediate,
             column_states=state.get("column_states", {}),
             relationship_state=state.get("relationship_state", {}),
-            created_at=datetime.datetime.utcnow().isoformat(),
+            created_at=datetime.datetime.now(tz=datetime.UTC).isoformat(),
             checksum="",  # Populated after payload serialization.
         )
 
@@ -513,7 +515,7 @@ class CheckpointManager:
             no valid checkpoint is available.
         """
         try:
-            serialized: Optional[str] = self._redis.get(self._checkpoint_key)
+            serialized: str | None = self._redis.get(self._checkpoint_key)
         except (
             redis.exceptions.RedisError,
             redis.exceptions.ConnectionError,
@@ -670,7 +672,7 @@ class CheckpointManager:
             exists.
         """
         try:
-            serialized: Optional[str] = self._redis.get(self._checkpoint_key)
+            serialized: str | None = self._redis.get(self._checkpoint_key)
         except (
             redis.exceptions.RedisError,
             redis.exceptions.ConnectionError,
@@ -729,11 +731,9 @@ class CheckpointManager:
         be removed but a secondary Redis failure should not mask the
         original error.
         """
-        try:
+        # Best-effort cleanup; the TTL will eventually expire the key.
+        with contextlib.suppress(redis.exceptions.RedisError):
             self._redis.delete(self._checkpoint_key)
-        except redis.exceptions.RedisError:
-            # Best-effort cleanup; the TTL will eventually expire the key.
-            pass
 
 
 # ===========================================================================
@@ -760,7 +760,7 @@ def get_checkpoint_info(job_id: str) -> dict[str, Any] | None:
 
     try:
         client = get_redis_client()
-        serialized: Optional[str] = client.get(checkpoint_key)
+        serialized: str | None = client.get(checkpoint_key)
     except (
         redis.exceptions.RedisError,
         redis.exceptions.ConnectionError,
@@ -816,7 +816,7 @@ def cleanup_expired_checkpoints(max_age_hours: int = 48) -> int:
     """
     deleted_count: int = 0
     max_age_seconds = max_age_hours * 3600
-    cutoff_time = datetime.datetime.utcnow() - datetime.timedelta(
+    cutoff_time = datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(
         seconds=max_age_seconds
     )
     scan_pattern = f"{CHECKPOINT_KEY_PREFIX}*"

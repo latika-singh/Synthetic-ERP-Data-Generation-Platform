@@ -42,24 +42,25 @@ from __future__ import annotations
 
 from typing import Any
 
+
 __version__: str = "1.0.0"
 
 __all__: list[str] = [
+    "Discriminator",
     # GAN
     "GANConfig",
     "Generator",
-    "Discriminator",
-    "TabularGAN",
-    # VAE
-    "VAEConfig",
-    "TabularVAE",
-    "Sampling",
+    "ModelLoadError",
+    "ModelMetadata",
+    "ModelRegistrationError",
     # Registry
     "ModelRegistry",
+    "Sampling",
+    "TabularGAN",
+    "TabularVAE",
+    # VAE
+    "VAEConfig",
     "get_model_registry",
-    "ModelMetadata",
-    "ModelLoadError",
-    "ModelRegistrationError",
 ]
 
 # ---------------------------------------------------------------------------
@@ -117,7 +118,7 @@ def __getattr__(name: str) -> Any:
     """
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
-        import importlib
+        import importlib  # noqa: PLC0415
 
         module = importlib.import_module(module_path)
         value = getattr(module, attr_name)

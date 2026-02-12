@@ -8,15 +8,15 @@ for each type.
 
 Architecture Overview::
 
-    Encoder:  Input → [Dense → BatchNorm → Activation → Dropout] × N → z_mean, z_log_var
+    Encoder:  Input -> [Dense -> BatchNorm -> Activation -> Dropout] x N -> z_mean, z_log_var
     Sampling: z = z_mean + exp(0.5 * z_log_var) * epsilon  (reparameterization trick)
-    Decoder:  z → [Dense → BatchNorm → Activation → Dropout] × N → Reconstructed Output
+    Decoder:  z -> [Dense -> BatchNorm -> Activation -> Dropout] x N -> Reconstructed Output
 
 The ELBO (Evidence Lower Bound) loss combines:
 
 * **Reconstruction loss** — MSE for numerical columns + BCE for categorical columns
 * **KL divergence** — Regularizes the latent space to approximate N(0, I)
-* **Total loss** = reconstruction_loss + kl_weight × kl_loss
+* **Total loss** = reconstruction_loss + kl_weight x kl_loss
 
 Key Features:
 
@@ -46,12 +46,13 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import tensorflow as tf
 
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -72,7 +73,7 @@ def _configure_gpu_memory() -> None:
     incrementally as needed.
 
     Also enables mixed-precision compute (``float16``) when a GPU is
-    detected, providing ~2× throughput improvement on Tensor-Core GPUs
+    detected, providing ~2x throughput improvement on Tensor-Core GPUs
     with minimal accuracy impact for the VAE training workload.
     """
     try:
@@ -89,7 +90,7 @@ def _configure_gpu_memory() -> None:
             try:
                 tf.keras.mixed_precision.set_global_policy("mixed_float16")
                 logger.info("mixed_precision_enabled", policy="mixed_float16")
-            except Exception as mp_exc:  # noqa: BLE001
+            except Exception as mp_exc:
                 logger.debug(
                     "mixed_precision_unavailable",
                     reason=str(mp_exc),
@@ -214,7 +215,7 @@ class Sampling(tf.keras.layers.Layer):
         epsilon = tf.random.normal(shape=(batch, dim))
         return z_mean + tf.exp(0.5 * z_log_var) * epsilon
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Return the layer configuration for serialisation."""
         return super().get_config()
 
@@ -230,10 +231,10 @@ def build_encoder(input_dim: int, config: VAEConfig) -> tf.keras.Model:
     Architecture::
 
         Input(input_dim)
-          → [Dense(h) → BatchNorm → Activation → Dropout] × len(encoder_hidden_dims)
-          → Dense(latent_dim)  [z_mean]
-          → Dense(latent_dim)  [z_log_var]
-          → Sampling           [z]
+          -> [Dense(h) -> BatchNorm -> Activation -> Dropout] x len(encoder_hidden_dims)
+          -> Dense(latent_dim)  [z_mean]
+          -> Dense(latent_dim)  [z_log_var]
+          -> Sampling           [z]
 
     Args:
         input_dim: Number of input features after preprocessing.
@@ -277,6 +278,75 @@ def build_encoder(input_dim: int, config: VAEConfig) -> tf.keras.Model:
 
 
 # ---------------------------------------------------------------------------
+# Decoder activation helper
+# ---------------------------------------------------------------------------
+
+
+def _apply_decoder_activations(
+    raw_output: tf.Tensor,
+    output_dim: int,
+    config: VAEConfig,
+    numerical_output_indices: list[int],
+    categorical_output_slices: list[tuple[int, int]],
+) -> tf.Tensor:
+    """Apply per-column-type activations (sigmoid / softmax) to decoder output.
+
+    When column metadata is not available a single global activation
+    (from ``config.output_activation``) is used instead.
+
+    Args:
+        raw_output: Raw logits tensor of shape ``(batch, output_dim)``.
+        output_dim: Total number of output features.
+        config: VAE configuration.
+        numerical_output_indices: Indices for numerical columns.
+        categorical_output_slices: ``(start, end)`` pairs for categoricals.
+
+    Returns:
+        Activated output tensor of shape ``(batch, output_dim)``.
+    """
+    has_column_info = bool(numerical_output_indices or categorical_output_slices)
+
+    if not has_column_info:
+        return tf.keras.layers.Activation(
+            config.output_activation, name="dec_output_act",
+        )(raw_output)
+
+    # Build ordered segments of (start, end, type) across output_dim
+    cat_starts: dict[int, tuple[int, int]] = {
+        s: (s, e) for s, e in categorical_output_slices
+    }
+    segments: list[tuple[int, int, str]] = []
+    pos = 0
+    while pos < output_dim:
+        if pos in cat_starts:
+            seg_start, seg_end = cat_starts[pos]
+            segments.append((seg_start, seg_end, "categorical"))
+            pos = seg_end
+        else:
+            num_start = pos
+            while pos < output_dim and pos not in cat_starts:
+                pos += 1
+            segments.append((num_start, pos, "numerical"))
+
+    parts: list[tf.Tensor] = []
+    for seg_start, seg_end, seg_type in segments:
+        segment = raw_output[:, seg_start:seg_end]
+        if seg_type == "numerical":
+            activated = tf.keras.layers.Activation(
+                "sigmoid", name=f"sig_{seg_start}_{seg_end}",
+            )(segment)
+        else:
+            activated = tf.keras.layers.Activation(
+                "softmax", name=f"sfx_{seg_start}_{seg_end}",
+            )(segment)
+        parts.append(activated)
+
+    if len(parts) == 1:
+        return parts[0]
+    return tf.keras.layers.Concatenate(name="dec_output_concat")(parts)
+
+
+# ---------------------------------------------------------------------------
 # Decoder Builder
 # ---------------------------------------------------------------------------
 
@@ -285,17 +355,17 @@ def build_decoder(
     latent_dim: int,
     output_dim: int,
     config: VAEConfig,
-    numerical_output_indices: List[int],
-    categorical_output_slices: List[Tuple[int, int]],
+    numerical_output_indices: list[int],
+    categorical_output_slices: list[tuple[int, int]],
 ) -> tf.keras.Model:
     """Build the decoder sub-model reconstructing data from latent vectors.
 
     Architecture::
 
         Input(latent_dim)
-          → [Dense(h) → BatchNorm → Activation → Dropout] × len(decoder_hidden_dims)
-          → Dense(output_dim)  [raw logits]
-          → sigmoid on numerical indices, softmax on categorical groups
+          -> [Dense(h) -> BatchNorm -> Activation -> Dropout] x len(decoder_hidden_dims)
+          -> Dense(output_dim)  [raw logits]
+          -> sigmoid on numerical indices, softmax on categorical groups
 
     Args:
         latent_dim: Dimension of the latent space.
@@ -333,50 +403,10 @@ def build_decoder(
     raw_output = tf.keras.layers.Dense(output_dim, name="dec_output_raw")(x)
 
     # ----- Apply column-type-specific activations -----
-    has_column_info = bool(numerical_output_indices or categorical_output_slices)
-
-    if not has_column_info:
-        # No column metadata → global sigmoid for normalised data
-        activated_output = tf.keras.layers.Activation(
-            config.output_activation, name="dec_output_act",
-        )(raw_output)
-    else:
-        # Build ordered segments of (start, end, type) across output_dim
-        cat_starts: Dict[int, Tuple[int, int]] = {
-            s: (s, e) for s, e in categorical_output_slices
-        }
-        segments: List[Tuple[int, int, str]] = []
-        pos = 0
-        while pos < output_dim:
-            if pos in cat_starts:
-                seg_start, seg_end = cat_starts[pos]
-                segments.append((seg_start, seg_end, "categorical"))
-                pos = seg_end
-            else:
-                # Consecutive numerical positions
-                num_start = pos
-                while pos < output_dim and pos not in cat_starts:
-                    pos += 1
-                segments.append((num_start, pos, "numerical"))
-
-        parts: List[tf.Tensor] = []
-        for seg_start, seg_end, seg_type in segments:
-            segment = raw_output[:, seg_start:seg_end]
-            if seg_type == "numerical":
-                activated = tf.keras.layers.Activation(
-                    "sigmoid", name=f"sig_{seg_start}_{seg_end}",
-                )(segment)
-            else:
-                activated = tf.keras.layers.Activation(
-                    "softmax", name=f"sfx_{seg_start}_{seg_end}",
-                )(segment)
-            parts.append(activated)
-
-        activated_output = (
-            parts[0]
-            if len(parts) == 1
-            else tf.keras.layers.Concatenate(name="dec_output_concat")(parts)
-        )
+    activated_output = _apply_decoder_activations(
+        raw_output, output_dim, config,
+        numerical_output_indices, categorical_output_slices,
+    )
 
     decoder = tf.keras.Model(inputs, activated_output, name="decoder")
     logger.debug(
@@ -428,7 +458,7 @@ class KLAnnealingCallback(tf.keras.callbacks.Callback):
         self.max_kl_weight: float = max_kl_weight
 
     def on_epoch_begin(
-        self, epoch: int, logs: Optional[Dict[str, Any]] = None,
+        self, epoch: int, _logs: dict[str, Any] | None = None,
     ) -> None:
         """Update the KL weight at the start of each epoch.
 
@@ -515,22 +545,22 @@ class TabularVAE(tf.keras.Model):
         self._logger = get_logger(__name__)
 
         # --- Normalisation / encoding state (populated by train) -----------
-        self._num_mins: Optional[np.ndarray] = None
-        self._num_maxs: Optional[np.ndarray] = None
-        self._num_ranges: Optional[np.ndarray] = None
-        self._category_maps: Dict[int, Dict[int, Any]] = {}
+        self._num_mins: np.ndarray | None = None
+        self._num_maxs: np.ndarray | None = None
+        self._num_ranges: np.ndarray | None = None
+        self._category_maps: dict[int, dict[int, Any]] = {}
         self._original_num_columns: int = 0
 
         # --- Output-index mappings (populated when submodels are built) ----
-        self._numerical_output_indices: List[int] = []
-        self._categorical_output_slices: List[Tuple[int, int]] = []
+        self._numerical_output_indices: list[int] = []
+        self._categorical_output_slices: list[tuple[int, int]] = []
         self._preprocessed_dim: int = 0
 
         # --- KL weight (mutated by KLAnnealingCallback) --------------------
         self._current_kl_weight: float = config.kl_weight
 
         # --- Training book-keeping -----------------------------------------
-        self._training_history: Optional[Dict[str, Any]] = None
+        self._training_history: dict[str, Any] | None = None
         self._is_trained: bool = False
         self._final_epoch: int = 0
 
@@ -542,8 +572,8 @@ class TabularVAE(tf.keras.Model):
         self.kl_loss_tracker = tf.keras.metrics.Mean(name="kl_loss")
 
         # --- Sub-models (conditionally built) ------------------------------
-        self.encoder: Optional[tf.keras.Model] = None
-        self.decoder: Optional[tf.keras.Model] = None
+        self.encoder: tf.keras.Model | None = None
+        self.decoder: tf.keras.Model | None = None
         if config.input_dim > 0:
             self._build_submodels()
 
@@ -611,7 +641,7 @@ class TabularVAE(tf.keras.Model):
     # ------------------------------------------------------------------
 
     @property
-    def metrics(self) -> List[tf.keras.metrics.Metric]:
+    def metrics(self) -> list[tf.keras.metrics.Metric]:
         """Return tracked training metrics for Keras progress display."""
         return [
             self.total_loss_tracker,
@@ -632,7 +662,7 @@ class TabularVAE(tf.keras.Model):
         Returns:
             Reconstructed tensor of the same shape as *inputs*.
         """
-        z_mean, z_log_var, z = self.encoder(inputs, training=training)
+        _z_mean, _z_log_var, z = self.encoder(inputs, training=training)
         reconstructed = self.decoder(z, training=training)
         return reconstructed
 
@@ -643,7 +673,7 @@ class TabularVAE(tf.keras.Model):
         z_mean: tf.Tensor,
         z_log_var: tf.Tensor,
         kl_weight: float = 1.0,
-    ) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+    ) -> tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
         """Compute the ELBO loss (reconstruction + KL divergence).
 
         .. math::
@@ -710,7 +740,7 @@ class TabularVAE(tf.keras.Model):
 
         return total_loss, reconstruction_loss, kl_loss
 
-    def train_step(self, data: tf.Tensor) -> Dict[str, tf.Tensor]:
+    def train_step(self, data: tf.Tensor) -> dict[str, tf.Tensor]:
         """Custom training step implementing VAE-specific gradient update.
 
         Overrides ``keras.Model.train_step`` to:
@@ -736,7 +766,7 @@ class TabularVAE(tf.keras.Model):
             )
 
         grads = tape.gradient(total_loss, self.trainable_weights)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
+        self.optimizer.apply_gradients(zip(grads, self.trainable_weights, strict=False))
 
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(recon_loss)
@@ -767,7 +797,7 @@ class TabularVAE(tf.keras.Model):
         Returns:
             Preprocessed array ``(n_samples, preprocessed_dim)``.
         """
-        parts: List[np.ndarray] = []
+        parts: list[np.ndarray] = []
 
         # --- Numerical columns: min-max scaling ----------------------------
         if self.config.numerical_columns:
@@ -789,10 +819,10 @@ class TabularVAE(tf.keras.Model):
             col_data = real_data[:, col_idx]
 
             unique_vals = sorted(set(col_data.tolist()))
-            cat_to_idx: Dict[Any, int] = {
+            cat_to_idx: dict[Any, int] = {
                 val: i for i, val in enumerate(unique_vals[:num_cats])
             }
-            idx_to_cat: Dict[int, Any] = {i: val for val, i in cat_to_idx.items()}
+            idx_to_cat: dict[int, Any] = {i: val for val, i in cat_to_idx.items()}
             self._category_maps[col_idx] = idx_to_cat
 
             one_hot = np.zeros((len(col_data), num_cats), dtype=np.float32)
@@ -884,8 +914,8 @@ class TabularVAE(tf.keras.Model):
         self,
         real_data: np.ndarray,
         validation_split: float = 0.1,
-        callbacks_list: Optional[List[Any]] = None,
-    ) -> Dict[str, Any]:
+        callbacks_list: list[Any] | None = None,
+    ) -> dict[str, Any]:
         """Train the VAE on real tabular data.
 
         End-to-end training pipeline:
@@ -901,7 +931,7 @@ class TabularVAE(tf.keras.Model):
             real_data: Raw data ``(n_samples, n_columns)`` as a NumPy
                 array.
             validation_split: Fraction of data reserved for validation
-                (0.0–1.0).  Set to 0.0 to disable validation.
+                (0.0-1.0).  Set to 0.0 to disable validation.
             callbacks_list: Optional extra Keras callbacks appended to
                 the default set.
 
@@ -951,7 +981,7 @@ class TabularVAE(tf.keras.Model):
             monitor = (
                 "val_total_loss" if validation_split > 0 else "total_loss"
             )
-            training_callbacks: List[Any] = [
+            training_callbacks: list[Any] = [
                 tf.keras.callbacks.EarlyStopping(
                     monitor=monitor,
                     patience=20,
@@ -1107,7 +1137,7 @@ class TabularVAE(tf.keras.Model):
             )
             raise
 
-    def encode(self, data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def encode(self, data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Encode data into the latent space.
 
         Args:
@@ -1168,7 +1198,7 @@ class TabularVAE(tf.keras.Model):
             self.encoder.save(encoder_save_path)
             self.decoder.save(decoder_save_path)
 
-            sidecar: Dict[str, Any] = {
+            sidecar: dict[str, Any] = {
                 "config": {
                     "latent_dim": self.config.latent_dim,
                     "encoder_hidden_dims": self.config.encoder_hidden_dims,
@@ -1243,13 +1273,93 @@ class TabularVAE(tf.keras.Model):
             )
             raise
 
+    @staticmethod
+    def _resolve_model_paths(
+        path: str,
+    ) -> tuple[str, str, str]:
+        """Resolve encoder, decoder, and config paths for a saved model.
+
+        Supports both ``.keras`` single-file format and legacy
+        directory-based format.
+
+        Args:
+            path: Root directory containing saved artefacts.
+
+        Returns:
+            Tuple ``(encoder_path, decoder_path, config_path)``.
+
+        Raises:
+            FileNotFoundError: If any required artefact is missing.
+        """
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Model directory not found: {path}")
+
+        config_path = os.path.join(path, "vae_config.json")
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config sidecar not found: {config_path}")
+
+        encoder_keras = os.path.join(path, "encoder.keras")
+        encoder_path = encoder_keras if os.path.exists(encoder_keras) else os.path.join(path, "encoder")
+        if not os.path.exists(encoder_path):
+            raise FileNotFoundError(f"Encoder artefact not found: {encoder_path}")
+
+        decoder_keras = os.path.join(path, "decoder.keras")
+        decoder_path = decoder_keras if os.path.exists(decoder_keras) else os.path.join(path, "decoder")
+        if not os.path.exists(decoder_path):
+            raise FileNotFoundError(f"Decoder artefact not found: {decoder_path}")
+
+        return encoder_path, decoder_path, config_path
+
+    def _restore_sidecar_state(self, sidecar: dict[str, Any]) -> None:
+        """Restore normalisation, category maps, output mappings, and training state.
+
+        Called from :meth:`load_model` after the config and Keras
+        sub-models have been loaded.
+
+        Args:
+            sidecar: Parsed JSON sidecar dictionary.
+        """
+        # Normalisation parameters
+        norm = sidecar.get("normalization", {})
+        if norm.get("num_mins") is not None:
+            self._num_mins = np.array(norm["num_mins"], dtype=np.float64)
+        if norm.get("num_maxs") is not None:
+            self._num_maxs = np.array(norm["num_maxs"], dtype=np.float64)
+        if norm.get("num_ranges") is not None:
+            self._num_ranges = np.array(norm["num_ranges"], dtype=np.float64)
+
+        # Category maps
+        raw_maps = sidecar.get("category_maps", {})
+        self._category_maps = {
+            int(k): {int(ki): vi for ki, vi in v.items()}
+            for k, v in raw_maps.items()
+        }
+
+        # Output mappings
+        mappings = sidecar.get("output_mappings", {})
+        self._numerical_output_indices = mappings.get(
+            "numerical_output_indices", [],
+        )
+        self._categorical_output_slices = [
+            tuple(s) for s in mappings.get("categorical_output_slices", [])
+        ]
+        self._preprocessed_dim = mappings.get(
+            "preprocessed_dim", self.config.input_dim,
+        )
+
+        # Training state
+        ts = sidecar.get("training_state", {})
+        self._is_trained = ts.get("is_trained", True)
+        self._final_epoch = ts.get("final_epoch", 0)
+        self._original_num_columns = ts.get("original_num_columns", 0)
+
     @classmethod
-    def load_model(cls, path: str) -> "TabularVAE":
+    def load_model(cls, path: str) -> TabularVAE:
         """Load a previously saved VAE from disk.
 
-        Reconstructs the full :class:`TabularVAE` instance — including
+        Reconstructs the full :class:`TabularVAE` instance -- including
         encoder, decoder, config, normalisation state, and category maps
-        — from the artefacts created by :meth:`save_model`.
+        -- from the artefacts created by :meth:`save_model`.
 
         Args:
             path: Directory containing saved model artefacts.
@@ -1264,37 +1374,10 @@ class TabularVAE(tf.keras.Model):
             ValueError: If the JSON sidecar contains invalid data.
         """
         load_logger = get_logger(__name__)
-
-        # Support both legacy directory format and new .keras format
-        encoder_keras_path = os.path.join(path, "encoder.keras")
-        decoder_keras_path = os.path.join(path, "decoder.keras")
-        encoder_dir_path = os.path.join(path, "encoder")
-        decoder_dir_path = os.path.join(path, "decoder")
-        config_path = os.path.join(path, "vae_config.json")
-
-        # Determine which encoder/decoder path to use
-        if os.path.exists(encoder_keras_path):
-            encoder_path = encoder_keras_path
-        else:
-            encoder_path = encoder_dir_path
-        if os.path.exists(decoder_keras_path):
-            decoder_path = decoder_keras_path
-        else:
-            decoder_path = decoder_dir_path
-
-        # --- Pre-flight checks ---------------------------------------------
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Model directory not found: {path}")
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config sidecar not found: {config_path}")
-        if not os.path.exists(encoder_path):
-            raise FileNotFoundError(f"Encoder artefact not found: {encoder_path}")
-        if not os.path.exists(decoder_path):
-            raise FileNotFoundError(f"Decoder artefact not found: {decoder_path}")
+        encoder_path, decoder_path, config_path = cls._resolve_model_paths(path)
 
         try:
-            # ---- Deserialise sidecar --------------------------------------
-            with open(config_path, "r", encoding="utf-8") as fh:
+            with open(config_path, encoding="utf-8") as fh:
                 sidecar = json.load(fh)
 
             raw_cfg = sidecar["config"]
@@ -1316,49 +1399,15 @@ class TabularVAE(tf.keras.Model):
                 output_activation=raw_cfg["output_activation"],
             )
 
-            # Create instance without auto-building submodels
             instance = cls(config)
 
-            # ---- Load TF sub-models ---------------------------------------
             custom_objects = {"Sampling": Sampling}
             instance.encoder = tf.keras.models.load_model(
                 encoder_path, custom_objects=custom_objects,
             )
             instance.decoder = tf.keras.models.load_model(decoder_path)
 
-            # ---- Restore normalisation state ------------------------------
-            norm = sidecar.get("normalization", {})
-            if norm.get("num_mins") is not None:
-                instance._num_mins = np.array(norm["num_mins"], dtype=np.float64)
-            if norm.get("num_maxs") is not None:
-                instance._num_maxs = np.array(norm["num_maxs"], dtype=np.float64)
-            if norm.get("num_ranges") is not None:
-                instance._num_ranges = np.array(norm["num_ranges"], dtype=np.float64)
-
-            # ---- Restore category maps ------------------------------------
-            raw_maps = sidecar.get("category_maps", {})
-            instance._category_maps = {
-                int(k): {int(ki): vi for ki, vi in v.items()}
-                for k, v in raw_maps.items()
-            }
-
-            # ---- Restore output mappings ----------------------------------
-            mappings = sidecar.get("output_mappings", {})
-            instance._numerical_output_indices = mappings.get(
-                "numerical_output_indices", [],
-            )
-            instance._categorical_output_slices = [
-                tuple(s) for s in mappings.get("categorical_output_slices", [])
-            ]
-            instance._preprocessed_dim = mappings.get(
-                "preprocessed_dim", config.input_dim,
-            )
-
-            # ---- Restore training state -----------------------------------
-            ts = sidecar.get("training_state", {})
-            instance._is_trained = ts.get("is_trained", True)
-            instance._final_epoch = ts.get("final_epoch", 0)
-            instance._original_num_columns = ts.get("original_num_columns", 0)
+            instance._restore_sidecar_state(sidecar)
 
             load_logger.info(
                 "vae_model_loaded",
@@ -1399,7 +1448,7 @@ class TabularVAE(tf.keras.Model):
     # Introspection
     # ------------------------------------------------------------------
 
-    def get_training_summary(self) -> Dict[str, Any]:
+    def get_training_summary(self) -> dict[str, Any]:
         """Return a concise summary of model architecture and training outcome.
 
         Returns:
@@ -1416,7 +1465,7 @@ class TabularVAE(tf.keras.Model):
             * ``kl_weight`` — current KL weight
             * ``config`` — full hyper-parameter snapshot
         """
-        summary: Dict[str, Any] = {
+        summary: dict[str, Any] = {
             "latent_dim": self.config.latent_dim,
             "input_dim": self.config.input_dim,
             "preprocessed_dim": self._preprocessed_dim,

@@ -49,7 +49,8 @@ from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 
 # ---------------------------------------------------------------------------
 # Third-party ML framework imports — graceful fallback when unavailable
@@ -75,8 +76,11 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # Internal imports from shared utilities
 # ---------------------------------------------------------------------------
+import contextlib
+
 from shared.database.redis_client import get_redis_client
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -189,13 +193,13 @@ class ModelMetadata:
     checksum: str = ""
     created_at: str = field(
         default_factory=lambda: datetime.datetime.now(
-            datetime.timezone.utc
+            datetime.UTC
         ).isoformat()
     )
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     device: str = "cpu"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize metadata to a JSON-compatible dictionary.
 
         Returns:
@@ -204,7 +208,7 @@ class ModelMetadata:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> ModelMetadata:
+    def from_dict(cls, data: dict[str, Any]) -> ModelMetadata:
         """Reconstruct a ``ModelMetadata`` instance from a dictionary.
 
         Unknown keys are silently ignored so that forward-compatible
@@ -302,7 +306,7 @@ class ModelRegistry:
         self._model_cache: OrderedDict[str, Any] = OrderedDict()
 
         # In-memory manifest:  { model_id: { version: {metadata_dict} } }
-        self._manifest: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._manifest: dict[str, dict[str, dict[str, Any]]] = {}
 
         # Logger
         self._logger = get_logger(__name__)
@@ -335,7 +339,7 @@ class ModelRegistry:
         framework: str,
         model_artifact: Any,
         version: str | None = None,
-        metadata: Dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ModelMetadata:
         """Register and persist a trained model artifact.
 
@@ -414,7 +418,7 @@ class ModelRegistry:
 
                 # Build metadata record
                 now = datetime.datetime.now(
-                    datetime.timezone.utc
+                    datetime.UTC
                 ).isoformat()
                 meta = ModelMetadata(
                     model_id=model_id,
@@ -653,7 +657,7 @@ class ModelRegistry:
     def list_models(
         self,
         model_type: str | None = None,
-    ) -> List[ModelMetadata]:
+    ) -> list[ModelMetadata]:
         """List all registered model versions with optional filtering.
 
         Args:
@@ -664,10 +668,10 @@ class ModelRegistry:
             List of :class:`ModelMetadata` instances sorted by
             ``created_at`` descending (newest first).
         """
-        results: List[ModelMetadata] = []
+        results: list[ModelMetadata] = []
         with self._lock:
-            for model_id, versions in self._manifest.items():
-                for ver, meta_dict in versions.items():
+            for _model_id, versions in self._manifest.items():
+                for _ver, meta_dict in versions.items():
                     meta = ModelMetadata.from_dict(meta_dict)
                     if model_type is not None and meta.model_type != model_type.lower():
                         continue
@@ -698,8 +702,8 @@ class ModelRegistry:
             if not model_versions:
                 return None
 
-            parsed: List[tuple[tuple[int, ...], str]] = []
-            for ver_str in model_versions.keys():
+            parsed: list[tuple[tuple[int, ...], str]] = []
+            for ver_str in model_versions:
                 try:
                     parts = tuple(int(p) for p in ver_str.split("."))
                     parsed.append((parts, ver_str))
@@ -712,6 +716,53 @@ class ModelRegistry:
 
             parsed.sort(key=lambda item: item[0], reverse=True)
             return parsed[0][1]
+
+    # ------------------------------------------------------------------
+    # Deletion helpers
+    # ------------------------------------------------------------------
+
+    def _remove_version_artifacts(
+        self,
+        model_id: str,
+        version: str,
+        meta_dict: dict[str, Any],
+    ) -> None:
+        """Remove filesystem artifacts for a single model version.
+
+        Deletes the artifact file or directory referenced in *meta_dict*
+        and cleans up the version directory underneath
+        ``self._model_dir``.
+
+        Args:
+            model_id: Model identifier.
+            version: Version string.
+            meta_dict: Metadata dict for this version.
+        """
+        file_path = meta_dict.get("file_path", "")
+        if file_path and os.path.exists(file_path):
+            try:
+                parent = Path(file_path).parent
+                if os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+                else:
+                    os.remove(file_path)
+                    # Also remove the version directory if empty
+                    if parent.exists() and not any(parent.iterdir()):
+                        shutil.rmtree(str(parent))
+            except OSError as exc:
+                self._logger.warning(
+                    "artifact_removal_failed",
+                    model_id=model_id,
+                    version=version,
+                    file_path=file_path,
+                    error=str(exc),
+                )
+
+        # Remove version directory
+        version_dir = os.path.join(self._model_dir, model_id, version)
+        if os.path.isdir(version_dir):
+            with contextlib.suppress(OSError):
+                shutil.rmtree(version_dir)
 
     # ------------------------------------------------------------------
     # Public API — Deletion
@@ -747,7 +798,7 @@ class ModelRegistry:
                 )
                 return False
 
-            versions_to_delete: List[str] = (
+            versions_to_delete: list[str] = (
                 [version] if version is not None else list(model_versions.keys())
             )
 
@@ -757,36 +808,7 @@ class ModelRegistry:
                 if meta_dict is None:
                     continue
 
-                # Remove artifact from filesystem
-                file_path = meta_dict.get("file_path", "")
-                if file_path and os.path.exists(file_path):
-                    try:
-                        parent = Path(file_path).parent
-                        if os.path.isdir(file_path):
-                            shutil.rmtree(file_path)
-                        else:
-                            os.remove(file_path)
-                            # Also remove the version directory if empty
-                            if parent.exists() and not any(parent.iterdir()):
-                                shutil.rmtree(str(parent))
-                    except OSError as exc:
-                        self._logger.warning(
-                            "artifact_removal_failed",
-                            model_id=model_id,
-                            version=ver,
-                            file_path=file_path,
-                            error=str(exc),
-                        )
-
-                # Remove version directory
-                version_dir = os.path.join(
-                    self._model_dir, model_id, ver
-                )
-                if os.path.isdir(version_dir):
-                    try:
-                        shutil.rmtree(version_dir)
-                    except OSError:
-                        pass
+                self._remove_version_artifacts(model_id, ver, meta_dict)
 
                 # Remove from manifest
                 del model_versions[ver]
@@ -810,10 +832,8 @@ class ModelRegistry:
                 # Remove model_id directory
                 model_dir_path = os.path.join(self._model_dir, model_id)
                 if os.path.isdir(model_dir_path):
-                    try:
+                    with contextlib.suppress(OSError):
                         shutil.rmtree(model_dir_path)
-                    except OSError:
-                        pass
 
             # Persist manifest and notify
             if deleted_any:
@@ -857,7 +877,7 @@ class ModelRegistry:
     # Internal — Manifest I/O
     # ------------------------------------------------------------------
 
-    def _load_manifest(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def _load_manifest(self) -> dict[str, dict[str, dict[str, Any]]]:
         """Read and parse the manifest JSON file from disk.
 
         Returns:
@@ -867,7 +887,7 @@ class ModelRegistry:
         if not os.path.exists(self._manifest_path):
             return {}
         try:
-            with open(self._manifest_path, "r", encoding="utf-8") as fh:
+            with open(self._manifest_path, encoding="utf-8") as fh:
                 data = json.load(fh)
             if not isinstance(data, dict):
                 self._logger.warning(
@@ -908,10 +928,8 @@ class ModelRegistry:
             )
             # Clean up temp file on failure
             if os.path.exists(tmp_path):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(tmp_path)
-                except OSError:
-                    pass
 
     # ------------------------------------------------------------------
     # Internal — Checksum
@@ -934,7 +952,7 @@ class ModelRegistry:
 
         if os.path.isdir(file_path):
             # Hash all files in the directory tree in sorted order
-            all_files: List[str] = []
+            all_files: list[str] = []
             for root, _dirs, files in os.walk(file_path):
                 for fname in files:
                     all_files.append(os.path.join(root, fname))
@@ -998,7 +1016,8 @@ class ModelRegistry:
                 del evicted_model
                 torch.cuda.empty_cache()
             except Exception:
-                pass
+                # Best-effort GPU cleanup; non-critical if it fails.
+                self._logger.debug("gpu_cache_cleanup_failed_on_eviction")
 
     # ------------------------------------------------------------------
     # Internal — PyTorch Serialization
@@ -1198,7 +1217,7 @@ class ModelRegistry:
             # e.g. "cuda:0" → "/GPU:0"
             idx = device_lower.split(":")[-1] if ":" in device_lower else "0"
             return f"/GPU:{idx}"
-        return f"/CPU:0"
+        return "/CPU:0"
 
     @staticmethod
     def _compute_dir_size(dir_path: str) -> int:
@@ -1214,10 +1233,8 @@ class ModelRegistry:
         for root, _dirs, files in os.walk(dir_path):
             for fname in files:
                 fpath = os.path.join(root, fname)
-                try:
+                with contextlib.suppress(OSError):
                     total += os.path.getsize(fpath)
-                except OSError:
-                    pass
         return total
 
     # ------------------------------------------------------------------
@@ -1276,7 +1293,7 @@ class ModelRegistry:
                     "version": version,
                     "action": action,
                     "timestamp": datetime.datetime.now(
-                        datetime.timezone.utc
+                        datetime.UTC
                     ).isoformat(),
                 }
             )

@@ -46,14 +46,19 @@ from __future__ import annotations
 import math
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, Literal
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Pydantic Data Models
@@ -74,7 +79,7 @@ class ColumnSpec(BaseModel):
             for. One of a fixed set of recognised types covering all common
             ERP column categories.
         nullable: Whether the column accepts ``NULL`` values.
-        null_probability: Probability (0.0–1.0) that any given row will
+        null_probability: Probability (0.0-1.0) that any given row will
             have a ``NULL`` in this column. Only meaningful when
             *nullable* is ``True``.
         constraints: Free-form dictionary of column-specific constraints.
@@ -107,9 +112,9 @@ class ColumnSpec(BaseModel):
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="Probability of generating a NULL value (0.0–1.0).",
+        description="Probability of generating a NULL value (0.0-1.0).",
     )
-    constraints: Optional[Dict[str, Any]] = Field(
+    constraints: dict[str, Any] | None = Field(
         default=None,
         description=(
             "Column-specific constraints such as min, max, pattern, "
@@ -117,13 +122,13 @@ class ColumnSpec(BaseModel):
         ),
     )
     primary_key: bool = False
-    foreign_key: Optional[Dict[str, str]] = Field(
+    foreign_key: dict[str, str] | None = Field(
         default=None,
         description=(
             'Foreign key reference: {"table": "<table>", "column": "<column>"}.'
         ),
     )
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class GenerationConfig(BaseModel):
@@ -139,12 +144,12 @@ class GenerationConfig(BaseModel):
             ``'rules'``, ``'statistical'``, ``'masking'``.
         num_records: Total number of synthetic records to produce. Must be
             strictly positive.
-        batch_size: Records produced per batch iteration (1–100 000).
+        batch_size: Records produced per batch iteration (1-100 000).
             Defaults to 10 000, the platform's recommended batch size.
         seed: Optional random seed for reproducible generation runs.
         output_format: Desired in-memory representation of the result:
             ``'dataframe'`` (default), ``'dict'``, or ``'records'``.
-        quality_threshold: Minimum acceptable quality score (0.0–1.0).
+        quality_threshold: Minimum acceptable quality score (0.0-1.0).
             Defaults to 0.95 per the platform's ≥95 % fidelity target.
         timeout_seconds: Maximum wall-clock seconds allowed for generation
             before the engine aborts. Defaults to 3 600 (one hour).
@@ -168,9 +173,9 @@ class GenerationConfig(BaseModel):
         default=10000,
         ge=1,
         le=100000,
-        description="Records per batch (1–100 000). Default 10 000.",
+        description="Records per batch (1-100 000). Default 10 000.",
     )
-    seed: Optional[int] = Field(
+    seed: int | None = Field(
         default=None,
         description="Random seed for reproducibility.",
     )
@@ -182,22 +187,22 @@ class GenerationConfig(BaseModel):
         default=0.95,
         ge=0.0,
         le=1.0,
-        description="Minimum acceptable quality score (0.0–1.0).",
+        description="Minimum acceptable quality score (0.0-1.0).",
     )
     timeout_seconds: int = Field(
         default=3600,
         ge=1,
         description="Maximum wall-clock seconds for generation.",
     )
-    tenant_id: Optional[str] = Field(
+    tenant_id: str | None = Field(
         default=None,
         description="Tenant namespace for multi-tenant isolation.",
     )
-    job_id: Optional[str] = Field(
+    job_id: str | None = Field(
         default=None,
         description="Associated generation job ID in MongoDB.",
     )
-    method_config: Optional[Dict[str, Any]] = Field(
+    method_config: dict[str, Any] | None = Field(
         default=None,
         description="Method-specific configuration forwarded to the concrete generator.",
     )
@@ -265,11 +270,11 @@ class GenerationResult(BaseModel):
         ge=0,
         description="Actual number of records generated.",
     )
-    columns: List[str] = Field(
+    columns: list[str] = Field(
         ...,
         description="Column names in generated data.",
     )
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Generation metadata (method, parameters, timing).",
     )
@@ -278,25 +283,25 @@ class GenerationResult(BaseModel):
         ge=0.0,
         description="Wall-clock generation duration in seconds.",
     )
-    quality_score: Optional[float] = Field(
+    quality_score: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
-        description="Quality score (0.0–1.0) if validated.",
+        description="Quality score (0.0-1.0) if validated.",
     )
-    errors: List[str] = Field(
+    errors: list[str] = Field(
         default_factory=list,
         description="Non-fatal errors encountered during generation.",
     )
-    warnings: List[str] = Field(
+    warnings: list[str] = Field(
         default_factory=list,
         description="Warnings (e.g. partial generation, fallbacks).",
     )
-    started_at: Optional[datetime] = Field(
+    started_at: datetime | None = Field(
         default=None,
         description="UTC timestamp when generation started.",
     )
-    completed_at: Optional[datetime] = Field(
+    completed_at: datetime | None = Field(
         default=None,
         description="UTC timestamp when generation completed.",
     )
@@ -327,11 +332,11 @@ class GenerationError(Exception):
         self,
         message: str,
         method: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         self.message: str = message
         self.method: str = method
-        self.details: Dict[str, Any] = details if details is not None else {}
+        self.details: dict[str, Any] = details if details is not None else {}
         super().__init__(self.message)
 
     def __repr__(self) -> str:  # pragma: no cover — convenience repr
@@ -375,10 +380,10 @@ class BaseGenerator(ABC):
             :attr:`config` for subclass access.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        self.config: Dict[str, Any] = config if config is not None else {}
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        self.config: dict[str, Any] = config if config is not None else {}
         self.logger = get_logger(__name__)
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
         self._records_generated: int = 0
 
     # ------------------------------------------------------------------
@@ -388,8 +393,8 @@ class BaseGenerator(ABC):
     @abstractmethod
     def generate(
         self,
-        schema: Dict[str, Any],
-        profile: Dict[str, Any],
+        schema: dict[str, Any],
+        profile: dict[str, Any],
         num_records: int,
         **kwargs: Any,
     ) -> GenerationResult:
@@ -421,7 +426,7 @@ class BaseGenerator(ABC):
         """
 
     @abstractmethod
-    def validate_config(self, config: Dict[str, Any]) -> bool:
+    def validate_config(self, config: dict[str, Any]) -> bool:
         """Validate generator-specific configuration before a run starts.
 
         Each concrete generator defines its own required and optional
@@ -440,7 +445,7 @@ class BaseGenerator(ABC):
         """
 
     @abstractmethod
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Return a machine-readable description of this generator's capabilities.
 
         The orchestrator's method selector uses this information to choose
@@ -467,8 +472,8 @@ class BaseGenerator(ABC):
 
     def generate_batch(
         self,
-        schema: Dict[str, Any],
-        profile: Dict[str, Any],
+        schema: dict[str, Any],
+        profile: dict[str, Any],
         batch_size: int,
         **kwargs: Any,
     ) -> pd.DataFrame:
@@ -505,8 +510,8 @@ class BaseGenerator(ABC):
 
     def iterate_batches(
         self,
-        schema: Dict[str, Any],
-        profile: Dict[str, Any],
+        schema: dict[str, Any],
+        profile: dict[str, Any],
         total_records: int,
         batch_size: int = 10000,
         **kwargs: Any,
@@ -602,7 +607,7 @@ class BaseGenerator(ABC):
     def _build_result(
         self,
         data: pd.DataFrame,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> GenerationResult:
         """Construct a :class:`GenerationResult` from a generated DataFrame.
 
@@ -619,16 +624,14 @@ class BaseGenerator(ABC):
             A fully-populated :class:`GenerationResult`.
         """
         elapsed: float = self._stop_timer()
-        now_utc: datetime = datetime.now(timezone.utc)
+        now_utc: datetime = datetime.now(UTC)
 
         # Compute a rough started_at from elapsed, falling back to now.
         started_at_utc: datetime = now_utc
         if elapsed > 0.0:
-            from datetime import timedelta
-
             started_at_utc = now_utc - timedelta(seconds=elapsed)
 
-        result_metadata: Dict[str, Any] = metadata if metadata is not None else {}
+        result_metadata: dict[str, Any] = metadata if metadata is not None else {}
         result_metadata.setdefault(
             "memory_usage_bytes",
             int(data.memory_usage(deep=True).sum()),
@@ -648,7 +651,7 @@ class BaseGenerator(ABC):
     # Schema Validation
     # ------------------------------------------------------------------
 
-    def _validate_schema(self, schema: Dict[str, Any]) -> List[ColumnSpec]:
+    def _validate_schema(self, schema: dict[str, Any]) -> list[ColumnSpec]:
         """Parse and validate a raw schema dictionary into :class:`ColumnSpec` instances.
 
         The incoming *schema* is expected to contain a ``"columns"`` key
@@ -682,7 +685,7 @@ class BaseGenerator(ABC):
                 details={"columns_type": type(columns_raw).__name__},
             )
 
-        column_specs: List[ColumnSpec] = []
+        column_specs: list[ColumnSpec] = []
         for idx, col_def in enumerate(columns_raw):
             try:
                 if isinstance(col_def, ColumnSpec):
@@ -721,7 +724,7 @@ class BaseGenerator(ABC):
     def _apply_nulls(
         self,
         df: pd.DataFrame,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
     ) -> pd.DataFrame:
         """Inject ``NULL`` values into *df* according to column-level null probabilities.
 
