@@ -32,7 +32,7 @@ Design Patterns:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, cast
 
 from profiling_service.connectors.base import (
     BaseConnector,
@@ -61,23 +61,23 @@ _logger = get_logger(__name__)
 
 SAP_MODULE_TABLE_MAPPINGS: dict[str, list[str]] = {
     ERPModule.FINANCIAL_ACCOUNTING: [
-        "BKPF",   # Accounting Document Header
-        "BSEG",   # Accounting Document Segment
-        "SKA1",   # G/L Account Master (Chart of Accounts)
-        "SKB1",   # G/L Account Master (Company Code)
-        "LFA1",   # Vendor Master (General Section)
-        "LFB1",   # Vendor Master (Company Code)
-        "KNA1",   # Customer Master (General Section)
-        "KNB1",   # Customer Master (Company Code)
+        "BKPF",  # Accounting Document Header
+        "BSEG",  # Accounting Document Segment
+        "SKA1",  # G/L Account Master (Chart of Accounts)
+        "SKB1",  # G/L Account Master (Company Code)
+        "LFA1",  # Vendor Master (General Section)
+        "LFB1",  # Vendor Master (Company Code)
+        "KNA1",  # Customer Master (General Section)
+        "KNB1",  # Customer Master (Company Code)
         "REGUH",  # Settlement Data from Payment Programme
         "REGUP",  # Processed Items from Payment Programme
     ],
     ERPModule.HUMAN_RESOURCES: [
-        "PA0001",   # Organisational Assignment
-        "PA0002",   # Personal Data
-        "PA0008",   # Basic Pay
-        "PA0014",   # Recurring Payments/Deductions
-        "PA0015",   # Additional Payments
+        "PA0001",  # Organisational Assignment
+        "PA0002",  # Personal Data
+        "PA0008",  # Basic Pay
+        "PA0014",  # Recurring Payments/Deductions
+        "PA0015",  # Additional Payments
         "HRP1000",  # Object (Org Management)
         "HRP1001",  # Relationships (Org Management)
     ],
@@ -106,27 +106,27 @@ SAP_MODULE_TABLE_MAPPINGS: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 
 _SAP_TYPE_MAP: dict[str, str] = {
-    "CHAR":     "VARCHAR",
-    "SSTRING":  "VARCHAR",
-    "STRING":   "VARCHAR",
-    "NUMC":     "VARCHAR",
-    "UNIT":     "VARCHAR",
-    "CUKY":     "VARCHAR",
-    "CLNT":     "VARCHAR",
-    "LANG":     "VARCHAR",
-    "TIMS":     "TIME",
-    "DATS":     "DATE",
-    "DEC":      "DECIMAL",
-    "CURR":     "DECIMAL",
-    "QUAN":     "DECIMAL",
-    "FLTP":     "FLOAT",
-    "INT1":     "INTEGER",
-    "INT2":     "INTEGER",
-    "INT4":     "INTEGER",
-    "INT8":     "BIGINT",
-    "RAW":      "BINARY",
-    "LRAW":     "BINARY",
-    "LCHR":     "TEXT",
+    "CHAR": "VARCHAR",
+    "SSTRING": "VARCHAR",
+    "STRING": "VARCHAR",
+    "NUMC": "VARCHAR",
+    "UNIT": "VARCHAR",
+    "CUKY": "VARCHAR",
+    "CLNT": "VARCHAR",
+    "LANG": "VARCHAR",
+    "TIMS": "TIME",
+    "DATS": "DATE",
+    "DEC": "DECIMAL",
+    "CURR": "DECIMAL",
+    "QUAN": "DECIMAL",
+    "FLTP": "FLOAT",
+    "INT1": "INTEGER",
+    "INT2": "INTEGER",
+    "INT4": "INTEGER",
+    "INT8": "BIGINT",
+    "RAW": "BINARY",
+    "LRAW": "BINARY",
+    "LCHR": "TEXT",
 }
 
 # ---------------------------------------------------------------------------
@@ -139,64 +139,424 @@ _SAP_TYPE_MAP: dict[str, str] = {
 
 _SAP_DD_COLUMNS: dict[str, list[dict[str, Any]]] = {
     "BKPF": [
-        {"name": "MANDT",  "type": "CLNT", "length": 3,  "decimals": 0, "key": True,  "nullable": False, "desc": "Client"},
-        {"name": "BUKRS",  "type": "CHAR", "length": 4,  "decimals": 0, "key": True,  "nullable": False, "desc": "Company Code"},
-        {"name": "BELNR",  "type": "CHAR", "length": 10, "decimals": 0, "key": True,  "nullable": False, "desc": "Accounting Document Number"},
-        {"name": "GJAHR",  "type": "NUMC", "length": 4,  "decimals": 0, "key": True,  "nullable": False, "desc": "Fiscal Year"},
-        {"name": "BLART",  "type": "CHAR", "length": 2,  "decimals": 0, "key": False, "nullable": True,  "desc": "Document Type"},
-        {"name": "BUDAT",  "type": "DATS", "length": 8,  "decimals": 0, "key": False, "nullable": True,  "desc": "Posting Date"},
-        {"name": "BLDAT",  "type": "DATS", "length": 8,  "decimals": 0, "key": False, "nullable": True,  "desc": "Document Date"},
-        {"name": "WAERS",  "type": "CUKY", "length": 5,  "decimals": 0, "key": False, "nullable": True,  "desc": "Currency Key"},
-        {"name": "MONAT",  "type": "NUMC", "length": 2,  "decimals": 0, "key": False, "nullable": True,  "desc": "Fiscal Period"},
-        {"name": "USNAM",  "type": "CHAR", "length": 12, "decimals": 0, "key": False, "nullable": True,  "desc": "User Name"},
+        {"name": "MANDT", "type": "CLNT", "length": 3, "decimals": 0, "key": True, "nullable": False, "desc": "Client"},
+        {
+            "name": "BUKRS",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Company Code",
+        },
+        {
+            "name": "BELNR",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Accounting Document Number",
+        },
+        {
+            "name": "GJAHR",
+            "type": "NUMC",
+            "length": 4,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Fiscal Year",
+        },
+        {
+            "name": "BLART",
+            "type": "CHAR",
+            "length": 2,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Document Type",
+        },
+        {
+            "name": "BUDAT",
+            "type": "DATS",
+            "length": 8,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Posting Date",
+        },
+        {
+            "name": "BLDAT",
+            "type": "DATS",
+            "length": 8,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Document Date",
+        },
+        {
+            "name": "WAERS",
+            "type": "CUKY",
+            "length": 5,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Currency Key",
+        },
+        {
+            "name": "MONAT",
+            "type": "NUMC",
+            "length": 2,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Fiscal Period",
+        },
+        {
+            "name": "USNAM",
+            "type": "CHAR",
+            "length": 12,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "User Name",
+        },
     ],
     "BSEG": [
-        {"name": "MANDT",  "type": "CLNT", "length": 3,  "decimals": 0, "key": True,  "nullable": False, "desc": "Client"},
-        {"name": "BUKRS",  "type": "CHAR", "length": 4,  "decimals": 0, "key": True,  "nullable": False, "desc": "Company Code"},
-        {"name": "BELNR",  "type": "CHAR", "length": 10, "decimals": 0, "key": True,  "nullable": False, "desc": "Accounting Document Number"},
-        {"name": "GJAHR",  "type": "NUMC", "length": 4,  "decimals": 0, "key": True,  "nullable": False, "desc": "Fiscal Year"},
-        {"name": "BUZEI",  "type": "NUMC", "length": 3,  "decimals": 0, "key": True,  "nullable": False, "desc": "Line Item Number"},
-        {"name": "SHKZG",  "type": "CHAR", "length": 1,  "decimals": 0, "key": False, "nullable": True,  "desc": "Debit/Credit Indicator"},
-        {"name": "DMBTR",  "type": "CURR", "length": 13, "decimals": 2, "key": False, "nullable": True,  "desc": "Amount in Local Currency"},
-        {"name": "WRBTR",  "type": "CURR", "length": 13, "decimals": 2, "key": False, "nullable": True,  "desc": "Amount in Document Currency"},
-        {"name": "HKONT",  "type": "CHAR", "length": 10, "decimals": 0, "key": False, "nullable": True,  "desc": "G/L Account Number"},
-        {"name": "KOSTL",  "type": "CHAR", "length": 10, "decimals": 0, "key": False, "nullable": True,  "desc": "Cost Center"},
+        {"name": "MANDT", "type": "CLNT", "length": 3, "decimals": 0, "key": True, "nullable": False, "desc": "Client"},
+        {
+            "name": "BUKRS",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Company Code",
+        },
+        {
+            "name": "BELNR",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Accounting Document Number",
+        },
+        {
+            "name": "GJAHR",
+            "type": "NUMC",
+            "length": 4,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Fiscal Year",
+        },
+        {
+            "name": "BUZEI",
+            "type": "NUMC",
+            "length": 3,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Line Item Number",
+        },
+        {
+            "name": "SHKZG",
+            "type": "CHAR",
+            "length": 1,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Debit/Credit Indicator",
+        },
+        {
+            "name": "DMBTR",
+            "type": "CURR",
+            "length": 13,
+            "decimals": 2,
+            "key": False,
+            "nullable": True,
+            "desc": "Amount in Local Currency",
+        },
+        {
+            "name": "WRBTR",
+            "type": "CURR",
+            "length": 13,
+            "decimals": 2,
+            "key": False,
+            "nullable": True,
+            "desc": "Amount in Document Currency",
+        },
+        {
+            "name": "HKONT",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "G/L Account Number",
+        },
+        {
+            "name": "KOSTL",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Cost Center",
+        },
     ],
     "EKKO": [
-        {"name": "MANDT",  "type": "CLNT", "length": 3,  "decimals": 0, "key": True,  "nullable": False, "desc": "Client"},
-        {"name": "EBELN",  "type": "CHAR", "length": 10, "decimals": 0, "key": True,  "nullable": False, "desc": "Purchasing Document Number"},
-        {"name": "BUKRS",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Company Code"},
-        {"name": "BSTYP",  "type": "CHAR", "length": 1,  "decimals": 0, "key": False, "nullable": True,  "desc": "Purchasing Document Category"},
-        {"name": "BSART",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Purchasing Document Type"},
-        {"name": "LIFNR",  "type": "CHAR", "length": 10, "decimals": 0, "key": False, "nullable": True,  "desc": "Vendor Account Number"},
-        {"name": "EKORG",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Purchasing Organisation"},
-        {"name": "EKGRP",  "type": "CHAR", "length": 3,  "decimals": 0, "key": False, "nullable": True,  "desc": "Purchasing Group"},
-        {"name": "WAERS",  "type": "CUKY", "length": 5,  "decimals": 0, "key": False, "nullable": True,  "desc": "Currency Key"},
-        {"name": "BEDAT",  "type": "DATS", "length": 8,  "decimals": 0, "key": False, "nullable": True,  "desc": "Purchasing Document Date"},
+        {"name": "MANDT", "type": "CLNT", "length": 3, "decimals": 0, "key": True, "nullable": False, "desc": "Client"},
+        {
+            "name": "EBELN",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Purchasing Document Number",
+        },
+        {
+            "name": "BUKRS",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Company Code",
+        },
+        {
+            "name": "BSTYP",
+            "type": "CHAR",
+            "length": 1,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Purchasing Document Category",
+        },
+        {
+            "name": "BSART",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Purchasing Document Type",
+        },
+        {
+            "name": "LIFNR",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Vendor Account Number",
+        },
+        {
+            "name": "EKORG",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Purchasing Organisation",
+        },
+        {
+            "name": "EKGRP",
+            "type": "CHAR",
+            "length": 3,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Purchasing Group",
+        },
+        {
+            "name": "WAERS",
+            "type": "CUKY",
+            "length": 5,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Currency Key",
+        },
+        {
+            "name": "BEDAT",
+            "type": "DATS",
+            "length": 8,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Purchasing Document Date",
+        },
     ],
     "VBAK": [
-        {"name": "MANDT",  "type": "CLNT", "length": 3,  "decimals": 0, "key": True,  "nullable": False, "desc": "Client"},
-        {"name": "VBELN",  "type": "CHAR", "length": 10, "decimals": 0, "key": True,  "nullable": False, "desc": "Sales Document"},
-        {"name": "ERDAT",  "type": "DATS", "length": 8,  "decimals": 0, "key": False, "nullable": True,  "desc": "Date on Which Record Was Created"},
-        {"name": "ERZET",  "type": "TIMS", "length": 6,  "decimals": 0, "key": False, "nullable": True,  "desc": "Entry Time"},
-        {"name": "ERNAM",  "type": "CHAR", "length": 12, "decimals": 0, "key": False, "nullable": True,  "desc": "Name of Person Who Created Object"},
-        {"name": "AUART",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Sales Document Type"},
-        {"name": "VKORG",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Sales Organisation"},
-        {"name": "VTWEG",  "type": "CHAR", "length": 2,  "decimals": 0, "key": False, "nullable": True,  "desc": "Distribution Channel"},
-        {"name": "KUNNR",  "type": "CHAR", "length": 10, "decimals": 0, "key": False, "nullable": True,  "desc": "Sold-to Party"},
-        {"name": "NETWR",  "type": "CURR", "length": 15, "decimals": 2, "key": False, "nullable": True,  "desc": "Net Value of Sales Order"},
+        {"name": "MANDT", "type": "CLNT", "length": 3, "decimals": 0, "key": True, "nullable": False, "desc": "Client"},
+        {
+            "name": "VBELN",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Sales Document",
+        },
+        {
+            "name": "ERDAT",
+            "type": "DATS",
+            "length": 8,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Date on Which Record Was Created",
+        },
+        {
+            "name": "ERZET",
+            "type": "TIMS",
+            "length": 6,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Entry Time",
+        },
+        {
+            "name": "ERNAM",
+            "type": "CHAR",
+            "length": 12,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Name of Person Who Created Object",
+        },
+        {
+            "name": "AUART",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Sales Document Type",
+        },
+        {
+            "name": "VKORG",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Sales Organisation",
+        },
+        {
+            "name": "VTWEG",
+            "type": "CHAR",
+            "length": 2,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Distribution Channel",
+        },
+        {
+            "name": "KUNNR",
+            "type": "CHAR",
+            "length": 10,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Sold-to Party",
+        },
+        {
+            "name": "NETWR",
+            "type": "CURR",
+            "length": 15,
+            "decimals": 2,
+            "key": False,
+            "nullable": True,
+            "desc": "Net Value of Sales Order",
+        },
     ],
     "PA0001": [
-        {"name": "MANDT",  "type": "CLNT", "length": 3,  "decimals": 0, "key": True,  "nullable": False, "desc": "Client"},
-        {"name": "PERNR",  "type": "NUMC", "length": 8,  "decimals": 0, "key": True,  "nullable": False, "desc": "Personnel Number"},
-        {"name": "SUBTY",  "type": "CHAR", "length": 4,  "decimals": 0, "key": True,  "nullable": False, "desc": "Subtype"},
-        {"name": "ENDDA",  "type": "DATS", "length": 8,  "decimals": 0, "key": True,  "nullable": False, "desc": "End Date"},
-        {"name": "BEGDA",  "type": "DATS", "length": 8,  "decimals": 0, "key": True,  "nullable": False, "desc": "Start Date"},
-        {"name": "BUKRS",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Company Code"},
-        {"name": "WERKS",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Personnel Area"},
-        {"name": "BTRTL",  "type": "CHAR", "length": 4,  "decimals": 0, "key": False, "nullable": True,  "desc": "Personnel Subarea"},
-        {"name": "PERSG",  "type": "CHAR", "length": 1,  "decimals": 0, "key": False, "nullable": True,  "desc": "Employee Group"},
-        {"name": "PERSK",  "type": "CHAR", "length": 2,  "decimals": 0, "key": False, "nullable": True,  "desc": "Employee Subgroup"},
+        {"name": "MANDT", "type": "CLNT", "length": 3, "decimals": 0, "key": True, "nullable": False, "desc": "Client"},
+        {
+            "name": "PERNR",
+            "type": "NUMC",
+            "length": 8,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Personnel Number",
+        },
+        {
+            "name": "SUBTY",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Subtype",
+        },
+        {
+            "name": "ENDDA",
+            "type": "DATS",
+            "length": 8,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "End Date",
+        },
+        {
+            "name": "BEGDA",
+            "type": "DATS",
+            "length": 8,
+            "decimals": 0,
+            "key": True,
+            "nullable": False,
+            "desc": "Start Date",
+        },
+        {
+            "name": "BUKRS",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Company Code",
+        },
+        {
+            "name": "WERKS",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Personnel Area",
+        },
+        {
+            "name": "BTRTL",
+            "type": "CHAR",
+            "length": 4,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Personnel Subarea",
+        },
+        {
+            "name": "PERSG",
+            "type": "CHAR",
+            "length": 1,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Employee Group",
+        },
+        {
+            "name": "PERSK",
+            "type": "CHAR",
+            "length": 2,
+            "decimals": 0,
+            "key": False,
+            "nullable": True,
+            "desc": "Employee Subgroup",
+        },
     ],
 }
 
@@ -366,7 +726,7 @@ class SAPConnector(BaseConnector):
         self._password: str = config.password or ""
 
         # Optional pyrfc connection handle.
-        self._connection: Optional[Any] = None
+        self._connection: Any | None = None
 
         # Flag indicating whether live RFC is available.
         self._use_live_rfc: bool = False
@@ -393,7 +753,7 @@ class SAPConnector(BaseConnector):
         """
         try:
             try:
-                import pyrfc  # type: ignore[import-untyped]  # noqa: PLC0415
+                import pyrfc  # type: ignore[import-untyped,unused-ignore]  # noqa: PLC0415
 
                 self._connection = pyrfc.Connection(
                     ashost=self._host,
@@ -461,11 +821,14 @@ class SAPConnector(BaseConnector):
             # Live RFC path — query the SAP data dictionary via RFC with
             # automatic retry and exponential backoff for transient failures.
             if self._use_live_rfc and self._connection is not None:
-                result = self._retry_with_backoff(
-                    self._rfc_discover_tables,
-                    schema_name,
-                    module,
-                    operation_name="sap_rfc_discover_tables",
+                result = cast(
+                    "list[TableMetadata]",
+                    self._retry_with_backoff(
+                        self._rfc_discover_tables,
+                        schema_name,
+                        module,
+                        operation_name="sap_rfc_discover_tables",
+                    ),
                 )
                 self._logger.info(
                     "sap_tables_discovered",
@@ -481,9 +844,7 @@ class SAPConnector(BaseConnector):
                 module_key = module.value if isinstance(module, ERPModule) else str(module)
                 table_names = SAP_MODULE_TABLE_MAPPINGS.get(module_key, [])
             else:
-                table_names = [
-                    t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables
-                ]
+                table_names = [t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables]
 
             result_offline: list[TableMetadata] = []
             for tbl_name in table_names:
@@ -548,10 +909,13 @@ class SAPConnector(BaseConnector):
             # Live RFC path — query DD03L (Table Fields) via RFC with
             # automatic retry and exponential backoff.
             if self._use_live_rfc and self._connection is not None:
-                result = self._retry_with_backoff(
-                    self._rfc_discover_columns,
-                    table_name,
-                    operation_name="sap_rfc_discover_columns",
+                result = cast(
+                    "list[ColumnMetadata]",
+                    self._retry_with_backoff(
+                        self._rfc_discover_columns,
+                        table_name,
+                        operation_name="sap_rfc_discover_columns",
+                    ),
                 )
                 self._logger.info(
                     "sap_columns_discovered",
@@ -575,11 +939,19 @@ class SAPConnector(BaseConnector):
             result_offline: list[ColumnMetadata] = []
             for idx, col in enumerate(columns_data, start=1):
                 standard_type = self._map_sap_type_to_standard(
-                    col["type"], col["length"], col["decimals"],
+                    col["type"],
+                    col["length"],
+                    col["decimals"],
                 )
                 _string_types = {
-                    "CHAR", "SSTRING", "STRING", "NUMC",
-                    "CLNT", "LANG", "CUKY", "UNIT",
+                    "CHAR",
+                    "SSTRING",
+                    "STRING",
+                    "NUMC",
+                    "CLNT",
+                    "LANG",
+                    "CUKY",
+                    "UNIT",
                 }
                 _numeric_types = {"DEC", "CURR", "QUAN", "FLTP"}
                 result_offline.append(
@@ -645,9 +1017,12 @@ class SAPConnector(BaseConnector):
             # Live RFC path — query DD08L (Foreign Key Header) via RFC
             # with automatic retry and exponential backoff.
             if self._use_live_rfc and self._connection is not None:
-                result = self._retry_with_backoff(
-                    self._rfc_discover_relationships,
-                    operation_name="sap_rfc_discover_relationships",
+                result = cast(
+                    "list[RelationshipMetadata]",
+                    self._retry_with_backoff(
+                        self._rfc_discover_relationships,
+                        operation_name="sap_rfc_discover_relationships",
+                    ),
                 )
                 self._logger.info(
                     "sap_relationships_discovered",
@@ -766,8 +1141,8 @@ class SAPConnector(BaseConnector):
 
     def _rfc_discover_tables(
         self,
-        schema_name: Optional[str],
-        module: Optional[ERPModule],
+        schema_name: str | None,
+        module: ERPModule | None,
     ) -> list[TableMetadata]:
         """Discover tables via live SAP RFC calls to the ABAP data dictionary.
 
@@ -789,11 +1164,10 @@ class SAPConnector(BaseConnector):
             module_key = module.value if isinstance(module, ERPModule) else str(module)
             target_tables = SAP_MODULE_TABLE_MAPPINGS.get(module_key, [])
         else:
-            target_tables = [
-                t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables
-            ]
+            target_tables = [t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables]
 
         result: list[TableMetadata] = []
+        assert self._connection is not None  # Guaranteed by caller guard
         for tbl_name in target_tables:
             try:
                 rfc_result = self._connection.call(
@@ -868,6 +1242,7 @@ class SAPConnector(BaseConnector):
             to :meth:`_build_generic_columns` when no results are
             returned.
         """
+        assert self._connection is not None  # Guaranteed by caller guard
         rfc_result = self._connection.call(
             "RFC_READ_TABLE",
             QUERY_TABLE="DD03L",
@@ -886,8 +1261,14 @@ class SAPConnector(BaseConnector):
 
         data_rows = rfc_result.get("DATA", [])
         _string_types = {
-            "CHAR", "SSTRING", "STRING", "NUMC",
-            "CLNT", "LANG", "CUKY", "UNIT",
+            "CHAR",
+            "SSTRING",
+            "STRING",
+            "NUMC",
+            "CLNT",
+            "LANG",
+            "CUKY",
+            "UNIT",
         }
         _numeric_types = {"DEC", "CURR", "QUAN", "FLTP"}
 
@@ -911,7 +1292,9 @@ class SAPConnector(BaseConnector):
             not_null = parts[6].strip().upper() == "X"
 
             standard_type = self._map_sap_type_to_standard(
-                data_type, length, decimals,
+                data_type,
+                length,
+                decimals,
             )
             result.append(
                 ColumnMetadata(
@@ -945,11 +1328,10 @@ class SAPConnector(BaseConnector):
             constraints.  Falls back to the well-known relationship
             catalogue when the live query returns no results.
         """
-        all_tables = [
-            t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables
-        ]
+        all_tables = [t for tables in SAP_MODULE_TABLE_MAPPINGS.values() for t in tables]
 
         result: list[RelationshipMetadata] = []
+        assert self._connection is not None  # Guaranteed by caller guard
         for table_name in all_tables:
             try:
                 rfc_result = self._connection.call(
@@ -978,9 +1360,7 @@ class SAPConnector(BaseConnector):
                     target_column = parts[3].strip()
                     fk_type = parts[4].strip()
 
-                    rel_type = (
-                        "ONE_TO_ONE" if fk_type == "TEXT" else "MANY_TO_ONE"
-                    )
+                    rel_type = "ONE_TO_ONE" if fk_type == "TEXT" else "MANY_TO_ONE"
                     result.append(
                         RelationshipMetadata(
                             constraint_name=f"{source_table}_{target_table}_FK",
