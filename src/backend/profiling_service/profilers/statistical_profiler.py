@@ -948,12 +948,15 @@ class StatisticalProfiler:
         self,
         table_profiles: list[TableProfile],
     ) -> list[CorrelationEntry]:
-        """Placeholder for cross‑table correlation computation.
+        """Compute cross‑table correlation hints from shared column names.
 
-        Cross‑table correlations require joined data across tables, which
-        is typically not available in a single profiling pass.  This method
-        currently returns summary‑level correlation hints based on shared
-        column names.
+        Full cross‑table correlations require joined data across tables,
+        which is not available in a single profiling pass (C‑001: metadata
+        only).  This method identifies columns that share identical names
+        across different tables — a strong heuristic for foreign‑key
+        relationships — and returns :class:`CorrelationEntry` records that
+        downstream consumers can use for copula‑based correlation
+        modelling.
 
         Args:
             table_profiles: All table profiles in the schema.
