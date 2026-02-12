@@ -18,7 +18,7 @@ Implements Kubernetes-compatible health probes for the API Gateway service:
 All endpoints are exempt from JWT authentication middleware to ensure Kubernetes
 probes succeed without bearer tokens. The ``/health`` endpoint deliberately avoids
 structured logging to prevent log flooding from high-frequency liveness probes
-(typically every 10–30 seconds per pod).
+(typically every 10-30 seconds per pod).
 
 Design Decisions:
     - ``/health`` is a pure liveness check: if the process can respond, it is
@@ -53,13 +53,14 @@ from __future__ import annotations
 import os
 import resource
 import time
-from datetime import datetime, timezone
-from typing import Any, Dict, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
 from flask import Blueprint, Response, current_app, jsonify
 
 from api_gateway.extensions import get_db, get_redis
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — pre-configured structlog BoundLogger for structured
@@ -95,7 +96,7 @@ _SERVICE_VERSION: str = "1.0.0"
 # ===================================================================
 
 
-def _check_mongodb() -> Dict[str, Any]:
+def _check_mongodb() -> dict[str, Any]:
     """Check MongoDB connectivity by issuing a lightweight ``ping`` command.
 
     Uses the :func:`~api_gateway.extensions.get_db` helper to obtain the
@@ -130,7 +131,7 @@ def _check_mongodb() -> Dict[str, Any]:
             "response_time_ms": elapsed_ms,
             "details": f"Unexpected ping response: {result}",
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         elapsed_ms = round((time.time() - start) * 1000, 2)
         return {
             "status": "unhealthy",
@@ -139,7 +140,7 @@ def _check_mongodb() -> Dict[str, Any]:
         }
 
 
-def _check_redis() -> Dict[str, Any]:
+def _check_redis() -> dict[str, Any]:
     """Check Redis connectivity by issuing a lightweight ``PING`` command.
 
     Uses the :func:`~api_gateway.extensions.get_redis` helper to obtain the
@@ -159,7 +160,7 @@ def _check_redis() -> Dict[str, Any]:
     start: float = time.time()
     try:
         redis_client = get_redis()
-        pong: bool = redis_client.ping()
+        pong = bool(redis_client.ping())
         elapsed_ms: float = round((time.time() - start) * 1000, 2)
 
         if pong:
@@ -173,7 +174,7 @@ def _check_redis() -> Dict[str, Any]:
             "response_time_ms": elapsed_ms,
             "details": "Redis PING returned False",
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         elapsed_ms = round((time.time() - start) * 1000, 2)
         return {
             "status": "unhealthy",
@@ -204,7 +205,7 @@ def _get_memory_usage_mb() -> float:
 
 
 @health_bp.route("/health", methods=["GET"])
-def health_check() -> Tuple[Response, int]:
+def health_check() -> tuple[Response, int]:
     """Kubernetes liveness probe endpoint.
 
     Returns a lightweight JSON response confirming that the API Gateway
@@ -220,7 +221,7 @@ def health_check() -> Tuple[Response, int]:
     middleware.  Kubernetes probes do not carry authorisation tokens.
 
     **Logging:** Deliberately suppressed to avoid flooding structured
-    logs from high-frequency probe calls (typically every 10–30 s).
+    logs from high-frequency probe calls (typically every 10-30 s).
 
     Returns:
         Tuple of (JSON response, HTTP 200):
@@ -243,7 +244,7 @@ def health_check() -> Tuple[Response, int]:
             "uptime_seconds": 3600.5
         }
     """
-    now: datetime = datetime.now(timezone.utc)
+    now: datetime = datetime.now(UTC)
     uptime: float = round(time.time() - _start_time, 2)
 
     return jsonify({
@@ -256,7 +257,7 @@ def health_check() -> Tuple[Response, int]:
 
 
 @health_bp.route("/ready", methods=["GET"])
-def readiness_check() -> Tuple[Response, int]:
+def readiness_check() -> tuple[Response, int]:
     """Kubernetes readiness probe endpoint.
 
     Verifies that the API Gateway can successfully communicate with its
@@ -334,13 +335,13 @@ def readiness_check() -> Tuple[Response, int]:
             }
         }
     """
-    now: datetime = datetime.now(timezone.utc)
+    now: datetime = datetime.now(UTC)
 
     # Run dependency health checks in sequence (not parallel) to keep the
     # implementation simple and avoid thread-pool overhead for two lightweight
     # ping operations that should each complete in < 50 ms.
-    mongodb_check: Dict[str, Any] = _check_mongodb()
-    redis_check: Dict[str, Any] = _check_redis()
+    mongodb_check: dict[str, Any] = _check_mongodb()
+    redis_check: dict[str, Any] = _check_redis()
 
     # Determine overall readiness — all dependencies must be healthy.
     all_healthy: bool = (
@@ -375,7 +376,7 @@ def readiness_check() -> Tuple[Response, int]:
 
 
 @health_bp.route("/health/detailed", methods=["GET"])
-def detailed_health() -> Tuple[Response, int]:
+def detailed_health() -> tuple[Response, int]:
     """Detailed health endpoint combining liveness, readiness, and diagnostics.
 
     Provides a comprehensive view of the API Gateway's operational state,
@@ -432,12 +433,12 @@ def detailed_health() -> Tuple[Response, int]:
             }
         }
     """
-    now: datetime = datetime.now(timezone.utc)
+    now: datetime = datetime.now(UTC)
     uptime: float = round(time.time() - _start_time, 2)
 
     # Gather dependency health — reuse the same check functions as /ready.
-    mongodb_check: Dict[str, Any] = _check_mongodb()
-    redis_check: Dict[str, Any] = _check_redis()
+    mongodb_check: dict[str, Any] = _check_mongodb()
+    redis_check: dict[str, Any] = _check_redis()
 
     # Determine overall status: "healthy" if all deps OK, "degraded" otherwise.
     all_healthy: bool = (
