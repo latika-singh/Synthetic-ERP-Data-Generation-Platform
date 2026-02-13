@@ -13,7 +13,7 @@ six backend microservices:
 Convenience imports are provided so that common utilities can be accessed
 directly from the ``shared`` namespace::
 
-    from shared import get_config, get_logger, BaseConfig
+    from shared import get_logger, get_mongo_client, BaseConfig
 
 Sub-packages that have not yet been installed or created will be silently
 skipped — this allows incremental deployment and avoids circular import
