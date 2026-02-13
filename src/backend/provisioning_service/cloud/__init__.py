@@ -65,12 +65,13 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Type
+from typing import Any
 
 from provisioning_service.cloud.azure_blob_provider import AzureBlobProvider
 from provisioning_service.cloud.base import BaseCloudProvider
 from provisioning_service.cloud.gcs_provider import GCSProvider
 from provisioning_service.cloud.s3_provider import S3Provider
+
 
 # ---------------------------------------------------------------------------
 # Provider Registry
@@ -81,7 +82,7 @@ from provisioning_service.cloud.s3_provider import S3Provider
 # vendor-level names ("aws") interchangeably.
 # ---------------------------------------------------------------------------
 
-PROVIDER_REGISTRY: Dict[str, Type[BaseCloudProvider]] = {
+PROVIDER_REGISTRY: dict[str, type[BaseCloudProvider]] = {
     # AWS S3 -------------------------------------------------------------------
     "aws_s3": S3Provider,
     "s3": S3Provider,
@@ -99,7 +100,7 @@ PROVIDER_REGISTRY: Dict[str, Type[BaseCloudProvider]] = {
 
 def get_cloud_provider(
     provider_type: str,
-    config: Dict[str, Any],
+    config: dict[str, Any],
 ) -> BaseCloudProvider:
     """Instantiate the appropriate cloud storage provider for a given type.
 
@@ -175,7 +176,7 @@ def get_cloud_provider(
     return provider_class(config)
 
 
-def get_supported_providers() -> List[str]:
+def get_supported_providers() -> list[str]:
     """Return a sorted list of unique supported cloud provider type names.
 
     The returned list includes all registered aliases (e.g. ``"s3"``,
@@ -199,12 +200,12 @@ def get_supported_providers() -> List[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
-__all__: List[str] = [
-    "BaseCloudProvider",
-    "S3Provider",
-    "AzureBlobProvider",
-    "GCSProvider",
+__all__: list[str] = [
     "PROVIDER_REGISTRY",
+    "AzureBlobProvider",
+    "BaseCloudProvider",
+    "GCSProvider",
+    "S3Provider",
     "get_cloud_provider",
     "get_supported_providers",
 ]

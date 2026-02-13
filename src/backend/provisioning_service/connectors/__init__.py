@@ -4,9 +4,9 @@ This package implements the **Abstract Factory** pattern for JDBC-based
 database provisioning connectors.  It provides a unified interface for
 provisioning synthetic ERP data to four enterprise database platforms:
 
-* **PostgreSQL** (12 – 16) — via :class:`PostgreSQLConnector`
-* **Oracle** (19c – 23ai) — via :class:`OracleConnector`
-* **SQL Server** (2019 – 2022) — via :class:`SQLServerConnector`
+* **PostgreSQL** (12 - 16) — via :class:`PostgreSQLConnector`
+* **Oracle** (19c - 23ai) — via :class:`OracleConnector`
+* **SQL Server** (2019 - 2022) — via :class:`SQLServerConnector`
 * **SAP HANA** (2.0 SPS 07+) — via :class:`HANAConnector`
 
 All concrete connectors extend :class:`BaseConnector`, which defines the
@@ -47,13 +47,14 @@ Alternatively, import individual connector classes directly::
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Type
+from typing import Any
 
 from provisioning_service.connectors.base import BaseConnector
 from provisioning_service.connectors.hana_connector import HANAConnector
 from provisioning_service.connectors.oracle_connector import OracleConnector
 from provisioning_service.connectors.postgresql_connector import PostgreSQLConnector
 from provisioning_service.connectors.sqlserver_connector import SQLServerConnector
+
 
 # ---------------------------------------------------------------------------
 # Module logger
@@ -65,14 +66,14 @@ _logger: logging.Logger = logging.getLogger(__name__)
 # Connector Registry — Abstract Factory mapping
 # ---------------------------------------------------------------------------
 
-CONNECTOR_REGISTRY: Dict[str, Type[BaseConnector]] = {
-    # PostgreSQL 12 – 16: COPY-optimized bulk loading, schema-based tenancy
+CONNECTOR_REGISTRY: dict[str, type[BaseConnector]] = {
+    # PostgreSQL 12 - 16: COPY-optimized bulk loading, schema-based tenancy
     "postgresql": PostgreSQLConnector,
     "postgres": PostgreSQLConnector,
-    # Oracle 19c – 23ai: Array-bind batch inserts, tablespace tenancy
+    # Oracle 19c - 23ai: Array-bind batch inserts, tablespace tenancy
     "oracle": OracleConnector,
     "oracle_ebs": OracleConnector,
-    # SQL Server 2019 – 2022: BCP bulk insert, schema-qualified tenancy
+    # SQL Server 2019 - 2022: BCP bulk insert, schema-qualified tenancy
     "sqlserver": SQLServerConnector,
     "mssql": SQLServerConnector,
     # SAP HANA 2.0 SPS 07+: Column-store tables, in-memory batch inserts
@@ -102,7 +103,7 @@ Keys:
 # ---------------------------------------------------------------------------
 
 
-def get_connector(db_type: str, config: Dict[str, Any]) -> BaseConnector:
+def get_connector(db_type: str, config: dict[str, Any]) -> BaseConnector:
     """Instantiate and return a database connector for the given type.
 
     This is the primary entry point for the Abstract Factory pattern.  It
@@ -159,7 +160,7 @@ def get_connector(db_type: str, config: Dict[str, Any]) -> BaseConnector:
     # Normalise to lower-case for case-insensitive lookup.
     normalised_type: str = db_type.strip().lower()
 
-    connector_class: Type[BaseConnector] | None = CONNECTOR_REGISTRY.get(
+    connector_class: type[BaseConnector] | None = CONNECTOR_REGISTRY.get(
         normalised_type
     )
 
@@ -184,7 +185,7 @@ def get_connector(db_type: str, config: Dict[str, Any]) -> BaseConnector:
 # ---------------------------------------------------------------------------
 
 
-def get_supported_databases() -> List[str]:
+def get_supported_databases() -> list[str]:
     """Return a sorted list of unique supported database type identifiers.
 
     Aliases (e.g., ``"postgres"`` and ``"postgresql"``) are **both**
@@ -208,16 +209,13 @@ def get_supported_databases() -> List[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
-__all__: List[str] = [
-    # Base interface
-    "BaseConnector",
-    # Concrete connector classes
-    "PostgreSQLConnector",
-    "OracleConnector",
-    "SQLServerConnector",
-    "HANAConnector",
-    # Registry and factory
+__all__: list[str] = [
     "CONNECTOR_REGISTRY",
+    "BaseConnector",
+    "HANAConnector",
+    "OracleConnector",
+    "PostgreSQLConnector",
+    "SQLServerConnector",
     "get_connector",
     "get_supported_databases",
 ]

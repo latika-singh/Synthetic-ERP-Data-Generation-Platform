@@ -207,14 +207,14 @@ class GCSProvider(BaseCloudProvider):
     # ------------------------------------------------------------------
 
     @property
-    def _active_bucket(self) -> "gcs_storage.Bucket":
+    def _active_bucket(self) -> gcs_storage.Bucket:
         """Return the GCS bucket, raising if not initialised."""
         if self._bucket is None:
             raise RuntimeError("GCS bucket has not been initialised — call connect() first.")
         return self._bucket
 
     @property
-    def _active_client(self) -> "gcs_storage.Client":
+    def _active_client(self) -> gcs_storage.Client:
         """Return the GCS client, raising if not initialised."""
         if self._client is None:
             raise RuntimeError("GCS client has not been initialised — call connect() first.")
