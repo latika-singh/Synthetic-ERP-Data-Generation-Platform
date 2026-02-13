@@ -506,6 +506,15 @@ const DistributionChart: React.FC<DistributionChartProps> = ({
             </span>
           </h3>
         )}
+        {/* Distribution type badge — shown even in fallback state */}
+        <div className="flex items-center gap-2 mb-2">
+          <span
+            className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+            style={{ backgroundColor: `${color}20`, color }}
+          >
+            {DISTRIBUTION_LABELS[distributionType] ?? distributionType}
+          </span>
+        </div>
         <div
           className="flex items-center justify-center text-sm text-gray-400 dark:text-gray-500"
           style={{ height }}
