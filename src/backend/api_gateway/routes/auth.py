@@ -51,8 +51,35 @@ logger = get_logger(__name__)
 # Blueprint registered at /api/v1/auth by the routes package __init__.py
 auth_bp = Blueprint("auth", __name__)
 
-# Business-logic delegate — instantiated once at module load
-auth_service = AuthService()
+# ---------------------------------------------------------------------------
+# Lazy service instantiation — AuthService.__init__ reads current_app.config
+# and therefore requires an active Flask application context.  Module-level
+# instantiation would fail when the module is imported outside of create_app()
+# (e.g. during pytest collection, CLI scripts, or background workers).
+#
+# The helper caches the instance on the Flask ``g`` request-scoped proxy,
+# following the same pattern used by other route modules (profiles, schemas,
+# export) to avoid repeated object creation within a single request while
+# remaining compatible with the Application Factory pattern.
+# ---------------------------------------------------------------------------
+
+
+def _get_auth_service() -> AuthService:
+    """Lazily instantiate :class:`AuthService` for the current request.
+
+    :class:`AuthService.__init__` reads Auth0 configuration from
+    ``current_app.config``, which requires an active Flask application
+    context.  This helper defers instantiation to the first call within
+    a request and caches the instance on Flask's ``g`` proxy for reuse
+    within the same request lifecycle.
+
+    Returns:
+        An :class:`AuthService` instance bound to the current Flask
+        application context.
+    """
+    if not hasattr(g, "_auth_service"):
+        g._auth_service = AuthService()
+    return g._auth_service
 
 # CSRF state management constants
 _CSRF_STATE_PREFIX: str = "auth:csrf_state:"
@@ -206,7 +233,7 @@ def login():
         callback_url: str = _get_callback_url()
 
         # Delegate Auth0 authorize-URL construction to the service layer
-        auth_url: str = auth_service.get_login_url(
+        auth_url: str = _get_auth_service().get_login_url(
             redirect_uri=callback_url,
             state=state,
         )
@@ -333,7 +360,7 @@ def callback():
 
         # ----- Exchange code for tokens -----
         callback_url: str = _get_callback_url()
-        token_data: dict = auth_service.handle_callback(
+        token_data: dict = _get_auth_service().handle_callback(
             authorization_code=code,
             redirect_uri=callback_url,
         )
@@ -421,7 +448,7 @@ def logout():
         user_id: str = getattr(g, "user_id", None) or get_jwt_identity()
 
         # Delegate session cleanup and Auth0 logout-URL generation
-        result: dict = auth_service.logout(user_id)
+        result: dict = _get_auth_service().logout(user_id)
 
         logger.info("user_logged_out", user_id=user_id)
 
@@ -497,7 +524,7 @@ def refresh_token():
         refresh_request = TokenRefreshRequest.model_validate(body)
 
         # Exchange refresh token for new tokens via Auth0
-        token_data: dict = auth_service.refresh_token(
+        token_data: dict = _get_auth_service().refresh_token(
             refresh_token=refresh_request.refresh_token,
         )
 
@@ -597,7 +624,7 @@ def get_profile():
         user_id: str = get_jwt_identity()
 
         # Delegate profile retrieval to the service layer
-        user_data: Optional[dict] = auth_service.get_user_profile(user_id)
+        user_data: Optional[dict] = _get_auth_service().get_user_profile(user_id)
 
         if user_data is None:
             logger.warning("user_profile_not_found", user_id=user_id)
@@ -709,7 +736,7 @@ def update_profile():
             ), 400
 
         # Delegate update to service layer
-        updated_data: Optional[dict] = auth_service.update_user_profile(
+        updated_data: Optional[dict] = _get_auth_service().update_user_profile(
             user_id=user_id,
             tenant_id=tenant_id,
             updates=updates,
