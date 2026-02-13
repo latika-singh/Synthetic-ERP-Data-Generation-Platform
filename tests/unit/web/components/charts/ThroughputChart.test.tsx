@@ -34,85 +34,87 @@ import type { ThroughputDataPoint } from '@/components/charts/ThroughputChart';
 // SVG rendering complexity in jsdom and allows direct prop verification.
 // ---------------------------------------------------------------------------
 
-vi.mock('recharts', () => ({
-  /**
-   * ResponsiveContainer mock — renders a div wrapper with data-testid and
-   * data-height attributes, forwarding children so nested chart elements
-   * are rendered into the DOM.
-   */
-  ResponsiveContainer: ({ children, height, ...props }: any) => (
-    <div data-testid="responsive-container" data-height={height}>
-      {children}
-    </div>
-  ),
+vi.mock('recharts', async () => {
+  // Use React.createElement instead of JSX to avoid JSX runtime hoisting
+  // conflicts with vi.mock. Vitest hoists mock factories before all imports,
+  // so the automatic JSX runtime (react/jsx-runtime) is not yet available.
+  const React = await import('react');
+  const h = React.createElement;
 
-  /**
-   * AreaChart mock — renders a div container with data-testid, forwarding
-   * children (Area, XAxis, YAxis, etc.) into the DOM for individual assertion.
-   */
-  AreaChart: ({ children, ...props }: any) => (
-    <div data-testid="area-chart">{children}</div>
-  ),
+  return {
+    /**
+     * ResponsiveContainer mock — renders a div wrapper with data-testid and
+     * data-height attributes, forwarding children so nested chart elements
+     * are rendered into the DOM.
+     */
+    ResponsiveContainer: (props: any) =>
+      h('div', { 'data-testid': 'responsive-container', 'data-height': props.height }, props.children),
 
-  /**
-   * Area mock — renders a div with data-testid and exposes dataKey, name,
-   * stroke, and fill as data attributes for verifying metric binding and
-   * color theme application.
-   */
-  Area: ({ dataKey, name, stroke, fill, ...props }: any) => (
-    <div
-      data-testid="area"
-      data-datakey={dataKey}
-      data-name={name}
-      data-stroke={stroke}
-      data-fill={fill}
-    />
-  ),
+    /**
+     * AreaChart mock — renders a div container with data-testid, forwarding
+     * children (Area, XAxis, YAxis, etc.) into the DOM for individual assertion.
+     */
+    AreaChart: (props: any) =>
+      h('div', { 'data-testid': 'area-chart' }, props.children),
 
-  /**
-   * XAxis mock — renders a div with data-testid for presence verification.
-   */
-  XAxis: (props: any) => <div data-testid="x-axis" />,
+    /**
+     * Area mock — renders a div with data-testid and exposes dataKey, name,
+     * stroke, and fill as data attributes for verifying metric binding and
+     * color theme application.
+     */
+    Area: (props: any) =>
+      h('div', {
+        'data-testid': 'area',
+        'data-datakey': props.dataKey,
+        'data-name': props.name,
+        'data-stroke': props.stroke,
+        'data-fill': props.fill,
+      }),
 
-  /**
-   * YAxis mock — renders a div with data-testid and data-yaxisid to verify
-   * left/right axis configuration for dual-axis cumulative overlay.
-   */
-  YAxis: ({ yAxisId, ...props }: any) => (
-    <div data-testid="y-axis" data-yaxisid={yAxisId} />
-  ),
+    /**
+     * XAxis mock — renders a div with data-testid for presence verification.
+     */
+    XAxis: () => h('div', { 'data-testid': 'x-axis' }),
 
-  /**
-   * CartesianGrid mock — renders a div with data-testid for presence check.
-   */
-  CartesianGrid: (props: any) => <div data-testid="cartesian-grid" />,
+    /**
+     * YAxis mock — renders a div with data-testid and data-yaxisid to verify
+     * left/right axis configuration for dual-axis cumulative overlay.
+     */
+    YAxis: (props: any) =>
+      h('div', { 'data-testid': 'y-axis', 'data-yaxisid': props.yAxisId }),
 
-  /**
-   * Tooltip mock — renders a div with data-testid for presence check.
-   */
-  Tooltip: (props: any) => <div data-testid="tooltip" />,
+    /**
+     * CartesianGrid mock — renders a div with data-testid for presence check.
+     */
+    CartesianGrid: () => h('div', { 'data-testid': 'cartesian-grid' }),
 
-  /**
-   * Legend mock — renders a div with data-testid for presence check.
-   */
-  Legend: (props: any) => <div data-testid="legend" />,
+    /**
+     * Tooltip mock — renders a div with data-testid for presence check.
+     */
+    Tooltip: () => h('div', { 'data-testid': 'tooltip' }),
 
-  /**
-   * ReferenceLine mock — renders a div with data-testid, data-y for the
-   * threshold value, and renders the label text content when the label
-   * prop is an object with a `value` key (as used by the component for
-   * the "Target" label).
-   */
-  ReferenceLine: ({ y, label, ...props }: any) => (
-    <div data-testid="reference-line" data-y={String(y)}>
-      {label && typeof label === 'object' && 'value' in label
-        ? label.value
-        : typeof label === 'string'
-          ? label
-          : null}
-    </div>
-  ),
-}));
+    /**
+     * Legend mock — renders a div with data-testid for presence check.
+     */
+    Legend: () => h('div', { 'data-testid': 'legend' }),
+
+    /**
+     * ReferenceLine mock — renders a div with data-testid, data-y for the
+     * threshold value, and renders the label text content when the label
+     * prop is an object with a `value` key (as used by the component for
+     * the "Target" label).
+     */
+    ReferenceLine: (props: any) => {
+      const labelText =
+        props.label && typeof props.label === 'object' && 'value' in props.label
+          ? props.label.value
+          : typeof props.label === 'string'
+            ? props.label
+            : null;
+      return h('div', { 'data-testid': 'reference-line', 'data-y': String(props.y) }, labelText);
+    },
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Test Data Fixtures

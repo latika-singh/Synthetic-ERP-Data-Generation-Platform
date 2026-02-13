@@ -114,6 +114,14 @@ export default defineConfig({
     alias: {
       '@testing-library/jest-dom': path.resolve(__dirname, 'node_modules/@testing-library/jest-dom'),
       '@testing-library/react': path.resolve(__dirname, 'node_modules/@testing-library/react'),
+      /**
+       * Recharts alias ensures that vi.mock('recharts') in external test files
+       * (tests/unit/web/) resolves to the same physical module as the source
+       * component imports. Without this, vitest resolves the mock path relative
+       * to the test file location (outside src/web/), which fails to match the
+       * component's import resolution path (src/web/node_modules/recharts).
+       */
+      'recharts': path.resolve(__dirname, 'node_modules/recharts'),
     },
   },
 });
