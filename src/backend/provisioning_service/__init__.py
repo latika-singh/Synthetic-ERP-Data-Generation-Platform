@@ -1,7 +1,11 @@
 """Provisioning Service — database provisioning and cloud storage export.
 
 This microservice handles the final delivery stage of the Synthetic ERP Data
-Generation Platform pipeline:
+Generation Platform pipeline.  It is responsible for taking generated synthetic
+datasets and delivering them to their target destinations, which may be
+relational databases or cloud object stores.
+
+Supported capabilities:
 
 * **JDBC database connectors** — batch-insert provisioning for PostgreSQL,
   Oracle, SQL Server, and SAP HANA target databases.
@@ -16,28 +20,14 @@ Usage::
     from provisioning_service import create_app
 
     app = create_app()
-    app.run()
+    app.run(host="0.0.0.0", port=5005)
 """
 
 from __future__ import annotations
 
+from provisioning_service.app import create_app
 
 __version__: str = "1.0.0"
-"""Semantic version of the Provisioning Service."""
+"""Semantic version of the Provisioning Service package."""
 
-# ---------------------------------------------------------------------------
-# Convenience imports
-# ---------------------------------------------------------------------------
-# The ``create_app`` factory depends on Flask and several sub-modules that may
-# not yet be present during incremental project generation.  A guarded import
-# keeps the package importable in all scenarios.
-# ---------------------------------------------------------------------------
-
-__all__: list[str] = ["__version__"]
-
-try:
-    from provisioning_service.app import create_app
-
-    __all__.append("create_app")
-except ImportError:
-    pass
+__all__: list[str] = ["create_app", "__version__"]
