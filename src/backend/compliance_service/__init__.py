@@ -27,23 +27,38 @@ Usage::
 
 from __future__ import annotations
 
-
 __version__: str = "1.0.0"
-"""Semantic version of the Compliance Service."""
+"""Semantic version of the Compliance Service package."""
 
-# ---------------------------------------------------------------------------
-# Convenience imports
-# ---------------------------------------------------------------------------
-# The ``create_app`` factory depends on Flask and several sub-modules that may
-# not yet be present during incremental project generation.  A guarded import
-# keeps the package importable in all scenarios.
-# ---------------------------------------------------------------------------
+__all__: list[str] = ["create_app", "__version__"]
+"""Public API surface exported by the ``compliance_service`` package."""
 
-__all__: list[str] = ["__version__"]
 
-try:
-    from compliance_service.app import create_app
+def __getattr__(name: str) -> object:
+    """Lazily import heavy sub-modules to avoid circular dependencies.
 
-    __all__.append("create_app")
-except ImportError:
-    pass
+    Uses PEP 562 module-level ``__getattr__`` so that the ``create_app``
+    factory — which depends on Flask, MongoDB, Redis, and many internal
+    sub-modules — is only imported when first accessed rather than at
+    package import time.  This prevents circular import chains when
+    sibling modules reference the package before it is fully initialised.
+
+    Args:
+        name: The attribute name being requested.
+
+    Returns:
+        The requested module-level attribute.
+
+    Raises:
+        AttributeError: If *name* is not a recognised public attribute
+            of this package.
+    """
+    if name == "create_app":
+        from compliance_service.app import create_app
+
+        # Cache in the module globals so subsequent accesses bypass
+        # __getattr__ entirely, matching normal attribute lookup speed.
+        globals()["create_app"] = create_app
+        return create_app
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
