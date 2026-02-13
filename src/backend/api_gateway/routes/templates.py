@@ -39,6 +39,7 @@ Usage::
 from __future__ import annotations
 
 import copy
+import json as json_module
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -134,6 +135,40 @@ def _is_owner_or_admin(
     return template_doc.get("created_by") == user_id
 
 
+def _sanitize_validation_errors(errors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert Pydantic v2 validation error dicts to a JSON-serializable form.
+
+    Pydantic v2's ``ValidationError.errors()`` may include a ``ctx`` entry
+    whose values are raw Python exception objects (e.g. ``ValueError``).
+    Flask's ``jsonify`` cannot serialise those objects, so this helper
+    stringifies any non-primitive values in the ``ctx`` dict and ensures
+    the entire list is safe for JSON encoding.
+
+    Args:
+        errors: The list returned by ``ValidationError.errors()``.
+
+    Returns:
+        A new list of error dicts that is fully JSON-serializable.
+    """
+    sanitized: List[Dict[str, Any]] = []
+    for err in errors:
+        clean: Dict[str, Any] = {}
+        for key, value in err.items():
+            if key == "ctx" and isinstance(value, dict):
+                # Stringify non-primitive context values (e.g. ValueError).
+                clean[key] = {
+                    k: str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v
+                    for k, v in value.items()
+                }
+            elif key == "url":
+                # Pydantic v2 includes documentation URLs — keep as-is.
+                clean[key] = str(value)
+            else:
+                clean[key] = value
+        sanitized.append(clean)
+    return sanitized
+
+
 def _error_response(
     message: str,
     code: str,
@@ -207,7 +242,11 @@ def create_template() -> tuple[Response, int]:
     # Validate with Pydantic schema
     # ------------------------------------------------------------------
     try:
-        template_req: TemplateRequest = TemplateRequest.model_validate(body)
+        # Use model_validate_json for proper JSON-mode deserialization which
+        # handles string-to-enum coercion even with strict=True model config.
+        template_req: TemplateRequest = TemplateRequest.model_validate_json(
+            json_module.dumps(body)
+        )
     except ValidationError as exc:
         logger.warning(
             "template_create_validation_failed",
@@ -219,7 +258,7 @@ def create_template() -> tuple[Response, int]:
             "Template validation failed",
             "VALIDATION_ERROR",
             422,
-            details=exc.errors(),
+            details=_sanitize_validation_errors(exc.errors()),
         )
 
     # ------------------------------------------------------------------
@@ -602,7 +641,11 @@ def update_template(template_id: str) -> tuple[Response, int]:
     # Validate with Pydantic schema
     # ------------------------------------------------------------------
     try:
-        template_req: TemplateRequest = TemplateRequest.model_validate(body)
+        # Use model_validate_json for proper JSON-mode deserialization which
+        # handles string-to-enum coercion even with strict=True model config.
+        template_req: TemplateRequest = TemplateRequest.model_validate_json(
+            json_module.dumps(body)
+        )
     except ValidationError as exc:
         logger.warning(
             "template_update_validation_failed",
@@ -615,7 +658,7 @@ def update_template(template_id: str) -> tuple[Response, int]:
             "Template validation failed",
             "VALIDATION_ERROR",
             422,
-            details=exc.errors(),
+            details=_sanitize_validation_errors(exc.errors()),
         )
 
     # ------------------------------------------------------------------
