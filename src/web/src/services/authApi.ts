@@ -114,7 +114,15 @@ export async function login(
 export async function getLoginUrl(
   redirectUri?: string,
 ): Promise<ApiResponse<{ authorize_url: string }>> {
-  const params = redirectUri ? { redirect_uri: redirectUri } : {};
+  const effectiveRedirectUri =
+    redirectUri ??
+    (typeof window !== 'undefined'
+      ? `${window.location.origin}/callback`
+      : undefined);
+  const params: Record<string, string> = {};
+  if (effectiveRedirectUri) {
+    params.redirect_uri = effectiveRedirectUri;
+  }
   return apiClient.get(`${AUTH_BASE}/login`, { params });
 }
 
