@@ -223,11 +223,27 @@ def create_profile() -> tuple:
             user_id=user_id,
             error_count=len(exc.errors()),
         )
+        # Sanitise Pydantic v2 error dicts so they are JSON-serialisable.
+        # ``exc.errors()`` may contain non-serialisable objects such as
+        # ``PydanticUndefined`` in the ``input`` or ``ctx`` fields.
+        sanitised_errors: list[dict[str, Any]] = []
+        for err in exc.errors():
+            sanitised: dict[str, Any] = {
+                "type": err.get("type", "unknown"),
+                "loc": list(err.get("loc", ())),
+                "msg": err.get("msg", ""),
+            }
+            # Only include ``input`` if it is a simple JSON-safe type
+            raw_input = err.get("input")
+            if isinstance(raw_input, (str, int, float, bool, list, dict, type(None))):
+                sanitised["input"] = raw_input
+            sanitised_errors.append(sanitised)
+
         return _build_error_response(
             "Request validation failed",
             "VALIDATION_ERROR",
             422,
-            details=exc.errors(),
+            details=sanitised_errors,
         )
 
     # ------------------------------------------------------------------
