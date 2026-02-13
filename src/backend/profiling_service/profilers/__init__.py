@@ -50,8 +50,8 @@ PROFILER_REGISTRY: dict[str, type] = {
 
 def get_profiler(
     profiler_type: str,
-    config: dict | None = None,
-) -> StatisticalProfiler | PatternAnalyzer:
+    config: Optional[dict] = None,
+) -> Union[StatisticalProfiler, PatternAnalyzer]:
     """Create and return a profiler instance for the given type.
 
     Looks up *profiler_type* in :data:`PROFILER_REGISTRY` and instantiates
