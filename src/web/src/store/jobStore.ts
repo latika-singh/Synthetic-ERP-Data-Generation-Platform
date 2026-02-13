@@ -39,7 +39,7 @@ import {
   downloadJobOutput,
   retryJob as retryJobApi,
 } from '@/services/generationApi';
-import type { QualityReport } from '@/services/generationApi';
+import type { QualityReport, JobFilterParams } from '@/services/generationApi';
 
 // ============================================================================
 // JobState Interface
@@ -403,7 +403,13 @@ export const useJobStore = create<JobState>()((set, get) => ({
   fetchJobs: async (params): Promise<void> => {
     set({ isJobsLoading: true, jobsError: null });
     try {
-      const response = await getJobs(params);
+      // Cast to PaginationParams & JobFilterParams to satisfy the getJobs
+      // function signature, which requires the FilterParams index signature.
+      // The inline type in fetchJobs is structurally compatible but lacks the
+      // index signature declaration required by FilterParams extends.
+      const response = await getJobs(
+        params as (PaginationParams & JobFilterParams) | undefined
+      );
       set({
         jobs: response.data.items,
         jobsTotal: response.data.total,
