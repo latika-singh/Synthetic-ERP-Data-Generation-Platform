@@ -51,21 +51,18 @@ ERP_MODULE_MATERIAL_MANAGEMENT: str = "material_management"
 # ---------------------------------------------------------------------------
 
 __all__: list[str] = [
-    # From relationship_manager
-    "RelationshipManager",
+    "ERP_MODULE_FINANCIAL_ACCOUNTING",
+    "ERP_MODULE_HR",
+    "ERP_MODULE_MATERIAL_MANAGEMENT",
+    "ERP_MODULE_SALES_DISTRIBUTION",
+    "CycleResolutionStrategy",
+    "DependencyEdge",
+    "DependencyGraph",
     "ForeignKeyRelationship",
     "GeneratedKeyMapping",
     "IntegrityViolation",
-    # From dependency_graph
-    "DependencyGraph",
+    "RelationshipManager",
     "TableNode",
-    "DependencyEdge",
-    "CycleResolutionStrategy",
-    # ERP Module Constants (defined directly in this __init__)
-    "ERP_MODULE_FINANCIAL_ACCOUNTING",
-    "ERP_MODULE_HR",
-    "ERP_MODULE_SALES_DISTRIBUTION",
-    "ERP_MODULE_MATERIAL_MANAGEMENT",
 ]
 
 # Mapping from public symbol name to (module_path, attribute_name).

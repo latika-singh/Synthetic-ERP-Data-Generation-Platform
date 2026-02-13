@@ -66,7 +66,7 @@ except ImportError:  # pragma: no cover
     _TORCH_AVAILABLE = False
 
 try:
-    import tensorflow as tf  # type: ignore[import-untyped]
+    import tensorflow as tf
 
     _TF_AVAILABLE: bool = True
 except ImportError:  # pragma: no cover

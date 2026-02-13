@@ -206,7 +206,8 @@ class GANGenerator(nn.Module):
             Generated data tensor of shape ``(batch, input_dim)``
             normalised to the range ``[-1, 1]``.
         """
-        return self.network(z)
+        result: torch.Tensor = self.network(z)
+        return result
 
 
 class GANDiscriminator(nn.Module):
@@ -267,7 +268,8 @@ class GANDiscriminator(nn.Module):
             near ``1.0`` indicate "real" and near ``0.0`` indicate
             "fake".
         """
-        return self.network(x)
+        result: torch.Tensor = self.network(x)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -279,8 +281,8 @@ class VAEEncoder(tf.keras.Model):
     """TensorFlow VAE Encoder network.
 
     Maps input data to the parameters of a Gaussian latent distribution
-    (mean μ and log-variance log σ²) and samples from it using the
-    reparameterisation trick:  ``z = μ + σ · ε``  where ``ε ~ N(0, I)``.
+    (mean mu and log-variance log sigma^2) and samples from it using the
+    reparameterisation trick:  ``z = mu + sigma * eps``  where ``eps ~ N(0, I)``.
 
     Architecture::
 
@@ -507,7 +509,7 @@ class AIMLGenerator(BaseGenerator):
                 "gpu_device_selected",
                 cuda_device=torch.cuda.get_device_name(0),
                 cuda_memory_gb=round(
-                    torch.cuda.get_device_properties(0).total_mem / (1024**3),
+                    torch.cuda.get_device_properties(0).total_memory / (1024**3),
                     2,
                 ),
             )
@@ -525,12 +527,12 @@ class AIMLGenerator(BaseGenerator):
     # Abstract Method Implementations  (Strategy Pattern)
     # ------------------------------------------------------------------
 
-    def generate(
+    def generate(  # noqa: PLR0912
         self,
         schema: dict[str, Any],
         profile: dict[str, Any],
         num_records: int,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002
     ) -> GenerationResult:
         """Generate synthetic records using GAN or VAE.
 
@@ -811,7 +813,7 @@ class AIMLGenerator(BaseGenerator):
     # GAN Training and Generation
     # ------------------------------------------------------------------
 
-    def _train_gan(self, profile_data: np.ndarray, epochs: int) -> None:
+    def _train_gan(self, profile_data: np.ndarray, epochs: int) -> None:  # noqa: PLR0915
         """Train a GAN from scratch on synthetic profile data.
 
         Implements the standard GAN adversarial training loop:
@@ -1031,7 +1033,7 @@ class AIMLGenerator(BaseGenerator):
                     + self._vae_decoder.trainable_variables
                 )
                 gradients = tape.gradient(total_loss, trainable_vars)
-                optimizer.apply_gradients(zip(gradients, trainable_vars))
+                optimizer.apply_gradients(zip(gradients, trainable_vars, strict=False))
 
                 epoch_total_loss += float(total_loss)
                 epoch_recon_loss += float(reconstruction_loss)
@@ -1102,7 +1104,8 @@ class AIMLGenerator(BaseGenerator):
                 all_generated.append(generated.cpu().numpy())
                 remaining -= current_batch
 
-        return np.concatenate(all_generated, axis=0)[:num_records]
+        concatenated: np.ndarray = np.concatenate(all_generated, axis=0)[:num_records]
+        return concatenated
 
     def _generate_vae(self, num_records: int) -> np.ndarray:
         """Generate synthetic data using the trained VAE Decoder.
@@ -1141,7 +1144,8 @@ class AIMLGenerator(BaseGenerator):
             all_generated.append(decoded.numpy())
             remaining -= current_batch
 
-        return np.concatenate(all_generated, axis=0)[:num_records]
+        concatenated: np.ndarray = np.concatenate(all_generated, axis=0)[:num_records]
+        return concatenated
 
     def _generate_with_pretrained(self, num_records: int) -> np.ndarray:
         """Generate data using a loaded :class:`TabularGAN` or :class:`TabularVAE`.
@@ -1165,7 +1169,7 @@ class AIMLGenerator(BaseGenerator):
                 method="ai_ml",
             )
 
-        if isinstance(self._pretrained_model, TabularGAN) or isinstance(self._pretrained_model, TabularVAE):
+        if isinstance(self._pretrained_model, (TabularGAN, TabularVAE)):
             return self._pretrained_model.generate(num_records)
         else:
             raise GenerationError(
@@ -1300,7 +1304,7 @@ class AIMLGenerator(BaseGenerator):
                 parts.append(part)
 
             elif col_type in ("string", "boolean", "text"):
-                part, num_cats = self._preprocess_categorical(
+                part, _num_cats = self._preprocess_categorical(
                     col_name, col_type, col_profile, num_samples
                 )
                 parts.append(part)
@@ -1328,9 +1332,10 @@ class AIMLGenerator(BaseGenerator):
                 message="No processable columns found; generating random data",
             )
             self._preprocessed_dim = 10
-            return np.random.normal(size=(num_samples, 10)).astype(np.float32)
+            fallback: np.ndarray = np.random.normal(size=(num_samples, 10)).astype(np.float32)
+            return fallback
 
-        result = np.concatenate(parts, axis=1).astype(np.float32)
+        result: np.ndarray = np.concatenate(parts, axis=1).astype(np.float32)
         self._preprocessed_dim = result.shape[1]
 
         self.logger.info(
@@ -1378,10 +1383,11 @@ class AIMLGenerator(BaseGenerator):
 
         data_range = max(max_val - min_val, 1e-9)
 
-        if is_gan:
-            normalized = 2.0 * (samples - min_val) / data_range - 1.0
-        else:
-            normalized = (samples - min_val) / data_range
+        normalized = (
+            2.0 * (samples - min_val) / data_range - 1.0
+            if is_gan
+            else (samples - min_val) / data_range
+        )
 
         self._normalization_params[col_name] = {
             "min": min_val,
@@ -1460,10 +1466,11 @@ class AIMLGenerator(BaseGenerator):
         ts_range = max_ts - min_ts
         samples = np.random.uniform(min_ts, max_ts, size=num_samples)
 
-        if is_gan:
-            normalized = 2.0 * (samples - min_ts) / ts_range - 1.0
-        else:
-            normalized = (samples - min_ts) / ts_range
+        normalized = (
+            2.0 * (samples - min_ts) / ts_range - 1.0
+            if is_gan
+            else (samples - min_ts) / ts_range
+        )
 
         self._normalization_params[col_name] = {
             "min": min_ts,
@@ -1477,7 +1484,7 @@ class AIMLGenerator(BaseGenerator):
     # Postprocessing
     # ------------------------------------------------------------------
 
-    def _postprocess_output(
+    def _postprocess_output(  # noqa: PLR0912, PLR0915
         self,
         raw_output: np.ndarray,
         schema: dict[str, Any],
@@ -1537,10 +1544,11 @@ class AIMLGenerator(BaseGenerator):
                 d_range = norm["range"]
 
                 # Denormalise
-                if is_gan:
-                    denorm = (raw_col + 1.0) / 2.0 * d_range + d_min
-                else:
-                    denorm = raw_col * d_range + d_min
+                denorm = (
+                    (raw_col + 1.0) / 2.0 * d_range + d_min
+                    if is_gan
+                    else raw_col * d_range + d_min
+                )
 
                 denorm = np.clip(denorm, d_min, d_max)
 
@@ -1643,7 +1651,7 @@ class AIMLGenerator(BaseGenerator):
         col_types = [self._extract_col_info(cd)[1] for cd in columns_raw]
 
         result_dict: dict[str, Any] = {}
-        for idx, (name, dtype) in enumerate(zip(col_names, col_types)):
+        for idx, (name, dtype) in enumerate(zip(col_names, col_types, strict=False)):
             if idx < num_output_cols:
                 col_data = (
                     raw_output[:, idx] if raw_output.ndim > 1 else raw_output

@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import-untyped]
+import tensorflow as tf
 
 from shared.logging.structured_logger import get_logger
 

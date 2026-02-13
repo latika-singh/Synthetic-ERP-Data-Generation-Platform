@@ -265,6 +265,10 @@ module = [
     "jose.*",
     "jose.jwt",
     "jose.jwt.*",
+    "scipy",
+    "scipy.*",
+    "tensorflow",
+    "tensorflow.*",
 ]
 ignore_missing_imports = true
 
