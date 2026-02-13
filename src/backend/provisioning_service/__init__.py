@@ -27,7 +27,8 @@ from __future__ import annotations
 
 from provisioning_service.app import create_app
 
+
 __version__: str = "1.0.0"
 """Semantic version of the Provisioning Service package."""
 
-__all__: list[str] = ["create_app", "__version__"]
+__all__: list[str] = ["__version__", "create_app"]
