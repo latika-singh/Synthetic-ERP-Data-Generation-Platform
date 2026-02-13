@@ -291,8 +291,16 @@ def create_generation_job() -> tuple:
         )
 
     # --- Validate with Pydantic -----------------------------------------------
+    # NOTE: We intentionally pass ``strict=False`` so that string values
+    # from JSON payloads are coerced to StrEnum instances (e.g.
+    # "statistical" → GenerationMethod.STATISTICAL).  The schema model
+    # defines ``ConfigDict(strict=True)`` for Python-side type safety,
+    # but HTTP request bodies always deliver enum fields as plain strings
+    # and therefore require lenient (non-strict) validation.
     try:
-        job_request: GenerationJobRequest = GenerationJobRequest.model_validate(body)
+        job_request: GenerationJobRequest = GenerationJobRequest.model_validate(
+            body, strict=False
+        )
     except ValidationError as exc:
         logger.warning(
             "generation_job_create_validation_failed",
