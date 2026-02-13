@@ -241,6 +241,49 @@ class AzureBlobProvider(BaseCloudProvider):
         super().__init__(config)
 
     # ------------------------------------------------------------------
+    # Internal helpers for type-safe access to nullable SDK objects
+    # ------------------------------------------------------------------
+
+    @property
+    def _active_container_client(self) -> ContainerClient:
+        """Return the container client, raising if not initialised.
+
+        This property narrows the ``ContainerClient | None`` type to a
+        plain ``ContainerClient``, satisfying ``mypy``'s strict
+        ``union-attr`` checks and providing a clear error message when
+        the provider has not been connected.
+
+        Returns:
+            The initialised :class:`ContainerClient`.
+
+        Raises:
+            RuntimeError: If :meth:`_initialize_client` has not run yet.
+        """
+        if self._container_client is None:
+            raise RuntimeError(
+                "Azure container client has not been initialised — "
+                "call connect() first."
+            )
+        return self._container_client
+
+    @property
+    def _active_service_client(self) -> BlobServiceClient:
+        """Return the blob service client, raising if not initialised.
+
+        Returns:
+            The initialised :class:`BlobServiceClient`.
+
+        Raises:
+            RuntimeError: If :meth:`_initialize_client` has not run yet.
+        """
+        if self._blob_service_client is None:
+            raise RuntimeError(
+                "Azure blob service client has not been initialised — "
+                "call connect() first."
+            )
+        return self._blob_service_client
+
+    # ------------------------------------------------------------------
     # Abstract method implementations
     # ------------------------------------------------------------------
 
@@ -412,7 +455,7 @@ class AzureBlobProvider(BaseCloudProvider):
             content_type=resolved_content_type,
         )
 
-        blob_client = self._container_client.get_blob_client(blob_name)
+        blob_client = self._active_container_client.get_blob_client(blob_name)
 
         def _do_upload() -> None:
             """Inner upload callable for retry wrapper."""
@@ -507,7 +550,7 @@ class AzureBlobProvider(BaseCloudProvider):
             content_type=resolved_content_type,
         )
 
-        blob_client = self._container_client.get_blob_client(blob_name)
+        blob_client = self._active_container_client.get_blob_client(blob_name)
 
         # Build keyword arguments for upload_blob.
         upload_kwargs: dict[str, Any] = {
@@ -599,7 +642,7 @@ class AzureBlobProvider(BaseCloudProvider):
         self.ensure_initialized()
 
         blob_name = self._build_remote_key(remote_key)
-        blob_client = self._container_client.get_blob_client(blob_name)
+        blob_client = self._active_container_client.get_blob_client(blob_name)
 
         def _do_download() -> int:
             """Inner download callable for retry wrapper."""
@@ -664,7 +707,7 @@ class AzureBlobProvider(BaseCloudProvider):
         self.ensure_initialized()
 
         blob_name = self._build_remote_key(remote_key)
-        blob_client = self._container_client.get_blob_client(blob_name)
+        blob_client = self._active_container_client.get_blob_client(blob_name)
 
         def _do_download_stream() -> io.BytesIO:
             """Inner stream download callable for retry wrapper."""
@@ -750,7 +793,7 @@ class AzureBlobProvider(BaseCloudProvider):
         def _do_list() -> list[dict[str, Any]]:
             """Inner listing callable for retry wrapper."""
             results: list[dict[str, Any]] = []
-            blob_iter = self._container_client.list_blobs(
+            blob_iter = self._active_container_client.list_blobs(
                 name_starts_with=full_prefix,
                 results_per_page=max_results,
             )
@@ -820,7 +863,7 @@ class AzureBlobProvider(BaseCloudProvider):
         self.ensure_initialized()
 
         blob_name = self._build_remote_key(remote_key)
-        blob_client = self._container_client.get_blob_client(blob_name)
+        blob_client = self._active_container_client.get_blob_client(blob_name)
 
         def _do_delete() -> bool:
             """Inner delete callable for retry wrapper."""
@@ -886,7 +929,7 @@ class AzureBlobProvider(BaseCloudProvider):
             errors = []
 
             try:
-                responses = self._container_client.delete_blobs(
+                responses = self._active_container_client.delete_blobs(
                     *blob_names,
                     delete_snapshots="include",
                 )
@@ -923,7 +966,7 @@ class AzureBlobProvider(BaseCloudProvider):
                 errors = []
                 for name in blob_names:
                     try:
-                        client = self._container_client.get_blob_client(name)
+                        client = self._active_container_client.get_blob_client(name)
                         client.delete_blob(delete_snapshots="include")
                         deleted_count += 1
                     except ResourceNotFoundError:
@@ -972,7 +1015,7 @@ class AzureBlobProvider(BaseCloudProvider):
         self.ensure_initialized()
 
         blob_name = self._build_remote_key(remote_key)
-        blob_client = self._container_client.get_blob_client(blob_name)
+        blob_client = self._active_container_client.get_blob_client(blob_name)
 
         try:
             blob_client.get_blob_properties()
@@ -1018,7 +1061,7 @@ class AzureBlobProvider(BaseCloudProvider):
         self.ensure_initialized()
 
         blob_name = self._build_remote_key(remote_key)
-        blob_client = self._container_client.get_blob_client(blob_name)
+        blob_client = self._active_container_client.get_blob_client(blob_name)
 
         try:
             props = blob_client.get_blob_properties()
@@ -1206,7 +1249,7 @@ class AzureBlobProvider(BaseCloudProvider):
 
         try:
             _, latency_ms = self._measure_latency(
-                self._container_client.get_container_properties,
+                self._active_container_client.get_container_properties,
             )
 
             # Include operational metrics in the health response.

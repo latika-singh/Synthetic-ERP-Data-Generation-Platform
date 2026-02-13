@@ -836,10 +836,11 @@ class S3Provider(BaseCloudProvider):
         )
 
         def _do_get() -> dict[str, Any]:
-            return self._client.get_object(
+            result: dict[str, Any] = self._client.get_object(
                 Bucket=self._bucket_name,
                 Key=full_key,
             )
+            return result
 
         try:
             response = self._execute_with_retry(_do_get)
@@ -1091,10 +1092,11 @@ class S3Provider(BaseCloudProvider):
             def _do_batch_delete(
                 payload: dict[str, Any] = delete_payload,
             ) -> dict[str, Any]:
-                return self._client.delete_objects(
+                result: dict[str, Any] = self._client.delete_objects(
                     Bucket=self._bucket_name,
                     Delete=payload,
                 )
+                return result
 
             try:
                 response = self._execute_with_retry(_do_batch_delete)
@@ -1220,10 +1222,11 @@ class S3Provider(BaseCloudProvider):
         )
 
         def _do_head() -> dict[str, Any]:
-            return self._client.head_object(
+            result: dict[str, Any] = self._client.head_object(
                 Bucket=self._bucket_name,
                 Key=full_key,
             )
+            return result
 
         try:
             response = self._execute_with_retry(_do_head)

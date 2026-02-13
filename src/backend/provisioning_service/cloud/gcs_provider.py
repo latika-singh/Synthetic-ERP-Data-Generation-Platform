@@ -203,6 +203,24 @@ class GCSProvider(BaseCloudProvider):
         super().__init__(config)
 
     # ------------------------------------------------------------------
+    # Internal helpers for type-safe access to nullable SDK objects
+    # ------------------------------------------------------------------
+
+    @property
+    def _active_bucket(self) -> "gcs_storage.Bucket":
+        """Return the GCS bucket, raising if not initialised."""
+        if self._bucket is None:
+            raise RuntimeError("GCS bucket has not been initialised — call connect() first.")
+        return self._bucket
+
+    @property
+    def _active_client(self) -> "gcs_storage.Client":
+        """Return the GCS client, raising if not initialised."""
+        if self._client is None:
+            raise RuntimeError("GCS client has not been initialised — call connect() first.")
+        return self._client
+
+    # ------------------------------------------------------------------
     # Abstract method implementations
     # ------------------------------------------------------------------
 
@@ -367,7 +385,7 @@ class GCSProvider(BaseCloudProvider):
         resolved_ct = content_type or self._detect_content_type(local_path)
 
         def _do_upload() -> dict[str, Any]:
-            blob = self._bucket.blob(full_key, chunk_size=self._chunk_size)
+            blob = self._active_bucket.blob(full_key, chunk_size=self._chunk_size)
             blob.content_type = resolved_ct
 
             if metadata:
@@ -405,7 +423,7 @@ class GCSProvider(BaseCloudProvider):
             return result
 
         try:
-            result = self._execute_with_retry(_do_upload)
+            result: dict[str, Any] = self._execute_with_retry(_do_upload)
             self._logger.info(
                 "gcs_upload_success",
                 bucket=self._bucket_name,
@@ -463,7 +481,7 @@ class GCSProvider(BaseCloudProvider):
         resolved_ct = content_type or "application/octet-stream"
 
         def _do_stream_upload() -> dict[str, Any]:
-            blob = self._bucket.blob(full_key, chunk_size=self._chunk_size)
+            blob = self._active_bucket.blob(full_key, chunk_size=self._chunk_size)
             blob.content_type = resolved_ct
 
             if metadata:
@@ -512,7 +530,7 @@ class GCSProvider(BaseCloudProvider):
             return result
 
         try:
-            result = self._execute_with_retry(_do_stream_upload)
+            result: dict[str, Any] = self._execute_with_retry(_do_stream_upload)
             self._logger.info(
                 "gcs_stream_upload_success",
                 bucket=self._bucket_name,
@@ -565,7 +583,7 @@ class GCSProvider(BaseCloudProvider):
         full_key = self._build_remote_key(remote_key)
 
         def _do_download() -> dict[str, Any]:
-            blob = self._bucket.blob(full_key)
+            blob = self._active_bucket.blob(full_key)
 
             try:
                 blob.download_to_filename(
@@ -593,7 +611,7 @@ class GCSProvider(BaseCloudProvider):
             }
 
         try:
-            result = self._execute_with_retry(_do_download)
+            result: dict[str, Any] = self._execute_with_retry(_do_download)
             self._logger.info(
                 "gcs_download_success",
                 bucket=self._bucket_name,
@@ -640,7 +658,7 @@ class GCSProvider(BaseCloudProvider):
         full_key = self._build_remote_key(remote_key)
 
         def _do_stream_download() -> io.BytesIO:
-            blob = self._bucket.blob(full_key)
+            blob = self._active_bucket.blob(full_key)
             buffer = io.BytesIO()
 
             try:
@@ -660,7 +678,7 @@ class GCSProvider(BaseCloudProvider):
             return buffer
 
         try:
-            result = self._execute_with_retry(_do_stream_download)
+            result: io.BytesIO = self._execute_with_retry(_do_stream_download)
             self._logger.info(
                 "gcs_stream_download_success",
                 bucket=self._bucket_name,
@@ -731,7 +749,7 @@ class GCSProvider(BaseCloudProvider):
             full_prefix = None
 
         def _do_list() -> list[dict[str, Any]]:
-            blobs_iter = self._client.list_blobs(
+            blobs_iter = self._active_client.list_blobs(
                 self._bucket,
                 prefix=full_prefix,
                 max_results=max_results,
@@ -760,7 +778,7 @@ class GCSProvider(BaseCloudProvider):
             return results
 
         try:
-            results = self._execute_with_retry(_do_list)
+            results: list[dict[str, Any]] = self._execute_with_retry(_do_list)
             self._logger.info(
                 "gcs_list_objects_success",
                 bucket=self._bucket_name,
@@ -805,7 +823,7 @@ class GCSProvider(BaseCloudProvider):
         full_key = self._build_remote_key(remote_key)
 
         def _do_delete() -> bool:
-            blob = self._bucket.blob(full_key)
+            blob = self._active_bucket.blob(full_key)
             try:
                 blob.delete(retry=gcs_retry.DEFAULT_RETRY)
                 self._total_operations += 1
@@ -820,7 +838,7 @@ class GCSProvider(BaseCloudProvider):
                 return False
 
         try:
-            deleted = self._execute_with_retry(_do_delete)
+            deleted: bool = self._execute_with_retry(_do_delete)
             if deleted:
                 self._logger.info(
                     "gcs_delete_success",
@@ -879,7 +897,7 @@ class GCSProvider(BaseCloudProvider):
             batch_chunk = full_keys[i : i + batch_size]
 
             for key in batch_chunk:
-                blob = self._bucket.blob(key)
+                blob = self._active_bucket.blob(key)
                 try:
                     blob.delete(retry=gcs_retry.DEFAULT_RETRY)
                     deleted_count += 1
@@ -926,11 +944,12 @@ class GCSProvider(BaseCloudProvider):
         full_key = self._build_remote_key(remote_key)
 
         def _do_exists() -> bool:
-            blob = self._bucket.blob(full_key)
-            return blob.exists()
+            blob = self._active_bucket.blob(full_key)
+            exists: bool = bool(blob.exists())
+            return exists
 
         try:
-            result = self._execute_with_retry(_do_exists)
+            result: bool = self._execute_with_retry(_do_exists)
             self._total_operations += 1
             return result
         except GoogleCloudError as exc:
@@ -980,7 +999,7 @@ class GCSProvider(BaseCloudProvider):
         full_key = self._build_remote_key(remote_key)
 
         def _do_get_metadata() -> dict[str, Any]:
-            blob = self._bucket.blob(full_key)
+            blob = self._active_bucket.blob(full_key)
             try:
                 blob.reload()
             except NotFound as exc:
@@ -1010,7 +1029,7 @@ class GCSProvider(BaseCloudProvider):
             }
 
         try:
-            result = self._execute_with_retry(_do_get_metadata)
+            result: dict[str, Any] = self._execute_with_retry(_do_get_metadata)
             self._logger.info(
                 "gcs_get_metadata_success",
                 bucket=self._bucket_name,
@@ -1070,10 +1089,10 @@ class GCSProvider(BaseCloudProvider):
             )
 
         full_key = self._build_remote_key(remote_key)
-        blob = self._bucket.blob(full_key)
+        blob = self._active_bucket.blob(full_key)
 
         try:
-            url = blob.generate_signed_url(
+            url: str = blob.generate_signed_url(
                 expiration=timedelta(minutes=expiration_minutes),
                 method=method,
                 credentials=self._credentials,

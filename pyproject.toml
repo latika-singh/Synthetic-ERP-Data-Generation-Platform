@@ -240,6 +240,7 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = [
     "jaydebeapi.*",
+    "jpype.*",
     "great_expectations.*",
     "langchain.*",
     "langchain_community.*",
