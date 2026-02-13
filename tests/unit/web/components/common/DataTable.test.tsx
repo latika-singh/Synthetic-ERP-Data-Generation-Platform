@@ -200,10 +200,9 @@ describe('DataTable', () => {
         pageSize: 20,
       });
 
-      /* The component renders rangeStart–rangeEnd of totalItems using &ndash; */
-      const paginationArea = screen.getByText(/1/);
-      /* Look for the combined text containing the range and total */
-      expect(screen.getByText(/of 100/)).toBeInTheDocument();
+      /* The component renders rangeStart–rangeEnd of totalItems using &ndash; (en-dash \u2013) */
+      const rangeElement = screen.getByText(/1\u201320 of 100/);
+      expect(rangeElement).toBeInTheDocument();
     });
 
     it('displays page size selector with options [10, 20, 50, 100]', () => {
