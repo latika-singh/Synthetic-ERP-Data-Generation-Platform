@@ -94,13 +94,26 @@ export default defineConfig({
    * Integrated into vite.config.ts to share path aliases and plugin configuration.
    * - globals: true enables describe/it/expect without explicit imports
    * - environment: 'jsdom' provides browser-like DOM for component testing
-   * - setupFiles: Points to test setup file for @testing-library/jest-dom matchers
+   * - setupFiles: Points to test setup files for @testing-library/jest-dom matchers
+   *   and comprehensive browser API mocks (matchMedia, crypto, IntersectionObserver, etc.)
+   * - include: Covers tests inside src/ and external tests in tests/unit/web/
    * - css: true processes CSS imports during tests (TailwindCSS)
    */
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts'],
+    setupFiles: [
+      './src/test/setup.ts',
+      '../../tests/unit/web/setup.ts',
+    ],
+    include: [
+      'src/**/*.{test,spec}.{ts,tsx}',
+      '../../tests/unit/web/**/*.{test,spec}.{ts,tsx}',
+    ],
     css: true,
+    alias: {
+      '@testing-library/jest-dom': path.resolve(__dirname, 'node_modules/@testing-library/jest-dom'),
+      '@testing-library/react': path.resolve(__dirname, 'node_modules/@testing-library/react'),
+    },
   },
 });
