@@ -43,14 +43,12 @@ Typical usage (registered via Application Factory)::
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from flask import Blueprint, Response, g, jsonify, request
 from flask_jwt_extended import jwt_required
 from pydantic import ValidationError
 
 from api_gateway.middleware.auth import require_permissions
-from api_gateway.schemas.schema import SchemaDefinition, SchemaDiscoveryRequest
+from api_gateway.schemas.schema import SchemaDiscoveryRequest
 from api_gateway.services.schema_service import SchemaService
 from api_gateway.utils.pagination import validate_page_size
 from shared.logging.structured_logger import get_logger
@@ -192,7 +190,7 @@ def discover_schema() -> tuple[Response, int]:
         # rather than the Pydantic model, keeping the service layer
         # decoupled from the API schema layer.
         connection_config: dict = validated.connection_params.model_dump()
-        modules_list: List[str] = [m.value for m in validated.modules]
+        modules_list: list[str] = [m.value for m in validated.modules]
 
         result: dict = schema_service.discover_schema(
             tenant_id=tenant_id,
@@ -284,8 +282,8 @@ def list_schemas() -> tuple[Response, int]:
     tenant_id: str = getattr(g, "tenant_id", "")
 
     # --- Parse query parameters ---
-    erp_type: Optional[str] = request.args.get("erp_type", default=None, type=str)
-    module: Optional[str] = request.args.get("module", default=None, type=str)
+    erp_type: str | None = request.args.get("erp_type", default=None, type=str)
+    module: str | None = request.args.get("module", default=None, type=str)
 
     # Page number: default 1, minimum 1
     try:
@@ -296,7 +294,7 @@ def list_schemas() -> tuple[Response, int]:
     # Page size: validated and clamped via utility function
     raw_page_size = request.args.get("page_size", default=None)
     try:
-        page_size_param: Optional[int] = int(raw_page_size) if raw_page_size is not None else None
+        page_size_param: int | None = int(raw_page_size) if raw_page_size is not None else None
     except (TypeError, ValueError):
         page_size_param = None
     page_size: int = validate_page_size(page_size_param)
@@ -386,7 +384,7 @@ def get_schema(schema_id: str) -> tuple[Response, int]:
 
     try:
         schema_service = _get_schema_service()
-        schema_data: Optional[dict] = schema_service.get_schema(
+        schema_data: dict | None = schema_service.get_schema(
             schema_id=schema_id,
             tenant_id=tenant_id,
         )
@@ -475,7 +473,7 @@ def get_schema_tables(schema_id: str) -> tuple[Response, int]:
 
     try:
         schema_service = _get_schema_service()
-        tables: Optional[List[dict]] = schema_service.get_schema_tables(
+        tables: list[dict] | None = schema_service.get_schema_tables(
             schema_id=schema_id,
             tenant_id=tenant_id,
         )
@@ -498,7 +496,7 @@ def get_schema_tables(schema_id: str) -> tuple[Response, int]:
         # The raw table documents from SchemaService contain full column
         # arrays; here we produce a lightweight summary with counts
         # suitable for the table listing view.
-        table_summaries: List[dict] = []
+        table_summaries: list[dict] = []
         for table in tables:
             columns = table.get("columns", [])
             primary_keys = table.get("primary_keys", table.get("primary_key", []))
@@ -603,7 +601,7 @@ def get_table_details(schema_id: str, table_name: str) -> tuple[Response, int]:
 
     try:
         schema_service = _get_schema_service()
-        table_data: Optional[dict] = schema_service.get_table_details(
+        table_data: dict | None = schema_service.get_table_details(
             schema_id=schema_id,
             tenant_id=tenant_id,
             table_name=table_name,
@@ -712,7 +710,7 @@ def get_schema_relationships(schema_id: str) -> tuple[Response, int]:
 
     try:
         schema_service = _get_schema_service()
-        relationships: Optional[List[dict]] = schema_service.get_relationships(
+        relationships: list[dict] | None = schema_service.get_relationships(
             schema_id=schema_id,
             tenant_id=tenant_id,
         )

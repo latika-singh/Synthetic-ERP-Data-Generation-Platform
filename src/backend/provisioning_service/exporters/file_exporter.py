@@ -70,18 +70,21 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, Generator, List, Optional, Tuple, Union
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from provisioning_service.cloud import BaseCloudProvider, get_cloud_provider
 from shared.database.redis_client import get_redis_client
 from shared.logging.structured_logger import get_logger
 
-from provisioning_service.cloud import BaseCloudProvider, get_cloud_provider
-from provisioning_service.config import ProvisioningServiceConfig
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from provisioning_service.config import ProvisioningServiceConfig
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +192,7 @@ class FileExporter:
         os.makedirs(self.export_temp_dir, exist_ok=True)
 
         # Cloud provider — lazily initialised on first cloud export.
-        self._cloud_provider: Optional[BaseCloudProvider] = None
+        self._cloud_provider: BaseCloudProvider | None = None
 
         self._logger.info(
             "file_exporter_initialised",
@@ -207,18 +210,18 @@ class FileExporter:
     def export_to_file(
         self,
         data: Generator,
-        format: str,
+        output_format: str,
         output_path: str,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         job_id: str,
         tenant_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Export synthetic data to a local file in the specified format.
 
         This is the primary entry point for file-based export.  The method:
 
-        1. Validates the requested *format*.
+        1. Validates the requested *output_format*.
         2. Creates a tenant-scoped temporary directory.
         3. Dispatches to the appropriate format-specific handler.
         4. Optionally compresses the output (gzip for text formats).
@@ -229,7 +232,7 @@ class FileExporter:
 
         Args:
             data: A generator yielding ``dict`` records to export.
-            format: Output format — one of ``'csv'``, ``'json'``,
+            output_format: Output format -- one of ``'csv'``, ``'json'``,
                 ``'jsonl'``, ``'parquet'``, ``'sql'``.
             output_path: Destination path for the final exported file.
             schema: Schema definition dictionary containing at minimum
@@ -238,11 +241,11 @@ class FileExporter:
             tenant_id: Identifier of the owning tenant for path isolation.
             options: Optional configuration overrides.  Recognised keys:
 
-                * ``delimiter`` (str) — CSV delimiter (default ``','``).
-                * ``indent`` (int | None) — JSON indentation level.
-                * ``include_ddl`` (bool) — Include CREATE TABLE in SQL.
-                * ``compression`` (str) — Compression algorithm override.
-                * ``parquet_compression`` (str) — Parquet-specific codec.
+                * ``delimiter`` (str) -- CSV delimiter (default ``','``).
+                * ``indent`` (int | None) -- JSON indentation level.
+                * ``include_ddl`` (bool) -- Include CREATE TABLE in SQL.
+                * ``compression`` (str) -- Compression algorithm override.
+                * ``parquet_compression`` (str) -- Parquet-specific codec.
 
         Returns:
             A dictionary describing the export result::
@@ -259,17 +262,17 @@ class FileExporter:
                 }
 
         Raises:
-            ValueError: If *format* is not in :data:`SUPPORTED_FORMATS`.
+            ValueError: If *output_format* is not in :data:`SUPPORTED_FORMATS`.
             OSError: If the temporary or output directory cannot be created.
             RuntimeError: If the export operation fails unexpectedly.
         """
         start_time: float = time.time()
-        fmt: str = format.strip().lower()
+        fmt: str = output_format.strip().lower()
 
         # Validate format.
         if fmt not in SUPPORTED_FORMATS:
             raise ValueError(
-                f"Unsupported export format: '{format}'. "
+                f"Unsupported export format: '{output_format}'. "
                 f"Supported formats: {sorted(SUPPORTED_FORMATS)}"
             )
 
@@ -298,7 +301,7 @@ class FileExporter:
 
         try:
             # Dispatch to format-specific handler.
-            format_handlers: Dict[str, Any] = {
+            format_handlers: dict[str, Any] = {
                 "csv": self._export_csv,
                 "json": self._export_json,
                 "jsonl": self._export_jsonl,
@@ -322,7 +325,7 @@ class FileExporter:
             # Apply AES-256-GCM encryption if enabled.
             if self.encryption_enabled:
                 encryption_key_str: str = self.config.ENCRYPTION_KEY
-                encryption_key: Optional[bytes] = None
+                encryption_key: bytes | None = None
                 if encryption_key_str:
                     # Derive a 32-byte key from the configured key string.
                     encryption_key = hashlib.sha256(
@@ -350,7 +353,7 @@ class FileExporter:
                 status="completed",
             )
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "format": fmt,
                 "output_path": output_path,
                 "size_bytes": final_size,
@@ -399,14 +402,14 @@ class FileExporter:
     def export_to_cloud(
         self,
         data: Generator,
-        format: str,
+        output_format: str,
         remote_key: str,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         job_id: str,
         tenant_id: str,
-        cloud_config: Dict[str, Any],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        cloud_config: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Export synthetic data and upload to cloud object storage.
 
         Combines :meth:`export_to_file` with a cloud upload step.  The data
@@ -416,7 +419,7 @@ class FileExporter:
 
         Args:
             data: A generator yielding ``dict`` records.
-            format: Output format string (see :meth:`export_to_file`).
+            output_format: Output format string (see :meth:`export_to_file`).
             remote_key: Object key / blob name in the cloud bucket.
             schema: Schema definition dictionary.
             job_id: Unique job identifier.
@@ -457,7 +460,7 @@ class FileExporter:
 
         self._logger.info(
             "export_to_cloud_started",
-            format=format,
+            format=output_format,
             remote_key=remote_key,
             job_id=job_id,
             tenant_id=tenant_id,
@@ -480,7 +483,7 @@ class FileExporter:
         # Use NamedTemporaryFile for secure intermediate file creation,
         # ensuring OS-level atomicity and proper permission handling.
         with tempfile.NamedTemporaryFile(
-            suffix=f".{format.strip().lower()}",
+            suffix=f".{output_format.strip().lower()}",
             prefix=f"export_{job_id}_",
             dir=temp_dir,
             delete=False,
@@ -489,9 +492,9 @@ class FileExporter:
 
         try:
             # Step 1: Export to local temp file.
-            file_result: Dict[str, Any] = self.export_to_file(
+            file_result: dict[str, Any] = self.export_to_file(
                 data=data,
-                format=format,
+                output_format=output_format,
                 output_path=local_path,
                 schema=schema,
                 job_id=job_id,
@@ -510,14 +513,14 @@ class FileExporter:
                 provider_type, cloud_config
             )
 
-            upload_metadata: Dict[str, str] = {
+            upload_metadata: dict[str, str] = {
                 "tenant_id": tenant_id,
                 "job_id": job_id,
-                "format": format,
+                "format": output_format,
                 "checksum_sha256": file_result["checksum_sha256"],
             }
 
-            upload_result: Dict[str, Any] = cloud_provider.upload(
+            upload_result: dict[str, Any] = cloud_provider.upload(
                 local_path=local_path,
                 remote_key=remote_key,
                 metadata=upload_metadata,
@@ -526,7 +529,7 @@ class FileExporter:
             duration: float = time.time() - start_time
 
             # Merge file export result with cloud upload details.
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 **file_result,
                 "cloud_upload": upload_result,
                 "duration_seconds": round(duration, 3),
@@ -540,7 +543,7 @@ class FileExporter:
 
             self._logger.info(
                 "export_to_cloud_completed",
-                format=format,
+                format=output_format,
                 remote_key=remote_key,
                 records_exported=file_result["records_exported"],
                 size_bytes=file_result["size_bytes"],
@@ -559,7 +562,7 @@ class FileExporter:
             )
             self._logger.error(
                 "export_to_cloud_failed",
-                format=format,
+                format=output_format,
                 remote_key=remote_key,
                 job_id=job_id,
                 tenant_id=tenant_id,
@@ -590,10 +593,10 @@ class FileExporter:
         self,
         data: Generator,
         output_path: str,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         job_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, int]:
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str, int]:
         """Export data to CSV format with streaming writes.
 
         Writes a header row followed by data rows using the standard
@@ -613,7 +616,7 @@ class FileExporter:
         options = options or {}
         delimiter: str = options.get("delimiter", ",")
         quoting: int = options.get("quoting", csv.QUOTE_MINIMAL)
-        columns: List[str] = self._extract_column_names(schema)
+        columns: list[str] = self._extract_column_names(schema)
 
         records_written: int = 0
 
@@ -631,7 +634,7 @@ class FileExporter:
             writer.writerow(columns)
 
             for record in data:
-                row: List[Any] = [record.get(col) for col in columns]
+                row: list[Any] = [record.get(col) for col in columns]
                 writer.writerow(row)
                 records_written += 1
 
@@ -651,10 +654,10 @@ class FileExporter:
         self,
         data: Generator,
         output_path: str,
-        schema: Dict[str, Any],
+        _schema: dict[str, Any],
         job_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, int]:
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str, int]:
         """Export data as a JSON array.
 
         Produces a JSON document structured as ``[ {...}, {...}, ... ]``
@@ -664,7 +667,7 @@ class FileExporter:
         Args:
             data: Generator yielding ``dict`` records.
             output_path: Destination file path.
-            schema: Schema definition (used for logging context).
+            _schema: Schema definition (reserved for interface consistency).
             job_id: Job identifier for progress tracking.
             options: Optional overrides (``indent``).
 
@@ -672,7 +675,7 @@ class FileExporter:
             A tuple of ``(output_path, records_written)``.
         """
         options = options or {}
-        indent: Optional[int] = options.get("indent")
+        indent: int | None = options.get("indent")
         records_written: int = 0
 
         self._logger.info(
@@ -715,10 +718,10 @@ class FileExporter:
         self,
         data: Generator,
         output_path: str,
-        schema: Dict[str, Any],
+        _schema: dict[str, Any],
         job_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, int]:
+        _options: dict[str, Any] | None = None,
+    ) -> tuple[str, int]:
         """Export data in JSON Lines format (one JSON object per line).
 
         Each record is serialised as a single-line JSON string terminated
@@ -728,9 +731,9 @@ class FileExporter:
         Args:
             data: Generator yielding ``dict`` records.
             output_path: Destination file path.
-            schema: Schema definition (used for logging context).
+            _schema: Schema definition (reserved for interface consistency).
             job_id: Job identifier for progress tracking.
-            options: Optional overrides (currently unused).
+            _options: Optional overrides (reserved for interface consistency).
 
         Returns:
             A tuple of ``(output_path, records_written)``.
@@ -769,10 +772,10 @@ class FileExporter:
         self,
         data: Generator,
         output_path: str,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         job_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, int]:
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str, int]:
         """Export data to Apache Parquet columnar format.
 
         Uses PyArrow's :class:`~pyarrow.parquet.ParquetWriter` for
@@ -798,10 +801,10 @@ class FileExporter:
         options = options or {}
         compression: str = options.get("parquet_compression", "snappy")
         arrow_schema: pa.Schema = self._build_parquet_schema(schema)
-        column_names: List[str] = self._extract_column_names(schema)
+        column_names: list[str] = self._extract_column_names(schema)
 
         records_written: int = 0
-        batch_buffer: List[Dict[str, Any]] = []
+        batch_buffer: list[dict[str, Any]] = []
 
         self._logger.info(
             "export_parquet_started",
@@ -811,7 +814,7 @@ class FileExporter:
             column_count=len(column_names),
         )
 
-        writer: Optional[pq.ParquetWriter] = None
+        writer: pq.ParquetWriter | None = None
         try:
             writer = pq.ParquetWriter(
                 output_path,
@@ -854,10 +857,10 @@ class FileExporter:
         self,
         data: Generator,
         output_path: str,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         job_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, int]:
+        options: dict[str, Any] | None = None,
+    ) -> tuple[str, int]:
         """Export data as SQL INSERT statements.
 
         Generates standard SQL ``INSERT INTO ... VALUES (...)`` statements
@@ -887,8 +890,8 @@ class FileExporter:
         )
 
         table_name: str = schema.get("table_name", "exported_data")
-        columns: List[Dict[str, Any]] = schema.get("columns", [])
-        column_names: List[str] = self._extract_column_names(schema)
+        columns: list[dict[str, Any]] = schema.get("columns", [])
+        column_names: list[str] = self._extract_column_names(schema)
 
         records_written: int = 0
 
@@ -914,14 +917,16 @@ class FileExporter:
             f.write("BEGIN;\n\n")
 
             for record in data:
-                values: List[str] = [
+                values: list[str] = [
                     self._escape_sql_value(record.get(col))
                     for col in column_names
                 ]
                 cols_joined: str = ", ".join(column_names)
                 vals_joined: str = ", ".join(values)
+                # S608: False positive -- writing SQL to a file, not executing.
+                # table_name and values are from internal schema definitions.
                 f.write(
-                    f"INSERT INTO {table_name} ({cols_joined}) "
+                    f"INSERT INTO {table_name} ({cols_joined}) "  # noqa: S608
                     f"VALUES ({vals_joined});\n"
                 )
                 records_written += 1
@@ -1012,7 +1017,7 @@ class FileExporter:
     def _encrypt_file(
         self,
         file_path: str,
-        encryption_key: Optional[bytes] = None,
+        encryption_key: bytes | None = None,
     ) -> str:
         """Encrypt a file using AES-256-GCM authenticated encryption.
 
@@ -1124,7 +1129,7 @@ class FileExporter:
         self,
         job_id: str,
         records_exported: int,
-        total_records: Optional[int] = None,
+        total_records: int | None = None,
         status: str = "exporting",
     ) -> None:
         """Update export progress in Redis for real-time monitoring.
@@ -1149,7 +1154,7 @@ class FileExporter:
                 (records_exported / total_records) * 100, 2
             )
 
-        progress_data: Dict[str, str] = {
+        progress_data: dict[str, str] = {
             "job_id": job_id,
             "records_exported": str(records_exported),
             "total_records": str(total_records) if total_records else "",
@@ -1173,7 +1178,7 @@ class FileExporter:
     # Parquet schema helpers
     # ------------------------------------------------------------------
 
-    def _build_parquet_schema(self, schema: Dict[str, Any]) -> pa.Schema:
+    def _build_parquet_schema(self, schema: dict[str, Any]) -> pa.Schema:
         """Convert a generic schema definition to a PyArrow schema.
 
         Maps platform-standard type names to their PyArrow equivalents:
@@ -1204,7 +1209,7 @@ class FileExporter:
         Returns:
             A :class:`pyarrow.Schema` with one field per column.
         """
-        type_map: Dict[str, pa.DataType] = {
+        type_map: dict[str, pa.DataType] = {
             "STRING": pa.string(),
             "VARCHAR": pa.string(),
             "CHAR": pa.string(),
@@ -1231,8 +1236,8 @@ class FileExporter:
             "BYTEA": pa.binary(),
         }
 
-        columns: List[Dict[str, Any]] = schema.get("columns", [])
-        fields: List[pa.Field] = []
+        columns: list[dict[str, Any]] = schema.get("columns", [])
+        fields: list[pa.Field] = []
 
         for col in columns:
             col_name: str = col.get("name", "unknown")
@@ -1247,8 +1252,8 @@ class FileExporter:
     def _write_parquet_batch(
         self,
         writer: pq.ParquetWriter,
-        batch_data: List[Dict[str, Any]],
-        column_names: List[str],
+        batch_data: list[dict[str, Any]],
+        column_names: list[str],
         arrow_schema: pa.Schema,
     ) -> None:
         """Write a batch of records to the Parquet writer.
@@ -1263,7 +1268,7 @@ class FileExporter:
             arrow_schema: PyArrow schema matching the column definitions.
         """
         # Transpose row-oriented dicts into column-oriented dict-of-lists.
-        column_dict: Dict[str, List[Any]] = {
+        column_dict: dict[str, list[Any]] = {
             col: [row.get(col) for row in batch_data]
             for col in column_names
         }
@@ -1307,7 +1312,7 @@ class FileExporter:
     @staticmethod
     def _generate_create_table(
         table_name: str,
-        columns: List[Dict[str, Any]],
+        columns: list[dict[str, Any]],
         dialect: str = "generic",
     ) -> str:
         """Generate a CREATE TABLE DDL statement.
@@ -1325,7 +1330,7 @@ class FileExporter:
         Returns:
             A complete CREATE TABLE SQL string.
         """
-        sql_type_map: Dict[str, str] = {
+        sql_type_map: dict[str, str] = {
             "STRING": "VARCHAR(255)",
             "VARCHAR": "VARCHAR(255)",
             "CHAR": "CHAR(1)",
@@ -1352,7 +1357,7 @@ class FileExporter:
             "BYTEA": "BYTEA",
         }
 
-        col_defs: List[str] = []
+        col_defs: list[str] = []
         for col in columns:
             col_name: str = col.get("name", "unknown")
             col_type: str = col.get("type", "STRING").upper()
@@ -1360,7 +1365,7 @@ class FileExporter:
             primary_key: bool = col.get("primary_key", False)
 
             sql_type: str = sql_type_map.get(col_type, "VARCHAR(255)")
-            constraint_parts: List[str] = [col_name, sql_type]
+            constraint_parts: list[str] = [col_name, sql_type]
 
             if primary_key:
                 constraint_parts.append("PRIMARY KEY")
@@ -1381,7 +1386,7 @@ class FileExporter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_column_names(schema: Dict[str, Any]) -> List[str]:
+    def _extract_column_names(schema: dict[str, Any]) -> list[str]:
         """Extract ordered column names from a schema definition.
 
         Args:
@@ -1391,7 +1396,7 @@ class FileExporter:
         Returns:
             A list of column name strings.
         """
-        columns: List[Dict[str, Any]] = schema.get("columns", [])
+        columns: list[dict[str, Any]] = schema.get("columns", [])
         return [col.get("name", f"column_{i}") for i, col in enumerate(columns)]
 
     # ------------------------------------------------------------------
@@ -1462,7 +1467,7 @@ class FileExporter:
     # Public helpers
     # ------------------------------------------------------------------
 
-    def get_supported_formats(self) -> List[str]:
+    def get_supported_formats(self) -> list[str]:
         """Return a sorted list of supported export format names.
 
         Useful for API input validation and populating UI dropdowns in

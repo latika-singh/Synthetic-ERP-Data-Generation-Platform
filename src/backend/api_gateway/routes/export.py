@@ -31,7 +31,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from flask import Blueprint, g, jsonify, request
 from flask_jwt_extended import jwt_required
@@ -49,6 +49,7 @@ from api_gateway.schemas.export import (
 from api_gateway.services.export_service import ExportService
 from api_gateway.utils.pagination import validate_page_size
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level setup
@@ -403,13 +404,13 @@ def list_exports():
     # ------------------------------------------------------------------
     # Parse optional filter query parameters
     # ------------------------------------------------------------------
-    job_id: Optional[str] = request.args.get("job_id")
-    status_filter: Optional[str] = request.args.get("status")
-    format_filter: Optional[str] = request.args.get("format")
+    job_id: str | None = request.args.get("job_id")
+    status_filter: str | None = request.args.get("status")
+    format_filter: str | None = request.args.get("format")
 
     # Convert API-facing status value to internal service status for the
     # query (e.g. "in_progress" → "exporting").
-    service_status: Optional[str] = None
+    service_status: str | None = None
     if status_filter is not None:
         service_status = _API_STATUS_TO_SERVICE.get(
             status_filter, status_filter,
@@ -418,7 +419,7 @@ def list_exports():
     # ------------------------------------------------------------------
     # Parse and validate pagination parameters
     # ------------------------------------------------------------------
-    page_str: Optional[str] = request.args.get("page", "1")
+    page_str: str | None = request.args.get("page", "1")
     try:
         page: int = max(1, int(page_str))  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -520,7 +521,7 @@ def get_export(export_id: str):
 
     try:
         export_service: ExportService = _get_export_service()
-        export_doc: Optional[dict[str, Any]] = export_service.get_export(
+        export_doc: dict[str, Any] | None = export_service.get_export(
             export_id, tenant_id,
         )
     except Exception as exc:
@@ -582,7 +583,7 @@ def get_download_url(export_id: str):
         export_service: ExportService = _get_export_service()
 
         # Retrieve the export record to differentiate 404 from 409.
-        export_doc: Optional[dict[str, Any]] = export_service.get_export(
+        export_doc: dict[str, Any] | None = export_service.get_export(
             export_id, tenant_id,
         )
         if export_doc is None:
@@ -631,7 +632,7 @@ def get_download_url(export_id: str):
             }), 409
 
         # Request the download URL from the service layer.
-        download_url: Optional[str] = export_service.get_download_url(
+        download_url: str | None = export_service.get_download_url(
             export_id, tenant_id,
         )
         if download_url is None:
@@ -704,7 +705,7 @@ def cancel_export(export_id: str):
         export_service: ExportService = _get_export_service()
 
         # Pre-check existence so we can distinguish 404 from 409.
-        export_doc: Optional[dict[str, Any]] = export_service.get_export(
+        export_doc: dict[str, Any] | None = export_service.get_export(
             export_id, tenant_id,
         )
         if export_doc is None:
@@ -740,7 +741,7 @@ def cancel_export(export_id: str):
             }), 409
 
         # Perform the cancellation.
-        updated_doc: Optional[dict[str, Any]] = export_service.cancel_export(
+        updated_doc: dict[str, Any] | None = export_service.cancel_export(
             export_id, tenant_id,
         )
         if updated_doc is None:

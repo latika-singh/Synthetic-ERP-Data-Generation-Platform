@@ -353,7 +353,7 @@ def list_templates() -> tuple[Response, int]:
         is_public (str): ``"true"`` or ``"false"`` to filter by visibility.
         search (str): Free-text search on ``name`` and ``description``.
         page (int): Page number (1-indexed, default 1).
-        page_size (int): Items per page (1–100, default 20).
+        page_size (int): Items per page (1-100, default 20).
         cursor (str): Optional cursor token for cursor-based pagination.
 
     Returns:

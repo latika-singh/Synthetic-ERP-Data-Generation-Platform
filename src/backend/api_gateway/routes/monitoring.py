@@ -82,7 +82,7 @@ logger = get_logger(__name__)
 # Service start time — captured once at module load for uptime calculation.
 # ---------------------------------------------------------------------------
 
-_SERVICE_START_TIME: datetime.datetime = datetime.datetime.utcnow()
+_SERVICE_START_TIME: datetime.datetime = datetime.datetime.now(tz=datetime.UTC)
 
 # ---------------------------------------------------------------------------
 # Flask Blueprint
@@ -468,7 +468,7 @@ def _calculate_uptime_seconds() -> float:
     Returns:
         Elapsed time in seconds since :data:`_SERVICE_START_TIME`.
     """
-    delta = datetime.datetime.utcnow() - _SERVICE_START_TIME
+    delta = datetime.datetime.now(tz=datetime.UTC) - _SERVICE_START_TIME
     return round(delta.total_seconds(), 2)
 
 
@@ -546,13 +546,13 @@ def prometheus_metrics() -> Response:
 @monitoring_bp.route("/status", methods=["GET"])
 @jwt_required()
 @require_permissions("admin:system")
-def system_status() -> tuple[Response, int]:
+def system_status() -> tuple[Response, int]:  # noqa: PLR0912
     """System-wide status dashboard data.
 
     Aggregates health, resource utilisation, and availability information
     from every layer of the platform:
 
-    - **API Gateway** — version, uptime, approximate request count and
+    - **API Gateway** -- version, uptime, approximate request count and
       error rate derived from Prometheus counters.
     - **MongoDB** — connection pool statistics, server version, database
       name, and reachability.
@@ -608,7 +608,7 @@ def system_status() -> tuple[Response, int]:
                 if sample.labels.get("service") == "api-gateway"
             )
     except Exception:
-        pass
+        logger.debug("Failed to collect HTTP request total metrics")
 
     try:
         if ERROR_COUNTER is not None:
@@ -619,7 +619,7 @@ def system_status() -> tuple[Response, int]:
                 if sample.labels.get("service") == "api-gateway"
             )
     except Exception:
-        pass
+        logger.debug("Failed to collect error counter metrics")
 
     # Aggregate average request latency from the shared duration histogram.
     try:
@@ -638,7 +638,7 @@ def system_status() -> tuple[Response, int]:
                     total_duration_sum / total_duration_count, 6
                 )
     except Exception:
-        pass
+        logger.debug("Failed to collect request duration metrics")
 
     error_rate: float = round(
         (total_errors / total_requests * 100) if total_requests > 0 else 0.0,
@@ -686,7 +686,7 @@ def system_status() -> tuple[Response, int]:
 
     response_body: dict[str, Any] = {
         "status": overall_status,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.datetime.now(tz=datetime.UTC).isoformat(),
         "api_gateway": api_gateway_status,
         "mongodb": mongodb_status,
         "redis": redis_status,
@@ -777,7 +777,7 @@ def service_health() -> tuple[Response, int]:
 
     response_body: dict[str, Any] = {
         "services": services_results,
-        "checked_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "checked_at": datetime.datetime.now(tz=datetime.UTC).isoformat(),
         "healthy_count": healthy_count,
         "unhealthy_count": unhealthy_count,
     }

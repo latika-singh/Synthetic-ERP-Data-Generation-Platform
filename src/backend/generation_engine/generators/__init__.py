@@ -63,19 +63,20 @@ from generation_engine.generators.base import (
     GeneratorType,
 )
 
+
 # ---------------------------------------------------------------------------
 # Public API surface — all symbols importable via
 #   ``from generation_engine.generators import <name>``
 # ---------------------------------------------------------------------------
 __all__: list[str] = [
-    "BaseGenerator",
+    "GENERATOR_REGISTRY",
     "AIMLGenerator",
+    "BaseGenerator",
+    "MaskingGenerator",
     "RulesGenerator",
     "StatisticalGenerator",
-    "MaskingGenerator",
-    "GENERATOR_REGISTRY",
-    "get_generator",
     "get_available_methods",
+    "get_generator",
 ]
 
 

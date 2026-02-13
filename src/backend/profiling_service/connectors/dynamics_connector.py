@@ -1246,9 +1246,9 @@ class DynamicsConnector(BaseConnector):
                         max_length=attr.get("MaxLength"),
                         precision=attr.get("Precision"),
                         scale=attr.get("Scale"),
-                        is_nullable=not attr.get("RequiredLevel", {}).get(
+                        is_nullable=attr.get("RequiredLevel", {}).get(
                             "Value", "None",
-                        ) == "ApplicationRequired",
+                        ) != "ApplicationRequired",
                         is_primary_key=attr.get("IsPrimaryId", False),
                         is_auto_increment=attr.get("IsAutoNumberAttribute", False),
                         ordinal_position=idx,

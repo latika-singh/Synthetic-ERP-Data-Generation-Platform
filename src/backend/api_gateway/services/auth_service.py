@@ -45,14 +45,14 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 from circuitbreaker import circuit
 from flask import current_app
-from jose import JWTError, jwt, jwk
+from jose import JWTError, jwk, jwt
 from jose.utils import base64url_decode
 
 from api_gateway.extensions import get_redis
@@ -102,7 +102,7 @@ DEFAULT_JWKS_FETCH_TIMEOUT: float = 15.0
 # Auth0 rule/action scripts that may emit either format.
 # ---------------------------------------------------------------------------
 
-AUTH0_ROLE_MAPPING: Dict[str, UserRole] = {
+AUTH0_ROLE_MAPPING: dict[str, UserRole] = {
     # Human-readable Auth0 role names
     "Platform Admin": UserRole.PLATFORM_ADMIN,
     "Data Engineer": UserRole.DATA_ENGINEER,
@@ -198,7 +198,7 @@ class AuthService:
     def get_login_url(
         self,
         redirect_uri: str,
-        state: Optional[str] = None,
+        state: str | None = None,
     ) -> str:
         """Build the Auth0 ``/authorize`` redirect URL for initiating login.
 
@@ -225,7 +225,7 @@ class AuthService:
                 state="random_csrf_token",
             )
         """
-        params: Dict[str, str] = {
+        params: dict[str, str] = {
             "response_type": "code",
             "client_id": self.auth0_client_id,
             "redirect_uri": redirect_uri,
@@ -291,7 +291,7 @@ class AuthService:
             )
 
         # Build Auth0 /v2/logout URL
-        logout_params: Dict[str, str] = {
+        logout_params: dict[str, str] = {
             "client_id": self.auth0_client_id,
         }
         logout_url: str = (
@@ -313,7 +313,7 @@ class AuthService:
     # Public API — Token Management
     # ------------------------------------------------------------------
 
-    def handle_callback(
+    def handle_callback(  # noqa: PLR0915
         self,
         authorization_code: str,
         redirect_uri: str,
@@ -360,7 +360,7 @@ class AuthService:
 
         access_token: str = token_response.get("access_token", "")
         id_token: str = token_response.get("id_token", "")
-        refresh_token_value: Optional[str] = token_response.get(
+        refresh_token_value: str | None = token_response.get(
             "refresh_token"
         )
         expires_in: int = token_response.get("expires_in", 3600)
@@ -373,7 +373,7 @@ class AuthService:
         # Step 2: Decode id_token to extract user profile (unverified
         # decode is safe here — the id_token is freshly received over
         # HTTPS from Auth0 in the same transaction).
-        user_info: Dict[str, Any] = {}
+        user_info: dict[str, Any] = {}
         if id_token:
             try:
                 unverified_claims: dict = jwt.get_unverified_claims(id_token)
@@ -422,13 +422,13 @@ class AuthService:
         )
 
         # Step 4: Look up or create platform user
-        existing_user: Optional[dict] = User.find_by_auth0_id(auth0_user_id)
-        callback_time: datetime = datetime.now(timezone.utc)
+        existing_user: dict | None = User.find_by_auth0_id(auth0_user_id)
+        callback_time: datetime = datetime.now(UTC)
 
         if existing_user is not None:
             user_doc: dict = existing_user
             # Update last login
-            updated_user: Optional[dict] = User.update_last_login(
+            updated_user: dict | None = User.update_last_login(
                 auth0_user_id
             )
             if updated_user is not None:
@@ -462,7 +462,7 @@ class AuthService:
         # Step 5: Store server-side session metadata in Redis
         platform_user_id: str = user_doc.get("user_id", "")
         session_ttl: timedelta = timedelta(seconds=expires_in)
-        session_data: Dict[str, Any] = {
+        session_data: dict[str, Any] = {
             "user_id": platform_user_id,
             "tenant_id": user_doc.get("tenant_id", ""),
             "roles": roles,
@@ -557,13 +557,13 @@ class AuthService:
             )
             raise
 
-        kid: Optional[str] = unverified_header.get("kid")
+        kid: str | None = unverified_header.get("kid")
         if not kid:
             self.logger.warning("token_missing_kid")
             raise ValueError("JWT header does not contain a 'kid' claim.")
 
         # Step 3: Find matching RSA public key
-        rsa_key: Dict[str, Any] = {}
+        rsa_key: dict[str, Any] = {}
         for key in keys:
             if key.get("kid") == kid:
                 rsa_key = {
@@ -676,7 +676,7 @@ class AuthService:
 
         token_url: str = f"https://{self.auth0_domain}/oauth/token"
 
-        payload: Dict[str, str] = {
+        payload: dict[str, str] = {
             "grant_type": "refresh_token",
             "client_id": self.auth0_client_id,
             "client_secret": self.auth0_client_secret,
@@ -766,7 +766,7 @@ class AuthService:
 
         platform_roles: list[str] = []
         for auth0_role in auth0_roles:
-            mapped_role: Optional[UserRole] = AUTH0_ROLE_MAPPING.get(
+            mapped_role: UserRole | None = AUTH0_ROLE_MAPPING.get(
                 auth0_role
             )
             if mapped_role is not None:
@@ -823,7 +823,7 @@ class AuthService:
     # Public API — User Profile Management
     # ------------------------------------------------------------------
 
-    def get_user_profile(self, auth0_user_id: str) -> Optional[dict]:
+    def get_user_profile(self, auth0_user_id: str) -> dict | None:
         """Retrieve a platform user profile by Auth0 identity.
 
         Delegates to :meth:`User.find_by_auth0_id` to look up the user
@@ -837,7 +837,7 @@ class AuthService:
             dict or None: The user profile document, or ``None`` if no
                 user is registered with the given Auth0 identity.
         """
-        user_doc: Optional[dict] = User.find_by_auth0_id(auth0_user_id)
+        user_doc: dict | None = User.find_by_auth0_id(auth0_user_id)
 
         if user_doc is not None:
             self.logger.info(
@@ -861,7 +861,7 @@ class AuthService:
         user_id: str,
         tenant_id: str,
         updates: dict,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Update whitelisted profile fields for a platform user.
 
         Delegates to :meth:`User.update_profile` which enforces a
@@ -879,7 +879,7 @@ class AuthService:
             dict or None: The updated user profile document, or ``None``
                 if the user was not found within the specified tenant.
         """
-        updated_doc: Optional[dict] = User.update_profile(
+        updated_doc: dict | None = User.update_profile(
             user_id=user_id,
             tenant_id=tenant_id,
             updates=updates,
@@ -887,7 +887,7 @@ class AuthService:
 
         if updated_doc is not None:
             updated_keys: list[str] = [
-                k for k in updates.keys()
+                k for k in updates
                 if k in {"name", "picture", "preferences"}
             ]
             self.logger.info(
@@ -994,7 +994,7 @@ class AuthService:
         # Step 1: Try Redis cache first
         try:
             redis_client = get_redis()
-            cached_data: Optional[bytes] = redis_client.get(JWKS_CACHE_KEY)
+            cached_data: bytes | None = redis_client.get(JWKS_CACHE_KEY)
             if cached_data is not None:
                 jwks_keys: dict = json.loads(cached_data)
                 elapsed_ms: float = (time.time() - start_time) * 1000.0
@@ -1100,7 +1100,7 @@ class AuthService:
 
         token_url: str = f"https://{self.auth0_domain}/oauth/token"
 
-        payload: Dict[str, str] = {
+        payload: dict[str, str] = {
             "grant_type": "authorization_code",
             "client_id": self.auth0_client_id,
             "client_secret": self.auth0_client_secret,

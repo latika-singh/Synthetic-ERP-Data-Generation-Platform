@@ -64,16 +64,14 @@ Example::
 from __future__ import annotations
 
 import json
-import logging
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from circuitbreaker import circuit
 from flask import current_app
 
-from api_gateway.extensions import get_db, get_redis
+from api_gateway.extensions import get_redis
 from api_gateway.models.generation_job import (
     GenerationJob,
     GenerationMethod,
@@ -185,10 +183,10 @@ class JobService:
         tenant_id: str,
         user_id: str,
         generation_method: str,
-        schema_config: Dict[str, Any],
+        schema_config: dict[str, Any],
         output_format: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Create a new generation job, persist it, and dispatch to the Generation Engine.
 
         Validates the generation method and output format against their
@@ -238,7 +236,7 @@ class JobService:
             output_format=output_format,
         )
 
-        job: Dict[str, Any] = GenerationJob.create(
+        job: dict[str, Any] = GenerationJob.create(
             tenant_id=tenant_id,
             user_id=user_id,
             generation_method=generation_method,
@@ -299,7 +297,7 @@ class JobService:
         self,
         job_id: str,
         tenant_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve a single generation job by ID with tenant isolation.
 
         Implements a two-level read strategy:
@@ -328,7 +326,7 @@ class JobService:
             pymongo.errors.OperationFailure: If the MongoDB query fails.
         """
         # ----- Fast-path: check Redis cache for up-to-date status -----
-        cached_status: Optional[Dict[str, Any]] = None
+        cached_status: dict[str, Any] | None = None
         try:
             cached_status = self._get_cached_status(job_id)
         except Exception as exc:
@@ -341,7 +339,7 @@ class JobService:
             )
 
         # ----- MongoDB: authoritative source with tenant isolation -----
-        job: Optional[Dict[str, Any]] = GenerationJob.find_by_id(
+        job: dict[str, Any] | None = GenerationJob.find_by_id(
             job_id=job_id,
             tenant_id=tenant_id,
         )
@@ -373,10 +371,10 @@ class JobService:
     def list_jobs(
         self,
         tenant_id: str,
-        status: Optional[str] = None,
+        status: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Retrieve a paginated list of generation jobs for a tenant.
 
         Delegates to :meth:`GenerationJob.find_by_tenant` which applies
@@ -415,7 +413,7 @@ class JobService:
             page_size=page_size,
         )
 
-        result: Dict[str, Any] = GenerationJob.find_by_tenant(
+        result: dict[str, Any] = GenerationJob.find_by_tenant(
             tenant_id=tenant_id,
             status=status,
             page=page,
@@ -440,8 +438,8 @@ class JobService:
         job_id: str,
         tenant_id: str,
         new_status: str,
-        error_message: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        error_message: str | None = None,
+    ) -> dict[str, Any] | None:
         """Transition a generation job to a new lifecycle status.
 
         Validates the new status against :class:`JobStatus`, delegates the
@@ -477,7 +475,7 @@ class JobService:
         )
 
         # ----- MongoDB: authoritative status update -----
-        updated_job: Optional[Dict[str, Any]] = GenerationJob.update_status(
+        updated_job: dict[str, Any] | None = GenerationJob.update_status(
             job_id=job_id,
             tenant_id=tenant_id,
             new_status=new_status,
@@ -518,7 +516,7 @@ class JobService:
                     "job_id": job_id,
                     "tenant_id": tenant_id,
                     "status": new_status,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "error_message": error_message,
                 })
                 redis_client.publish(_PUBSUB_CHANNEL, event_payload)
@@ -559,7 +557,7 @@ class JobService:
         tenant_id: str,
         progress: int,
         records_generated: int,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Update generation progress for a running job.
 
         Delegates the MongoDB update to :meth:`GenerationJob.update_progress`
@@ -569,7 +567,7 @@ class JobService:
         Args:
             job_id: The UUID4 identifier of the generation job.
             tenant_id: The tenant namespace identifier (R-007).
-            progress: Integer percentage (0–100) indicating completion.
+            progress: Integer percentage (0-100) indicating completion.
             records_generated: Number of synthetic records generated so far.
 
         Returns:
@@ -587,7 +585,7 @@ class JobService:
             records_generated=records_generated,
         )
 
-        updated_job: Optional[Dict[str, Any]] = GenerationJob.update_progress(
+        updated_job: dict[str, Any] | None = GenerationJob.update_progress(
             job_id=job_id,
             tenant_id=tenant_id,
             progress_percentage=progress,
@@ -637,7 +635,7 @@ class JobService:
         self,
         job_id: str,
         tenant_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Cancel a generation job that is queued or in progress.
 
         A job may only be cancelled when its current status is ``SUBMITTED``
@@ -665,7 +663,7 @@ class JobService:
         )
 
         # ----- Retrieve current job to check status -----
-        current_job: Optional[Dict[str, Any]] = GenerationJob.find_by_id(
+        current_job: dict[str, Any] | None = GenerationJob.find_by_id(
             job_id=job_id,
             tenant_id=tenant_id,
         )
@@ -707,7 +705,7 @@ class JobService:
                 )
 
         # ----- Transition to FAILED with cancellation message -----
-        cancelled_job: Optional[Dict[str, Any]] = self.update_job_status(
+        cancelled_job: dict[str, Any] | None = self.update_job_status(
             job_id=job_id,
             tenant_id=tenant_id,
             new_status=JobStatus.FAILED.value,
@@ -729,7 +727,7 @@ class JobService:
     def get_job_statistics(
         self,
         tenant_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Aggregate per-tenant job counts grouped by status.
 
         Uses :meth:`GenerationJob.count_by_tenant` for each status of
@@ -792,7 +790,7 @@ class JobService:
             status=JobStatus.FAILED.value,
         )
 
-        statistics: Dict[str, Any] = {
+        statistics: dict[str, Any] = {
             "total": total,
             "submitted": submitted,
             "generating": generating,
@@ -823,8 +821,8 @@ class JobService:
     )
     def _dispatch_to_generation_engine(
         self,
-        job: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        job: dict[str, Any],
+    ) -> dict[str, Any]:
         """Dispatch a generation job to the Generation Engine via HTTP POST.
 
         Sends the job details as a JSON payload to the Generation Engine's
@@ -861,7 +859,7 @@ class JobService:
 
         # Build the request payload — excludes sensitive fields and internal
         # MongoDB metadata per R-005.
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "job_id": job_id,
             "tenant_id": tenant_id,
             "generation_method": job.get("generation_method"),
@@ -871,7 +869,7 @@ class JobService:
             "metadata": job.get("metadata", {}),
         }
 
-        headers: Dict[str, str] = {
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
             "X-Tenant-ID": tenant_id,
             "X-Job-ID": job_id,
@@ -892,7 +890,7 @@ class JobService:
             )
             response.raise_for_status()
 
-            response_data: Dict[str, Any] = response.json()
+            response_data: dict[str, Any] = response.json()
 
         self.logger.info(
             "generation_engine_dispatch_completed",
@@ -915,7 +913,7 @@ class JobService:
         self,
         job_id: str,
         tenant_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Send a cancellation request to the Generation Engine.
 
         Issues an HTTP POST to the Generation Engine's cancel endpoint so
@@ -938,7 +936,7 @@ class JobService:
         )
         endpoint: str = f"{generation_engine_url}/api/v1/generate/{job_id}/cancel"
 
-        headers: Dict[str, str] = {
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
             "X-Tenant-ID": tenant_id,
             "X-Job-ID": job_id,
@@ -957,7 +955,7 @@ class JobService:
                 headers=headers,
             )
             response.raise_for_status()
-            response_data: Dict[str, Any] = response.json()
+            response_data: dict[str, Any] = response.json()
 
         self.logger.info(
             "generation_engine_cancel_completed",
@@ -987,7 +985,7 @@ class JobService:
         Args:
             job_id: The UUID4 identifier of the generation job.
             status: Current job status string.
-            progress: Current progress percentage (0–100).
+            progress: Current progress percentage (0-100).
 
         Raises:
             redis.exceptions.RedisError: If the Redis operation fails.
@@ -997,7 +995,7 @@ class JobService:
         cache_value: str = json.dumps({
             "status": status,
             "progress": progress,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         })
         redis_client.setex(
             name=cache_key,
@@ -1008,7 +1006,7 @@ class JobService:
     def _get_cached_status(
         self,
         job_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve cached job status from Redis.
 
         Looks up the key ``job:<job_id>:status`` and deserialises the JSON
@@ -1026,7 +1024,7 @@ class JobService:
         """
         redis_client = get_redis()
         cache_key: str = f"{_REDIS_KEY_PREFIX}:{job_id}:status"
-        raw_value: Optional[bytes] = redis_client.get(cache_key)
+        raw_value: bytes | None = redis_client.get(cache_key)
 
         if raw_value is None:
             return None
@@ -1103,7 +1101,7 @@ class JobService:
             ) from None
 
     @staticmethod
-    def _validate_schema_config(schema_config: Dict[str, Any]) -> None:
+    def _validate_schema_config(schema_config: dict[str, Any]) -> None:
         """Validate the structure of a schema configuration dict.
 
         Ensures the ``schema_config`` contains a non-empty ``tables`` list

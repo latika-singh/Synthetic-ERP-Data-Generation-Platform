@@ -85,7 +85,7 @@ __all__: list[str] = [
 
 
 # ---------------------------------------------------------------------------
-# Factory helpers – simplify mocking in unit tests
+# Factory helpers -- simplify mocking in unit tests
 # ---------------------------------------------------------------------------
 
 def get_export_service() -> ExportService:

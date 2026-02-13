@@ -82,17 +82,18 @@ from compliance_service.detectors.pii_detector import (
     detect_pii,
 )
 
+
 __version__: str = "1.0.0"
 """Semantic version of the ``compliance_service.detectors`` package."""
 
 __all__: list[str] = [
-    "PIIDetector",
     "NLPDetector",
-    "PatternDetector",
-    "detect_pii",
     "PIIDetectionResult",
-    "create_detector_pipeline",
+    "PIIDetector",
+    "PatternDetector",
     "__version__",
+    "create_detector_pipeline",
+    "detect_pii",
 ]
 
 

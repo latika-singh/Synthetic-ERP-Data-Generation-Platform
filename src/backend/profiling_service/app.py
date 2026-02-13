@@ -61,7 +61,7 @@ logger = get_logger(__name__)
 # ===========================================================================
 
 
-def create_app(config_name: str | None = None) -> Flask:
+def create_app(config_name: str | None = None) -> Flask:  # noqa: PLR0915
     """Create, configure, and return a Flask application instance.
 
     This is the canonical Application Factory for the Profiling Service.

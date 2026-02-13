@@ -58,29 +58,29 @@ Note:
 
 from __future__ import annotations
 
+import contextlib
+
 
 # ---------------------------------------------------------------------------
 # Public API surface — populated dynamically by the conditional imports below.
 # ---------------------------------------------------------------------------
 __all__: list[str] = [
-    # jwt_handler exports
-    "validate_token",
-    "get_current_user",
-    "extract_token_from_request",
-    "refresh_access_token",
-    "jwt_required",
     "AuthenticationError",
-    "TokenExpiredError",
     "InvalidTokenError",
-    # rbac exports
-    "require_role",
-    "require_permission",
+    "Permission",
+    "Role",
+    "TokenExpiredError",
     "check_permission",
     "check_role",
-    "validate_tenant_access",
-    "Role",
-    "Permission",
+    "extract_token_from_request",
+    "get_current_user",
     "get_opa_client",
+    "jwt_required",
+    "refresh_access_token",
+    "require_permission",
+    "require_role",
+    "validate_tenant_access",
+    "validate_token",
 ]
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ __all__: list[str] = [
 # (python-jose, requests, Flask) are not yet installed or if there is a
 # circular-import edge case during early application bootstrapping.
 # ---------------------------------------------------------------------------
-try:
+with contextlib.suppress(ImportError):
     from shared.auth.jwt_handler import (
         AuthenticationError,
         InvalidTokenError,
@@ -106,12 +106,6 @@ try:
         refresh_access_token,
         validate_token,
     )
-except ImportError:
-    # Degrade gracefully — the symbols simply won't be available in the
-    # package namespace.  Callers that import them directly from
-    # ``shared.auth.jwt_handler`` will still get the correct ImportError
-    # pointing at the real missing dependency.
-    pass
 
 # ---------------------------------------------------------------------------
 # Re-exports from shared.auth.rbac
@@ -125,7 +119,7 @@ except ImportError:
 # ensures that a failure in ``rbac`` does not prevent ``jwt_handler``
 # symbols from being available.
 # ---------------------------------------------------------------------------
-try:
+with contextlib.suppress(ImportError):
     from shared.auth.rbac import (
         Permission,
         Role,
@@ -136,6 +130,3 @@ try:
         require_role,
         validate_tenant_access,
     )
-except ImportError:
-    # Same graceful-degradation strategy as jwt_handler above.
-    pass

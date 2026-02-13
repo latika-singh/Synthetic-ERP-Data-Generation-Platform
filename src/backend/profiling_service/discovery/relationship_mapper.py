@@ -49,14 +49,9 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
-from profiling_service.connectors.base import (
-    BaseConnector,
-    ConnectionConfig,
-    RelationshipMetadata as ConnectorRelationship,
-)
 from profiling_service.connectors import get_connector
 from profiling_service.models.schema_definition import (
     RelationshipDefinition,
@@ -66,6 +61,14 @@ from profiling_service.models.schema_definition import (
 )
 from shared.logging.structured_logger import get_logger
 from shared.middleware.circuit_breaker import circuit_breaker_decorator
+
+
+if TYPE_CHECKING:
+    from profiling_service.connectors.base import (
+        BaseConnector,
+        ConnectionConfig,
+        RelationshipMetadata as ConnectorRelationship,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +184,7 @@ class RelationshipMapper:
             A de-duplicated, validated list of
             :class:`RelationshipDefinition` objects.
         """
-        start = datetime.now(timezone.utc)
+        start = datetime.now(UTC)
         raw_relationships: list[RelationshipDefinition] = []
         table_names: set[str] = {t.table_name for t in schema.tables}
 
@@ -229,7 +232,7 @@ class RelationshipMapper:
             1 for r in valid if self._is_cross_module(r, schema)
         )
 
-        duration = (datetime.now(timezone.utc) - start).total_seconds()
+        duration = (datetime.now(UTC) - start).total_seconds()
         self._logger.info(
             "relationship_discovery_complete",
             total_discovered=len(raw_relationships),
@@ -491,7 +494,7 @@ class RelationshipMapper:
             return self.discover_relationships(connector, schema)
 
     # ---------------------------------------------------------------
-    # Private — circuit-breaker–protected connector call
+    # Private - circuit-breaker-protected connector call
     # ---------------------------------------------------------------
 
     @circuit_breaker_decorator(
@@ -552,7 +555,7 @@ class RelationshipMapper:
         self,
         connector_rel: ConnectorRelationship,
         schema: SchemaDefinition,
-    ) -> Optional[RelationshipDefinition]:
+    ) -> RelationshipDefinition | None:
         """Convert a connector-level relationship to a domain model.
 
         Skips non-FK constraint types (e.g. ``CHECK``).  Attempts to

@@ -31,13 +31,14 @@ Typical usage::
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from flask import Blueprint, g, jsonify, request
 from flask_jwt_extended import jwt_required
 from pydantic import ValidationError
 
-from api_gateway.middleware.auth import require_permissions, require_roles
+from api_gateway.extensions import get_db
+from api_gateway.middleware.auth import require_permissions
 from api_gateway.schemas.profile import (
     ProfileRequest,
     ProfileResponse,
@@ -175,7 +176,7 @@ def create_profile() -> tuple:
         - ``discovery_scope`` *(optional)* — table names to profile; empty
           triggers full schema discovery
         - ``erp_module`` *(optional)* — module-level scope filter
-        - ``sample_size`` *(optional)* — 100 – 1,000,000
+        - ``sample_size`` *(optional)* -- 100 - 1,000,000
 
     Returns:
         - **201** — Profile created as :class:`ProfileResponse` JSON.
@@ -366,9 +367,9 @@ def list_profiles() -> tuple:
         - **500** — Internal server error.
     """
     tenant_id: str = getattr(g, "tenant_id", "")
-    erp_type: Optional[str] = request.args.get("erp_type")
-    erp_module: Optional[str] = request.args.get("erp_module")
-    cursor: Optional[str] = request.args.get("cursor")
+    erp_type: str | None = request.args.get("erp_type")
+    erp_module: str | None = request.args.get("erp_module")
+    cursor: str | None = request.args.get("cursor")
     direction: str = request.args.get("direction", "forward")
     page: int = request.args.get("page", 1, type=int)
     page_size: int = request.args.get("page_size", 20, type=int)
@@ -391,8 +392,6 @@ def list_profiles() -> tuple:
             # ----------------------------------------------------------
             # Cursor-based pagination via paginate_query
             # ----------------------------------------------------------
-            from api_gateway.extensions import get_db  # noqa: WPS433
-
             db = get_db()
             collection = db[_COLLECTION_NAME]
 

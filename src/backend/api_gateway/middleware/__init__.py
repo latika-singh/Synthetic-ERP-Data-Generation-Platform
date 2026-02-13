@@ -20,8 +20,13 @@ Usage in app.py::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
-from flask import Flask
+
+
+if TYPE_CHECKING:
+    from flask import Flask
 
 # ---------------------------------------------------------------------------
 # Re-exports from auth middleware
@@ -64,22 +69,23 @@ from api_gateway.middleware.tenant import (
     require_tenant,
 )
 
+
 # ---------------------------------------------------------------------------
 # Public API surface
 # ---------------------------------------------------------------------------
 __all__ = [
+    "ServiceCircuitBreaker",
+    "get_tenant_filter",
     "register_all_middleware",
     "register_auth_middleware",
-    "require_roles",
-    "require_permissions",
-    "register_rate_limiter",
     "register_error_handlers",
-    "ServiceCircuitBreaker",
-    "with_retry",
     "register_logging_middleware",
+    "register_rate_limiter",
     "register_tenant_middleware",
+    "require_permissions",
+    "require_roles",
     "require_tenant",
-    "get_tenant_filter",
+    "with_retry",
 ]
 
 # ---------------------------------------------------------------------------

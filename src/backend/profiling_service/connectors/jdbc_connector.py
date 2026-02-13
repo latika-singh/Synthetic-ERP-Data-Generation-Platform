@@ -704,7 +704,7 @@ class JDBCConnector(BaseConnector):
         )
         return result
 
-    def _discover_relationships_live(
+    def _discover_relationships_live(  # noqa: PLR0915
         self,
         schema: str | None,
     ) -> list[RelationshipMetadata]:
