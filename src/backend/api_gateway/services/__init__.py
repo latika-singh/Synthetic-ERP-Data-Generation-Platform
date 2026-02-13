@@ -67,6 +67,7 @@ from api_gateway.services.job_service import JobService
 from api_gateway.services.profile_service import ProfileService
 from api_gateway.services.schema_service import SchemaService
 
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
