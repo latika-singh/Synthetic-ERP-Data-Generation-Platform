@@ -60,29 +60,32 @@ COLLECTION_NAME: str = "schema_definitions"
 SUPPORTED_ERP_TYPES: list[str] = [
     "sap",
     "oracle_ebs",
-    "dynamics_365",
-    "legacy_jdbc",
+    "dynamics",
+    "legacy",
 ]
 """ERP system types supported by the platform's Profiling Service connectors.
 
-Each value maps to a dedicated connector in the Profiling Service:
+Each value maps to a dedicated connector in the Profiling Service and must
+align with the ``ERPType`` string enum defined in
+``api_gateway.schemas.schema``:
     - ``sap`` → SAP RFC/BAPI schema discovery connector
     - ``oracle_ebs`` → Oracle E-Business Suite OData/JDBC connector
-    - ``dynamics_365`` → Microsoft Dynamics 365 Web API/OData connector
-    - ``legacy_jdbc`` → Generic JDBC connector for legacy systems
+    - ``dynamics`` → Microsoft Dynamics 365 Web API/OData connector
+    - ``legacy`` → Generic JDBC connector for legacy systems
 """
 
 SUPPORTED_ERP_MODULES: list[str] = [
     "financial_accounting",
-    "human_resources",
+    "hr",
     "sales_distribution",
     "material_management",
 ]
 """ERP modules available in the initial release per Constraint C-005.
 
-Only these four modules are permitted for schema discovery.  Additional modules
-(Production Planning, Plant Maintenance, Quality Management) are deferred to
-future releases.
+Values must align with the ``ERPModule`` string enum defined in
+``api_gateway.schemas.schema``.  Only these four modules are permitted for
+schema discovery.  Additional modules (Production Planning, Plant Maintenance,
+Quality Management) are deferred to future releases.
 """
 
 # ---------------------------------------------------------------------------

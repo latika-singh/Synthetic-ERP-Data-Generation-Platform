@@ -151,7 +151,7 @@ class ConnectionParams(BaseModel):
             connection settings (e.g., ``{"ssl": "true", "timeout": "30"}``).
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     host: str = Field(
         ...,
@@ -251,7 +251,7 @@ class SchemaDiscoveryRequest(BaseModel):
         tenant_id: Optional tenant namespace for multi-tenant isolation.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(populate_by_name=True)
 
     erp_type: ERPType = Field(
         ...,
