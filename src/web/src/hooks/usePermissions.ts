@@ -26,7 +26,7 @@
 
 import { useMemo, useCallback } from 'react';
 import { useAuthStore } from '@/store/authStore';
-import { Role, Permission, ROLE_PERMISSIONS } from '@/types/auth';
+import { Role, Permission } from '@/types/auth';
 import type { User } from '@/types/auth';
 
 // ============================================================================
@@ -507,6 +507,5 @@ function usePermissions(): UsePermissionsReturn {
 // Exports
 // ============================================================================
 
-export type { UsePermissionsReturn };
 export { usePermissions };
 export default usePermissions;
