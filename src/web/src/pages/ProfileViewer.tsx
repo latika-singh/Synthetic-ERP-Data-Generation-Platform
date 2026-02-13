@@ -41,7 +41,6 @@ import type {
   TableProfile,
   ColumnProfile,
 } from '@/types/profile';
-import type { SchemaDefinition } from '@/types/schema';
 import { ERPType } from '@/types/schema';
 
 // ============================================================================
@@ -554,7 +553,7 @@ function ProfileViewer(): React.JSX.Element {
         header: 'Distribution',
         sortable: true,
         width: 'w-32',
-        render: (value: unknown, row: Record<string, unknown>) => {
+        render: (_value: unknown, row: Record<string, unknown>) => {
           const dist = (row as unknown as ColumnStatistics).distribution;
           return (
             <span className="text-sm capitalize">{dist?.type?.replace(/_/g, ' ') ?? '—'}</span>
@@ -620,7 +619,7 @@ function ProfileViewer(): React.JSX.Element {
         header: 'Fit Score',
         align: 'right' as const,
         width: 'w-24',
-        render: (value: unknown, row: Record<string, unknown>) => {
+        render: (_value: unknown, row: Record<string, unknown>) => {
           const dist = (row as unknown as ColumnStatistics).distribution;
           const score = dist?.fit_score;
           if (score === null || score === undefined) return <span className="text-sm">—</span>;
