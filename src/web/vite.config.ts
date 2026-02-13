@@ -115,6 +115,12 @@ export default defineConfig({
       '@testing-library/jest-dom': path.resolve(__dirname, 'node_modules/@testing-library/jest-dom'),
       '@testing-library/react': path.resolve(__dirname, 'node_modules/@testing-library/react'),
       /**
+       * user-event alias ensures external test files (tests/unit/web/) resolve
+       * @testing-library/user-event from src/web/node_modules rather than from
+       * the test file's own directory (which is outside the web package root).
+       */
+      '@testing-library/user-event': path.resolve(__dirname, 'node_modules/@testing-library/user-event'),
+      /**
        * Recharts alias ensures that vi.mock('recharts') in external test files
        * (tests/unit/web/) resolves to the same physical module as the source
        * component imports. Without this, vitest resolves the mock path relative
