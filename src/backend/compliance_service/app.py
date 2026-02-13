@@ -136,7 +136,7 @@ def scan_dataset() -> tuple[Response, int]:
 
     try:
         # Import detectors lazily to avoid circular imports at module load
-        from compliance_service.detectors import create_detector_pipeline
+        from compliance_service.detectors import create_detector_pipeline  # noqa: PLC0415
 
         scan_options: dict[str, Any] = body.get("scan_options", {})
         data_sample: list[dict[str, Any]] = body.get("data_sample", [])
@@ -254,7 +254,7 @@ def verify_compliance() -> tuple[Response, int]:
     )
 
     try:
-        from compliance_service.regulations import RegulationRegistry, RegulationType
+        from compliance_service.regulations import RegulationRegistry, RegulationType  # noqa: PLC0415
 
         requested_regulations: list[str] = body.get("regulations", [])
         scan_results: dict[str, Any] = body.get("scan_results", {})
@@ -262,7 +262,7 @@ def verify_compliance() -> tuple[Response, int]:
 
         # Determine which regulations to check
         if not requested_regulations:
-            from flask import current_app
+            from flask import current_app  # noqa: PLC0415
             enabled = current_app.config.get("ENABLED_REGULATIONS", ["GDPR", "HIPAA", "CCPA"])
             requested_regulations = list(enabled)
 
@@ -279,14 +279,14 @@ def verify_compliance() -> tuple[Response, int]:
 
                 reg_result: dict[str, Any] = {
                     "is_compliant": result.is_compliant,
-                    "score": result.score,
+                    "score": result.compliance_score,
                     "violations_count": len(result.violations),
                     "violations": [
                         {
-                            "rule_id": v.rule_id,
+                            "rule_id": v.article_reference,
                             "severity": v.severity.value if hasattr(v.severity, "value") else str(v.severity),
                             "description": v.description,
-                            "field": getattr(v, "field", None),
+                            "affected_fields": v.affected_fields,
                         }
                         for v in result.violations
                     ],
@@ -295,7 +295,7 @@ def verify_compliance() -> tuple[Response, int]:
 
                 if not result.is_compliant:
                     overall_compliant = False
-                total_score += result.score
+                total_score += result.compliance_score
                 checked_count += 1
 
             except (ValueError, KeyError):
@@ -422,7 +422,7 @@ def certify_dataset() -> tuple[Response, int]:
     )
 
     try:
-        from compliance_service.certification import AuditEventType, AuditLogger
+        from compliance_service.certification import AuditEventType, AuditLogger  # noqa: PLC0415
 
         audit_logger = AuditLogger()
         scan_results: dict[str, Any] = body.get("scan_results", {})
@@ -451,7 +451,7 @@ def certify_dataset() -> tuple[Response, int]:
         issued_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
         try:
-            from compliance_service.certification import ComplianceCertifier
+            from compliance_service.certification import ComplianceCertifier  # noqa: PLC0415
 
             certifier = ComplianceCertifier()
             certificate = certifier.certify(
@@ -469,7 +469,7 @@ def certify_dataset() -> tuple[Response, int]:
         except ImportError:
             # ComplianceCertifier module not yet generated — produce a
             # basic certificate response using available primitives.
-            import hashlib
+            import hashlib  # noqa: PLC0415
 
             cert_payload = f"{dataset_id}:{tenant_id}:{user_id}:{issued_at}"
             cert_hash = f"sha256:{hashlib.sha256(cert_payload.encode('utf-8')).hexdigest()}"
@@ -481,7 +481,7 @@ def certify_dataset() -> tuple[Response, int]:
                 tenant_id=tenant_id,
                 exc_info=True,
             )
-            import hashlib
+            import hashlib  # noqa: PLC0415
 
             cert_payload = f"{dataset_id}:{tenant_id}:{user_id}:{issued_at}"
             cert_hash = f"sha256:{hashlib.sha256(cert_payload.encode('utf-8')).hexdigest()}"
@@ -587,21 +587,41 @@ def get_audit_logs() -> tuple[Response, int]:
     )
 
     try:
-        from compliance_service.certification import AuditLogger, AuditQueryParams
+        from datetime import datetime as _dt  # noqa: PLC0415
+
+        from compliance_service.certification import AuditEventType, AuditLogger, AuditQueryParams  # noqa: PLC0415
 
         audit_logger = AuditLogger()
+
+        import contextlib  # noqa: PLC0415
+
+        # Convert raw query strings to the types expected by AuditQueryParams
+        parsed_event_type: AuditEventType | None = None
+        if event_type:
+            with contextlib.suppress(ValueError):
+                parsed_event_type = AuditEventType(event_type)
+
+        parsed_start: _dt | None = None
+        if start_date:
+            with contextlib.suppress(ValueError, TypeError):
+                parsed_start = _dt.fromisoformat(start_date.replace("Z", "+00:00"))
+
+        parsed_end: _dt | None = None
+        if end_date:
+            with contextlib.suppress(ValueError, TypeError):
+                parsed_end = _dt.fromisoformat(end_date.replace("Z", "+00:00"))
 
         query_params = AuditQueryParams(
             tenant_id=tenant_id,
             dataset_id=dataset_id,
-            event_type=event_type,
-            start_date=start_date,
-            end_date=end_date,
+            event_type=parsed_event_type,
+            start_date=parsed_start,
+            end_date=parsed_end,
             page=page,
             page_size=page_size,
         )
 
-        query_result = audit_logger.query_events(query_params)
+        query_result = audit_logger.query_audit_log(query_params)
 
         entries: list[dict[str, Any]] = []
         for entry in query_result.entries:
@@ -870,7 +890,7 @@ def _register_error_handlers(app: Flask) -> None:
         (e.g. 405 Method Not Allowed), the original HTTP status code is
         preserved so that Flask/Werkzeug semantics are respected.
         """
-        from werkzeug.exceptions import HTTPException
+        from werkzeug.exceptions import HTTPException  # noqa: PLC0415
 
         if isinstance(error, HTTPException):
             # Preserve the original HTTP status code for known HTTP errors
@@ -933,7 +953,7 @@ def _register_request_hooks(app: Flask) -> None:
 
         # Bind correlation ID to structlog context for this request scope
         try:
-            from shared.logging.structured_logger import bind_context
+            from shared.logging.structured_logger import bind_context  # noqa: PLC0415
 
             bind_context(
                 correlation_id=correlation_id,
@@ -976,7 +996,7 @@ def _register_request_hooks(app: Flask) -> None:
 
         # Clear structlog context to prevent cross-request contamination
         try:
-            from shared.logging.structured_logger import clear_context
+            from shared.logging.structured_logger import clear_context  # noqa: PLC0415
 
             clear_context()
         except ImportError:
