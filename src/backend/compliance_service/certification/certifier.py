@@ -58,14 +58,16 @@ import hmac
 import json
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Dict, List, Optional
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from pydantic import BaseModel, Field
 
 from compliance_service.certification.audit_logger import AuditEventType, AuditLogger
-from compliance_service.detectors.pii_detector import PIIDetectionResult, PIIDetector
+from compliance_service.detectors import PIIDetectionResult, PIIDetector
 from compliance_service.regulations import (
     BaseRegulationChecker,
     ComplianceResult,
@@ -310,6 +312,10 @@ class ComplianceCertifier:
         signing_key: Optional HMAC signing key for certificate hashes.
             When provided, certificates are signed with HMAC-SHA256 instead
             of plain SHA-256.
+        rsa_private_key_pem: Optional PEM-encoded RSA private key bytes for
+            asymmetric certificate signing.  When provided, an RSA-PKCS1v15
+            signature is appended to the certificate metadata alongside the
+            standard SHA-256/HMAC hash for enhanced tamper evidence.
 
     Example::
 
@@ -326,11 +332,19 @@ class ComplianceCertifier:
     # Collection name in MongoDB for certificate persistence
     COLLECTION_NAME: str = "compliance_certificates"
 
+    # Default set of supported regulation types for quick reference
+    DEFAULT_REGULATION_TYPES: list[RegulationType] = [
+        RegulationType.GDPR,
+        RegulationType.HIPAA,
+        RegulationType.CCPA,
+    ]
+
     def __init__(
         self,
         pii_detector: PIIDetector | None = None,
         audit_logger: AuditLogger | None = None,
         signing_key: str | None = None,
+        rsa_private_key_pem: bytes | None = None,
     ) -> None:
         """Initialise the compliance certifier.
 
@@ -338,10 +352,17 @@ class ComplianceCertifier:
             pii_detector: Optional PII detector.  Defaults are created lazily.
             audit_logger: Optional audit logger.  Defaults are created lazily.
             signing_key: Optional HMAC signing key for tamper evidence.
+            rsa_private_key_pem: Optional PEM-encoded RSA private key for
+                asymmetric certificate signing via PKCS1v15 + SHA-256.
         """
         self._pii_detector: PIIDetector = pii_detector or PIIDetector()
         self._audit_logger: AuditLogger = audit_logger or AuditLogger()
         self._signing_key: str | None = signing_key
+        self._rsa_private_key = None
+        if rsa_private_key_pem:
+            self._rsa_private_key = serialization.load_pem_private_key(
+                rsa_private_key_pem, password=None,
+            )
         self._logger = get_logger(__name__)
         self._logger.info("compliance_certifier_initialised")
 
@@ -532,16 +553,32 @@ class ComplianceCertifier:
     ) -> list[str]:
         """Determine which regulation names to check.
 
+        When no explicit list is provided, defaults to the three core
+        regulatory frameworks: :attr:`RegulationType.GDPR`,
+        :attr:`RegulationType.HIPAA`, and :attr:`RegulationType.CCPA`.
+        If the :class:`RegulationRegistry` has additional registered
+        checkers, those are included as well.
+
         Args:
             regulations: Explicit list or ``None`` for all registered.
 
         Returns:
             List of regulation name strings.
         """
-        if regulations is None:
-            available = RegulationRegistry.get_available_regulations()
+        if regulations is not None:
+            return list(regulations)
+
+        # Retrieve all regulations registered in the registry
+        available = RegulationRegistry.get_available_regulations()
+        if available:
             return [r.value for r in available]
-        return list(regulations)
+
+        # Fallback to the three core regulation types when registry is empty
+        return [
+            RegulationType.GDPR.value,
+            RegulationType.HIPAA.value,
+            RegulationType.CCPA.value,
+        ]
 
     def _build_pending_certificate(
         self,
@@ -933,9 +970,19 @@ class ComplianceCertifier:
         certificate.certificate_hash = self._generate_certificate_hash(
             certificate,
         )
+
+        # Attach optional RSA digital signature for enhanced tamper evidence
+        rsa_sig = self._sign_certificate_rsa(
+            certificate.certificate_hash.encode("utf-8"),
+        )
+        if rsa_sig is not None:
+            certificate.metadata["rsa_signature"] = rsa_sig.hex()
+
         certificate.metadata["certification_duration_ms"] = round(
             (time.monotonic() - start_time) * 1000, 2,
         )
+        # Record wall-clock completion timestamp for observability
+        certificate.metadata["completed_at_epoch"] = time.time()
 
         self._store_certificate(certificate)
 
@@ -1071,8 +1118,8 @@ class ComplianceCertifier:
         else:
             filtered_sample = data_sample
 
-        # Use batch detection for efficiency
-        return self._pii_detector.detect_batch(filtered_sample)
+        # Use the dual-layer PII detection pipeline (NLP + regex)
+        return self._pii_detector.detect_pii(filtered_sample)
 
     def _check_pii(self, scan_results: PIIDetectionResult) -> bool:
         """Evaluate PII scan results for compliance.
@@ -1263,6 +1310,77 @@ class ComplianceCertifier:
             ).hexdigest()
 
         return hashlib.sha256(canonical).hexdigest()
+
+    def verify_certificate_hash(
+        self,
+        certificate: ComplianceCertificate,
+    ) -> bool:
+        """Verify the tamper-evident hash of a compliance certificate.
+
+        Recomputes the certificate hash using the same deterministic
+        serialisation and compares it to the stored hash using
+        :func:`hmac.compare_digest` for constant-time comparison that
+        prevents timing side-channel attacks.
+
+        Args:
+            certificate: The certificate whose hash integrity to verify.
+
+        Returns:
+            ``True`` if the stored ``certificate_hash`` matches the
+            recomputed hash, ``False`` if the certificate has been
+            tampered with.
+
+        Example::
+
+            is_valid = certifier.verify_certificate_hash(certificate)
+            if not is_valid:
+                raise SecurityError("Certificate tampered with!")
+        """
+        expected_hash = self._generate_certificate_hash(certificate)
+        return hmac.compare_digest(
+            certificate.certificate_hash, expected_hash,
+        )
+
+    def _sign_certificate_rsa(
+        self,
+        data: bytes,
+    ) -> bytes | None:
+        """Sign certificate data using RSA PKCS#1 v1.5 with SHA-256.
+
+        Uses the ``cryptography`` library's :func:`padding.PKCS1v15`
+        and :class:`hashes.SHA256` to produce a digital signature when
+        an RSA private key was provided during initialisation.
+
+        Args:
+            data: The byte string to sign (typically the certificate
+                hash digest).
+
+        Returns:
+            The RSA signature bytes, or ``None`` when no RSA private
+            key is configured.
+
+        Example::
+
+            sig = certifier._sign_certificate_rsa(b"certificate-hash")
+            if sig:
+                certificate.metadata["rsa_signature"] = sig.hex()
+        """
+        if self._rsa_private_key is None:
+            return None
+
+        try:
+            signature: bytes = self._rsa_private_key.sign(
+                data,
+                padding.PKCS1v15(),
+                hashes.SHA256(),
+            )
+            return signature
+        except Exception as exc:
+            self._logger.warning(
+                "rsa_signing_failed",
+                error=str(exc),
+            )
+            return None
 
     def _compute_dataset_fingerprint(
         self,
