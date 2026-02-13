@@ -1,71 +1,71 @@
-"""Service layer package for the API Gateway.
+"""Business logic service layer for the API Gateway.
 
-This package contains business logic services that orchestrate operations
-between the API Gateway route handlers and downstream microservices
-(Generation Engine, Profiling Service, Quality Service, Compliance Service,
-Provisioning Service).
+This package provides the service layer that acts as the intermediary between
+the HTTP route handlers (``api_gateway.routes``) and the data / external
+service layer.  All business logic, inter-service communication, data access
+patterns, and orchestration are encapsulated in the service classes below,
+keeping route handlers thin and focused on request/response translation.
 
-**Available services:**
+**Available Service Classes:**
 
-- :class:`ExportService` — Export orchestration dispatching to the
-  Provisioning Service for database provisioning (PostgreSQL, Oracle,
-  SQL Server, SAP HANA), cloud storage uploads (AWS S3, Azure Blob,
-  GCP Cloud Storage), and file downloads (SQL, CSV, JSON, Parquet).
+- :class:`JobService` — Generation job lifecycle management including create,
+  get, list, update status/progress, cancel, and per-tenant statistics.
+  Dispatches jobs to the Generation Engine with circuit-breaker resilience
+  and tracks progress via Redis pub/sub.
 
-- :class:`ProfileService` — Business logic for statistical profile
-  management and inter-service communication with the Profiling Service.
-  Provides create_profile, get_profile, list_profiles,
-  get_profile_statistics, and delete_profile methods with multi-tenant
-  isolation and circuit-breaker resilience.
+- :class:`ProfileService` — Statistical profile management and inter-service
+  communication with the Profiling Service.  Provides create, get, list,
+  statistics access, and delete operations with Redis cache-aside and
+  circuit-breaker protection on outbound HTTP calls.
 
-- :class:`SchemaService` — Business logic for ERP schema discovery
-  orchestration, schema retrieval with Redis caching, table/column
-  detail lookups, and foreign-key relationship querying.  Dispatches
-  discovery requests to the Profiling Service with circuit-breaker
-  protection.
-
-- :class:`JobService` — Business logic for generation job lifecycle
-  management including create, get, list, update status/progress,
-  cancel, and statistics methods with multi-tenant isolation.
-  *(Available once job_service module is deployed.)*
+- :class:`SchemaService` — ERP schema discovery orchestration.  Validates
+  and dispatches discovery requests to the Profiling Service, stores results
+  in MongoDB, and supports browsing schemas, tables, columns, and foreign-key
+  relationships with Redis caching.
 
 - :class:`AuthService` — Auth0 integration and authentication management
-  including login URL generation, callback handling, token validation,
-  refresh, role/tenant extraction, and user profile management.
-  *(Available once auth_service module is deployed.)*
+  including login URL generation, OAuth callback handling, RS256 JWT
+  validation, refresh-token rotation, role/tenant extraction, user profile
+  management, and logout flow.
 
-All service classes enforce **multi-tenant isolation** per requirement R-007:
-every public method accepts a ``tenant_id`` parameter and all data-access
-operations are tenant-scoped.
+- :class:`ExportService` — Export orchestration to the Provisioning Service
+  for database provisioning (PostgreSQL, Oracle, SQL Server, SAP HANA),
+  cloud storage uploads (AWS S3, Azure Blob, GCP Cloud Storage), and file
+  downloads (SQL, CSV, JSON, Parquet).  Provides full export lifecycle
+  management with progress tracking.
+
+**Multi-Tenant Isolation (R-007):**
+
+Every service class enforces multi-tenant isolation by requiring a
+``tenant_id`` parameter on all public methods.  All downstream operations
+(MongoDB queries, Redis key namespacing, HTTP headers) are tenant-scoped
+so that cross-tenant data access is impossible by design.
+
+**Factory Functions:**
+
+Convenience factory functions (``get_job_service``, ``get_profile_service``,
+``get_schema_service``, ``get_auth_service``, ``get_export_service``) are
+provided for easy dependency injection and test mocking via
+``unittest.mock.patch``.
+
+Example::
+
+    # Direct class import
+    from api_gateway.services import JobService
+    service = JobService()
+
+    # Factory function import (preferred for test mocking)
+    from api_gateway.services import get_job_service
+    service = get_job_service()
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-# ---------------------------------------------------------------------------
-# Direct imports for services that are available on disk
-# ---------------------------------------------------------------------------
+from api_gateway.services.auth_service import AuthService
 from api_gateway.services.export_service import ExportService
+from api_gateway.services.job_service import JobService
 from api_gateway.services.profile_service import ProfileService
 from api_gateway.services.schema_service import SchemaService
-
-
-# ---------------------------------------------------------------------------
-# Lazy / conditional imports for services not yet deployed by other agents.
-# Using try/except ensures the package remains importable even when
-# job_service.py or auth_service.py have not been created yet.
-# ---------------------------------------------------------------------------
-try:
-    from api_gateway.services.job_service import JobService
-except ImportError:  # pragma: no cover
-    JobService = None  # type: ignore[assignment,misc]
-
-try:
-    from api_gateway.services.auth_service import AuthService
-except ImportError:  # pragma: no cover
-    AuthService = None  # type: ignore[assignment,misc]
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -85,31 +85,60 @@ __all__: list[str] = [
 
 
 # ---------------------------------------------------------------------------
-# Factory helpers -- simplify mocking in unit tests
+# Factory functions — enable easy mocking in unit tests via
+# unittest.mock.patch('api_gateway.services.get_<name>_service')
 # ---------------------------------------------------------------------------
 
-def get_export_service() -> ExportService:
-    """Return a new :class:`ExportService` instance.
 
-    Factory function that enables easy mocking in tests via
-    ``unittest.mock.patch('api_gateway.services.get_export_service')``.
+def get_job_service() -> JobService:
+    """Return a new :class:`JobService` instance.
+
+    Factory function that creates a fresh ``JobService`` bound to the
+    current Flask application context.  Designed for dependency injection
+    in route handlers and easy mocking in unit tests.
 
     Returns:
-        ExportService: A fresh service instance bound to the current
-            Flask application context.
+        JobService: A newly constructed service instance ready for use
+            within an active Flask application context.
+
+    Example::
+
+        from api_gateway.services import get_job_service
+
+        service = get_job_service()
+        job = service.create_job(
+            tenant_id="tenant-abc",
+            user_id="user-123",
+            generation_method="statistical",
+            schema_config={"tables": [...]},
+            output_format="parquet",
+        )
     """
-    return ExportService()
+    return JobService()
 
 
 def get_profile_service() -> ProfileService:
     """Return a new :class:`ProfileService` instance.
 
-    Factory function that enables easy mocking in tests via
-    ``unittest.mock.patch('api_gateway.services.get_profile_service')``.
+    Factory function that creates a fresh ``ProfileService`` bound to the
+    current Flask application context.  Designed for dependency injection
+    in route handlers and easy mocking in unit tests.
 
     Returns:
-        ProfileService: A fresh service instance bound to the current
-            Flask application context.
+        ProfileService: A newly constructed service instance ready for use
+            within an active Flask application context.
+
+    Example::
+
+        from api_gateway.services import get_profile_service
+
+        service = get_profile_service()
+        profile = service.create_profile(
+            tenant_id="tenant-abc",
+            user_id="user-123",
+            source_connection={"erp_type": "sap", ...},
+            tables=["GL_ACCOUNTS"],
+        )
     """
     return ProfileService()
 
@@ -117,53 +146,76 @@ def get_profile_service() -> ProfileService:
 def get_schema_service() -> SchemaService:
     """Return a new :class:`SchemaService` instance.
 
-    Factory function that enables easy mocking in tests via
-    ``unittest.mock.patch('api_gateway.services.get_schema_service')``.
+    Factory function that creates a fresh ``SchemaService`` bound to the
+    current Flask application context.  Designed for dependency injection
+    in route handlers and easy mocking in unit tests.
 
     Returns:
-        SchemaService: A fresh service instance bound to the current
-            Flask application context.
+        SchemaService: A newly constructed service instance ready for use
+            within an active Flask application context.
+
+    Example::
+
+        from api_gateway.services import get_schema_service
+
+        service = get_schema_service()
+        schema = service.discover_schema(
+            tenant_id="tenant-abc",
+            user_id="user-123",
+            erp_type="sap",
+            connection_config={"host": "erp.example.com"},
+            modules=["financial_accounting"],
+        )
     """
     return SchemaService()
 
 
-def get_job_service():
-    """Return a new :class:`JobService` instance if available.
+def get_auth_service() -> AuthService:
+    """Return a new :class:`AuthService` instance.
 
-    Factory function that enables easy mocking in tests via
-    ``unittest.mock.patch('api_gateway.services.get_job_service')``.
-
-    Returns:
-        JobService | None: A fresh service instance bound to the current
-            Flask application context, or ``None`` if the module is not
-            yet deployed.
-
-    Raises:
-        RuntimeError: If ``JobService`` is not available.
-    """
-    if JobService is None:
-        raise RuntimeError(
-            "JobService is not available. Ensure job_service.py is deployed."
-        )
-    return JobService()
-
-
-def get_auth_service():
-    """Return a new :class:`AuthService` instance if available.
-
-    Factory function that enables easy mocking in tests via
-    ``unittest.mock.patch('api_gateway.services.get_auth_service')``.
+    Factory function that creates a fresh ``AuthService`` bound to the
+    current Flask application context.  Designed for dependency injection
+    in route handlers and easy mocking in unit tests.
 
     Returns:
-        AuthService | None: A fresh service instance bound to the current
-            Flask application context, or ``None`` if the module is not
-            yet deployed.
+        AuthService: A newly constructed service instance ready for use
+            within an active Flask application context.
 
-    Raises:
-        RuntimeError: If ``AuthService`` is not available.
-    """
-    if AuthService is None:
-        raise RuntimeError(
-            "AuthService is not available. Ensure auth_service.py is deployed."
+    Example::
+
+        from api_gateway.services import get_auth_service
+
+        auth = get_auth_service()
+        login_url = auth.get_login_url(
+            redirect_uri="https://app.example.com/callback",
         )
+    """
     return AuthService()
+
+
+def get_export_service() -> ExportService:
+    """Return a new :class:`ExportService` instance.
+
+    Factory function that creates a fresh ``ExportService`` bound to the
+    current Flask application context.  Designed for dependency injection
+    in route handlers and easy mocking in unit tests.
+
+    Returns:
+        ExportService: A newly constructed service instance ready for use
+            within an active Flask application context.
+
+    Example::
+
+        from api_gateway.services import get_export_service
+
+        service = get_export_service()
+        export = service.create_export(
+            tenant_id="tenant-abc",
+            user_id="user-123",
+            job_id="job-xyz-789",
+            export_type="cloud_storage",
+            target_config={"cloud_provider": "aws_s3", "bucket": "my-bucket"},
+            output_format="parquet",
+        )
+    """
+    return ExportService()
