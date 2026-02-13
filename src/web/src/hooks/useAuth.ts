@@ -632,6 +632,5 @@ function useAuth(): UseAuthReturn {
 // Exports
 // ============================================================================
 
-export type { UseAuthReturn };
 export default useAuth;
 export { useAuth };
