@@ -27,10 +27,11 @@ Usage::
 
 from __future__ import annotations
 
+
 __version__: str = "1.0.0"
 """Semantic version of the Compliance Service package."""
 
-__all__: list[str] = ["create_app", "__version__"]
+__all__: list[str] = ["__version__", "create_app"]
 """Public API surface exported by the ``compliance_service`` package."""
 
 
@@ -54,7 +55,7 @@ def __getattr__(name: str) -> object:
             of this package.
     """
     if name == "create_app":
-        from compliance_service.app import create_app
+        from compliance_service.app import create_app  # noqa: PLC0415
 
         # Cache in the module globals so subsequent accesses bypass
         # __getattr__ entirely, matching normal attribute lookup speed.
