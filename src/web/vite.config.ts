@@ -55,6 +55,9 @@ export default defineConfig({
         secure: false,
       },
     },
+    fs: {
+      allow: ['../..'],
+    },
   },
 
   /**
@@ -97,7 +100,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
+    setupFiles: ['./src/test/setup.ts', '../../tests/unit/web/setup.ts'],
     css: true,
   },
 });
