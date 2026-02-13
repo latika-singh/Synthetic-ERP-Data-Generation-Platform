@@ -33,7 +33,7 @@ Design Patterns:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from profiling_service.connectors.base import (
     BaseConnector,
@@ -277,7 +277,7 @@ class JDBCConnector(BaseConnector):
         self._schema_filter: str | None = config.database
 
         # JDBC connection handle — ``None`` until ``connect()`` succeeds.
-        self._connection: Optional[Any] = None
+        self._connection: Any | None = None
         self._use_live_jdbc: bool = False
 
         self._logger.info(
@@ -607,7 +607,7 @@ class JDBCConnector(BaseConnector):
         # Attempt to obtain estimated row counts from INFORMATION_SCHEMA.
         # This is metadata-safe (C-001) — it queries catalog statistics,
         # never executes COUNT(*) on business data tables.
-        row_count_map: dict[str, Optional[int]] = {}
+        row_count_map: dict[str, int | None] = {}
         row_count_map = self._estimate_row_counts_from_catalog(schema, raw_tables)
 
         result: list[TableMetadata] = []
@@ -754,10 +754,10 @@ class JDBCConnector(BaseConnector):
                         seen_constraints.add(fk_name)
 
                         # Determine referential actions when available.
-                        on_update: Optional[str] = self._map_referential_action(
+                        on_update: str | None = self._map_referential_action(
                             fk_rs.getInt(10)  # UPDATE_RULE
                         )
-                        on_delete: Optional[str] = self._map_referential_action(
+                        on_delete: str | None = self._map_referential_action(
                             fk_rs.getInt(11)  # DELETE_RULE
                         )
 
@@ -798,10 +798,10 @@ class JDBCConnector(BaseConnector):
                             continue
                         seen_constraints.add(fk_name)
 
-                        on_update_ek: Optional[str] = self._map_referential_action(
+                        on_update_ek: str | None = self._map_referential_action(
                             ek_rs.getInt(10)
                         )
-                        on_delete_ek: Optional[str] = self._map_referential_action(
+                        on_delete_ek: str | None = self._map_referential_action(
                             ek_rs.getInt(11)
                         )
 
@@ -956,7 +956,7 @@ class JDBCConnector(BaseConnector):
         self,
         schema: str | None,
         raw_tables: list[dict[str, Any]],
-    ) -> dict[str, Optional[int]]:
+    ) -> dict[str, int | None]:
         """Attempt to obtain estimated row counts from database catalog statistics.
 
         Tries the JDBC standard ``INFORMATION_SCHEMA.TABLES`` approach first.
@@ -973,7 +973,7 @@ class JDBCConnector(BaseConnector):
             Mapping of table_name → estimated_row_count (``None`` when the
             estimate is unavailable).
         """
-        counts: dict[str, Optional[int]] = {}
+        counts: dict[str, int | None] = {}
 
         if self._connection is None:
             return counts
@@ -1027,7 +1027,7 @@ class JDBCConnector(BaseConnector):
         return counts
 
     @staticmethod
-    def _map_referential_action(action_code: int) -> Optional[str]:
+    def _map_referential_action(action_code: int) -> str | None:
         """Map a JDBC referential action code to a human-readable string.
 
         The codes are defined in ``java.sql.DatabaseMetaData`` for the

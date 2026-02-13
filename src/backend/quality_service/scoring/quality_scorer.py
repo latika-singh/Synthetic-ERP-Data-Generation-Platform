@@ -33,17 +33,17 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
-from typing import Any, Optional, Union
+from datetime import UTC, datetime
+from typing import Any
 
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from quality_service.validators.base import BaseValidator, ValidationResult
 from quality_service.scoring.report_generator import (
     QualityReport,
     ReportGenerator,
 )
+from quality_service.validators.base import BaseValidator, ValidationResult
 from shared.logging.structured_logger import get_logger
 
 
@@ -258,7 +258,7 @@ class QualityScorer:
         self,
         job_id: str,
         tenant_id: str,
-        generated_data: Union[pd.DataFrame, dict[str, pd.DataFrame]],
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
         profile: dict[str, Any],
         metadata: dict[str, Any] | None = None,
     ) -> QualityScoringResult:
@@ -340,7 +340,7 @@ class QualityScorer:
             threshold=self.minimum_threshold,
             validation_results=serialised_results,
             weights=weights_map,
-            scored_at=datetime.now(timezone.utc).isoformat(),
+            scored_at=datetime.now(UTC).isoformat(),
             execution_time_ms=round(elapsed_ms, 3),
             metadata=metadata if metadata is not None else {},
         )
@@ -364,7 +364,7 @@ class QualityScorer:
         self,
         job_id: str,
         tenant_id: str,
-        generated_data: Union[pd.DataFrame, dict[str, pd.DataFrame]],
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
         profile: dict[str, Any],
         metadata: dict[str, Any] | None = None,
     ) -> tuple[QualityScoringResult, QualityReport]:

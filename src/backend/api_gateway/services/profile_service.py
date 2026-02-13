@@ -46,10 +46,9 @@ Environment Variables (via ``current_app.config``):
 from __future__ import annotations
 
 import json
-import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from circuitbreaker import circuit
@@ -57,6 +56,7 @@ from flask import current_app
 
 from api_gateway.extensions import get_db, get_redis
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -68,7 +68,7 @@ documents.  Matches the five core collections defined in the data layer
 specification."""
 
 # Supported ERP types for input validation.
-_SUPPORTED_ERP_TYPES: List[str] = ["sap", "oracle", "dynamics", "legacy"]
+_SUPPORTED_ERP_TYPES: list[str] = ["sap", "oracle", "dynamics", "legacy"]
 
 # Redis cache key prefix and TTL.
 _CACHE_KEY_PREFIX: str = "profile"
@@ -122,9 +122,9 @@ class ProfileService:
         self,
         tenant_id: str,
         user_id: str,
-        source_connection: Dict[str, Any],
-        tables: List[str],
-    ) -> Dict[str, Any]:
+        source_connection: dict[str, Any],
+        tables: list[str],
+    ) -> dict[str, Any]:
         """Create a new statistical profiling request.
 
         Validates the incoming ``source_connection`` payload, persists a
@@ -199,9 +199,9 @@ class ProfileService:
 
         # ----- Build profile document -----
         profile_id: str = str(uuid.uuid4())
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
 
-        profile_doc: Dict[str, Any] = {
+        profile_doc: dict[str, Any] = {
             "profile_id": profile_id,
             "tenant_id": tenant_id,
             "user_id": user_id,
@@ -248,7 +248,7 @@ class ProfileService:
                     "$set": {
                         "status": "profiling",
                         "dispatch_response": dispatch_response,
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(UTC),
                     }
                 },
             )
@@ -276,7 +276,7 @@ class ProfileService:
                     "$set": {
                         "status": "dispatch_failed",
                         "error_message": str(exc),
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(UTC),
                     }
                 },
             )
@@ -291,7 +291,7 @@ class ProfileService:
         self,
         profile_id: str,
         tenant_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve a statistical profile by ID with cache-aside strategy.
 
         Checks Redis first (key ``profile:<profile_id>``) for a cached
@@ -313,9 +313,9 @@ class ProfileService:
         try:
             redis_client = get_redis()
             cache_key = f"{_CACHE_KEY_PREFIX}:{profile_id}"
-            cached: Optional[bytes] = redis_client.get(cache_key)
+            cached: bytes | None = redis_client.get(cache_key)
             if cached is not None:
-                profile_data: Dict[str, Any] = json.loads(cached)
+                profile_data: dict[str, Any] = json.loads(cached)
                 # Enforce tenant isolation even on cached data.
                 if profile_data.get("tenant_id") == tenant_id:
                     self.logger.debug(
@@ -343,7 +343,7 @@ class ProfileService:
         # ----- MongoDB fallback -----
         try:
             db = get_db()
-            profile: Optional[Dict[str, Any]] = db[COLLECTION_NAME].find_one(
+            profile: dict[str, Any] | None = db[COLLECTION_NAME].find_one(
                 {"profile_id": profile_id, "tenant_id": tenant_id},
                 {"_id": 0},
             )
@@ -375,10 +375,10 @@ class ProfileService:
     def list_profiles(
         self,
         tenant_id: str,
-        erp_type: Optional[str] = None,
+        erp_type: str | None = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List statistical profiles with pagination and optional filtering.
 
         Queries the ``statistical_profiles`` MongoDB collection with an
@@ -411,7 +411,7 @@ class ProfileService:
         skip: int = (page - 1) * page_size
 
         # Build query filter — tenant_id is mandatory.
-        query_filter: Dict[str, Any] = {"tenant_id": tenant_id}
+        query_filter: dict[str, Any] = {"tenant_id": tenant_id}
         if erp_type is not None:
             if erp_type in _SUPPORTED_ERP_TYPES:
                 query_filter["erp_type"] = erp_type
@@ -434,7 +434,7 @@ class ProfileService:
                 .skip(skip)
                 .limit(page_size)
             )
-            items: List[Dict[str, Any]] = list(cursor)
+            items: list[dict[str, Any]] = list(cursor)
 
             has_next: bool = (skip + page_size) < total
 
@@ -468,7 +468,7 @@ class ProfileService:
         self,
         profile_id: str,
         tenant_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve the full statistical profile including distribution data.
 
         Returns column-level statistics such as min, max, mean, standard
@@ -490,7 +490,7 @@ class ProfileService:
         """
         try:
             db = get_db()
-            profile: Optional[Dict[str, Any]] = db[COLLECTION_NAME].find_one(
+            profile: dict[str, Any] | None = db[COLLECTION_NAME].find_one(
                 {"profile_id": profile_id, "tenant_id": tenant_id},
                 {"_id": 0},
             )
@@ -503,10 +503,10 @@ class ProfileService:
                 return None
 
             # Build the statistics response envelope.
-            statistics: Dict[str, Any] = profile.get("statistics", {})
-            tables_profiled: List[str] = profile.get("tables", [])
+            statistics: dict[str, Any] = profile.get("statistics", {})
+            tables_profiled: list[str] = profile.get("tables", [])
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "profile_id": profile_id,
                 "tenant_id": tenant_id,
                 "erp_type": profile.get("erp_type", ""),
@@ -597,8 +597,8 @@ class ProfileService:
     @circuit(failure_threshold=5, recovery_timeout=30)
     def _dispatch_to_profiling_service(
         self,
-        profile_request: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        profile_request: dict[str, Any],
+    ) -> dict[str, Any]:
         """Dispatch a profiling request to the Profiling Service.
 
         Sends an HTTP POST to ``<PROFILING_SERVICE_URL>/api/v1/profile``
@@ -628,14 +628,14 @@ class ProfileService:
         tenant_id: str = profile_request.get("tenant_id", "")
         profile_id: str = profile_request.get("profile_id", "")
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "profile_id": profile_id,
             "tenant_id": tenant_id,
             "source_connection": profile_request.get("source_connection", {}),
             "tables": profile_request.get("tables", []),
         }
 
-        headers: Dict[str, str] = {
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
             "X-Tenant-ID": tenant_id,
             "X-Correlation-ID": profile_id,
@@ -657,7 +657,7 @@ class ProfileService:
                 timeout=_DISPATCH_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
-            response_data: Dict[str, Any] = response.json()
+            response_data: dict[str, Any] = response.json()
 
             self.logger.info(
                 "profiling_service_dispatch_completed",
@@ -711,7 +711,7 @@ class ProfileService:
     def _cache_profile(
         self,
         profile_id: str,
-        profile_data: Dict[str, Any],
+        profile_data: dict[str, Any],
     ) -> None:
         """Cache a profile document in Redis.
 
@@ -776,8 +776,8 @@ class ProfileService:
 
     @staticmethod
     def _extract_column_statistics(
-        statistics: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        statistics: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         """Flatten nested statistics into a column-level summary list.
 
         Iterates over per-table statistics and extracts column-level
@@ -793,7 +793,7 @@ class ProfileService:
             A list of dictionaries, each representing one column's
             statistical summary.
         """
-        column_stats: List[Dict[str, Any]] = []
+        column_stats: list[dict[str, Any]] = []
 
         if not statistics or not isinstance(statistics, dict):
             return column_stats
@@ -801,7 +801,7 @@ class ProfileService:
         for table_name, table_stats in statistics.items():
             if not isinstance(table_stats, dict):
                 continue
-            columns: Dict[str, Any] = table_stats.get("columns", {})
+            columns: dict[str, Any] = table_stats.get("columns", {})
             if not isinstance(columns, dict):
                 continue
 

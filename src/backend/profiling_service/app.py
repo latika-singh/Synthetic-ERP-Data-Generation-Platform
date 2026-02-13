@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Optional
 
 from flask import Blueprint, Flask, g, jsonify, request
 from flask_cors import CORS
@@ -62,7 +61,7 @@ logger = get_logger(__name__)
 # ===========================================================================
 
 
-def create_app(config_name: Optional[str] = None) -> Flask:
+def create_app(config_name: str | None = None) -> Flask:
     """Create, configure, and return a Flask application instance.
 
     This is the canonical Application Factory for the Profiling Service.
@@ -783,7 +782,7 @@ def _register_lifecycle_hooks(app: Flask) -> None:
             )
 
     @app.after_request
-    def after_request_hook(response):  # noqa: ANN001
+    def after_request_hook(response):
         """Add correlation ID to response headers and log response details."""
         # Propagate correlation ID downstream
         correlation_id: str | None = getattr(g, "correlation_id", None)

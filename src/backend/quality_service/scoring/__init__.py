@@ -39,10 +39,11 @@ from quality_service.scoring.report_generator import (
     ReportGenerator,
 )
 
+
 __all__: list[str] = [
+    "QualityReport",
+    "QualityReportSection",
     "QualityScorer",
     "QualityScoringResult",
     "ReportGenerator",
-    "QualityReport",
-    "QualityReportSection",
 ]

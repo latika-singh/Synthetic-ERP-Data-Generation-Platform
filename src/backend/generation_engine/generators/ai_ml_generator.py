@@ -44,18 +44,17 @@ Exports:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
 import tensorflow as tf
+import torch
 from pydantic import BaseModel, Field
+from torch import nn
 
 from generation_engine.generators.base import (
     BaseGenerator,
-    GenerationConfig,
     GenerationError,
     GenerationResult,
 )
@@ -123,7 +122,7 @@ class AIMLConfig(BaseModel):
         default=False,
         description="Enable CUDA GPU acceleration.",
     )
-    model_path: Optional[str] = Field(
+    model_path: str | None = Field(
         default=None,
         description="Path or model-registry ID for pre-trained weights.",
     )
@@ -137,7 +136,7 @@ class AIMLConfig(BaseModel):
         ge=0.0,
         description="KL-divergence weight in VAE loss (β).",
     )
-    hidden_dims: List[int] = Field(
+    hidden_dims: list[int] = Field(
         default=[256, 512, 256],
         description="Hidden-layer dimensions for networks.",
     )
@@ -172,13 +171,13 @@ class GANGenerator(nn.Module):
         self,
         input_dim: int,
         latent_dim: int,
-        hidden_dims: List[int],
+        hidden_dims: list[int],
     ) -> None:
         super().__init__()
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        layers: List[nn.Module] = []
+        layers: list[nn.Module] = []
         prev_dim = latent_dim
 
         for h_dim in hidden_dims:
@@ -231,12 +230,12 @@ class GANDiscriminator(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        hidden_dims: List[int],
+        hidden_dims: list[int],
     ) -> None:
         super().__init__()
         self.input_dim = input_dim
 
-        layers: List[nn.Module] = []
+        layers: list[nn.Module] = []
         prev_dim = input_dim
 
         # Mirror the Generator by reversing hidden dimensions
@@ -299,7 +298,7 @@ class VAEEncoder(tf.keras.Model):
         self,
         input_dim: int,
         latent_dim: int,
-        hidden_dims: List[int],
+        hidden_dims: list[int],
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -307,7 +306,7 @@ class VAEEncoder(tf.keras.Model):
         self._latent_dim = latent_dim
 
         # Build hidden layers
-        self.hidden_layers: List[tf.keras.layers.Layer] = []
+        self.hidden_layers: list[tf.keras.layers.Layer] = []
         for h_dim in hidden_dims:
             self.hidden_layers.append(tf.keras.layers.Dense(h_dim))
             self.hidden_layers.append(tf.keras.layers.BatchNormalization())
@@ -378,7 +377,7 @@ class VAEDecoder(tf.keras.Model):
         self,
         latent_dim: int,
         output_dim: int,
-        hidden_dims: List[int],
+        hidden_dims: list[int],
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -386,7 +385,7 @@ class VAEDecoder(tf.keras.Model):
         self._output_dim = output_dim
 
         # Build hidden layers in reverse order
-        self.hidden_layers: List[tf.keras.layers.Layer] = []
+        self.hidden_layers: list[tf.keras.layers.Layer] = []
         reversed_dims = list(reversed(hidden_dims))
         for h_dim in reversed_dims:
             self.hidden_layers.append(tf.keras.layers.Dense(h_dim))
@@ -450,7 +449,7 @@ class AIMLGenerator(BaseGenerator):
             :class:`AIMLConfig` instance.  If ``None``, defaults are used.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.logger = get_logger(__name__)
 
@@ -476,19 +475,19 @@ class AIMLGenerator(BaseGenerator):
         )
 
         # Model components — lazy initialised during training or loading
-        self._gan_generator: Optional[GANGenerator] = None
-        self._gan_discriminator: Optional[GANDiscriminator] = None
-        self._vae_encoder: Optional[VAEEncoder] = None
-        self._vae_decoder: Optional[VAEDecoder] = None
+        self._gan_generator: GANGenerator | None = None
+        self._gan_discriminator: GANDiscriminator | None = None
+        self._vae_encoder: VAEEncoder | None = None
+        self._vae_decoder: VAEDecoder | None = None
         self._pretrained_model: Any = None
 
         # Preprocessing ↔ postprocessing state
-        self._normalization_params: Dict[str, Dict[str, Any]] = {}
-        self._categorical_mappings: Dict[str, Dict[str, Any]] = {}
-        self._column_order: List[str] = []
-        self._numerical_columns: List[str] = []
-        self._categorical_columns: List[str] = []
-        self._datetime_columns: List[str] = []
+        self._normalization_params: dict[str, dict[str, Any]] = {}
+        self._categorical_mappings: dict[str, dict[str, Any]] = {}
+        self._column_order: list[str] = []
+        self._numerical_columns: list[str] = []
+        self._categorical_columns: list[str] = []
+        self._datetime_columns: list[str] = []
         self._preprocessed_dim: int = 0
 
     # ------------------------------------------------------------------
@@ -651,7 +650,7 @@ class AIMLGenerator(BaseGenerator):
             df = self._apply_nulls(df, schema)
 
             # 8. Build result with metadata
-            metadata: Dict[str, Any] = {
+            metadata: dict[str, Any] = {
                 "method": "ai_ml",
                 "sub_method": method,
                 "latent_dim": self._aiml_config.latent_dim,
@@ -1090,7 +1089,7 @@ class AIMLGenerator(BaseGenerator):
         self._gan_generator.eval()
         latent_dim = self._aiml_config.latent_dim
         batch_size = self._aiml_config.batch_size
-        all_generated: List[np.ndarray] = []
+        all_generated: list[np.ndarray] = []
         remaining = num_records
 
         with torch.no_grad():
@@ -1129,7 +1128,7 @@ class AIMLGenerator(BaseGenerator):
 
         latent_dim = self._aiml_config.latent_dim
         batch_size = self._aiml_config.batch_size
-        all_generated: List[np.ndarray] = []
+        all_generated: list[np.ndarray] = []
         remaining = num_records
 
         while remaining > 0:
@@ -1166,9 +1165,7 @@ class AIMLGenerator(BaseGenerator):
                 method="ai_ml",
             )
 
-        if isinstance(self._pretrained_model, TabularGAN):
-            return self._pretrained_model.generate(num_records)
-        elif isinstance(self._pretrained_model, TabularVAE):
+        if isinstance(self._pretrained_model, TabularGAN) or isinstance(self._pretrained_model, TabularVAE):
             return self._pretrained_model.generate(num_records)
         else:
             raise GenerationError(
@@ -1283,7 +1280,7 @@ class AIMLGenerator(BaseGenerator):
             1000,
         )
 
-        parts: List[np.ndarray] = []
+        parts: list[np.ndarray] = []
         self._normalization_params = {}
         self._categorical_mappings = {}
         is_gan = self._aiml_config.model_type == "gan"
@@ -1359,7 +1356,7 @@ class AIMLGenerator(BaseGenerator):
         self,
         col_name: str,
         col_type: str,
-        col_profile: Dict[str, Any],
+        col_profile: dict[str, Any],
         num_samples: int,
         is_gan: bool,
     ) -> np.ndarray:
@@ -1400,7 +1397,7 @@ class AIMLGenerator(BaseGenerator):
         self,
         col_name: str,
         col_type: str,
-        col_profile: Dict[str, Any],
+        col_profile: dict[str, Any],
         num_samples: int,
     ) -> tuple[np.ndarray, int]:
         """Generate one-hot encoded samples for a categorical column."""
@@ -1449,7 +1446,7 @@ class AIMLGenerator(BaseGenerator):
         self,
         col_name: str,
         col_type: str,
-        col_profile: Dict[str, Any],
+        col_profile: dict[str, Any],
         num_samples: int,
         is_gan: bool,
     ) -> np.ndarray:
@@ -1505,7 +1502,7 @@ class AIMLGenerator(BaseGenerator):
         """
         columns_raw = schema.get("columns", [])
         num_records = raw_output.shape[0]
-        result_dict: Dict[str, Any] = {}
+        result_dict: dict[str, Any] = {}
         col_idx = 0  # Current position in the raw_output feature vector
         is_gan = self._aiml_config.model_type == "gan"
 
@@ -1645,7 +1642,7 @@ class AIMLGenerator(BaseGenerator):
         col_names = [self._extract_col_info(cd)[0] for cd in columns_raw]
         col_types = [self._extract_col_info(cd)[1] for cd in columns_raw]
 
-        result_dict: Dict[str, Any] = {}
+        result_dict: dict[str, Any] = {}
         for idx, (name, dtype) in enumerate(zip(col_names, col_types)):
             if idx < num_output_cols:
                 col_data = (
@@ -1688,10 +1685,10 @@ class AIMLGenerator(BaseGenerator):
 
     @staticmethod
     def _apply_constraints(
-        result_dict: Dict[str, Any],
+        result_dict: dict[str, Any],
         col_name: str,
         col_type: str,
-        constraints: Dict[str, Any],
+        constraints: dict[str, Any],
     ) -> None:
         """Apply explicit min/max constraints to a result column in-place."""
         col_data = result_dict[col_name]

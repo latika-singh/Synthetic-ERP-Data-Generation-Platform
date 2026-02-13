@@ -32,8 +32,8 @@ Usage::
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -170,7 +170,7 @@ class QualityReport(BaseModel):
         description="Tenant namespace for multi-tenant isolation.",
     )
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="Report creation timestamp (UTC, ISO 8601).",
     )
     status: str = Field(
@@ -351,7 +351,7 @@ class ReportGenerator:
             report_id=report_id,
             job_id=job_id,
             tenant_id=tenant_id,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             status=status,
             overall_score=composite_score,
             threshold=threshold,
@@ -699,7 +699,7 @@ class ReportGenerator:
             try:
                 doc["created_at"] = datetime.fromisoformat(created_at)
             except (ValueError, TypeError):
-                doc["created_at"] = datetime.now(timezone.utc)
+                doc["created_at"] = datetime.now(UTC)
 
         return QualityReport.model_validate(doc)
 

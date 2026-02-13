@@ -55,7 +55,8 @@ Example::
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
+
 
 # ---------------------------------------------------------------------------
 # jaydebeapi — JDBC connectivity with graceful fallback.
@@ -539,11 +540,11 @@ class OracleConnector(BaseConnector):
         self._driver_path: str = config.jdbc_driver_path or ""
         self._username: str = config.username or ""
         self._password: str = config.password or ""
-        self._schema_filter: Optional[str] = config.database
+        self._schema_filter: str | None = config.database
 
         # JDBC connection handle — typed as Optional[Any] because
         # jaydebeapi.Connection is only available when the library is present.
-        self._connection: Optional[Any] = None
+        self._connection: Any | None = None
 
         # Tracks whether the connector operates in live JDBC or offline mode.
         self._use_live_jdbc: bool = False
@@ -594,7 +595,7 @@ class OracleConnector(BaseConnector):
             def _establish_jdbc_connection() -> None:
                 """Inner callable executed within the retry loop."""
                 driver_args: list[str] = [self._username, self._password]
-                jar_path: Optional[str] = self._driver_path if self._driver_path else None
+                jar_path: str | None = self._driver_path if self._driver_path else None
 
                 self._connection = jaydebeapi.connect(
                     self._driver_class,
@@ -633,8 +634,8 @@ class OracleConnector(BaseConnector):
 
     def discover_tables(
         self,
-        schema_name: Optional[str] = None,
-        module: Optional[ERPModule] = None,
+        schema_name: str | None = None,
+        module: ERPModule | None = None,
     ) -> list[TableMetadata]:
         """Discover Oracle EBS tables for the given schema/module.
 
@@ -708,7 +709,7 @@ class OracleConnector(BaseConnector):
     def discover_columns(
         self,
         table_name: str,
-        schema_name: Optional[str] = None,
+        schema_name: str | None = None,
     ) -> list[ColumnMetadata]:
         """Discover columns for an Oracle EBS table.
 
@@ -772,7 +773,7 @@ class OracleConnector(BaseConnector):
 
     def discover_relationships(
         self,
-        schema_name: Optional[str] = None,
+        schema_name: str | None = None,
     ) -> list[RelationshipMetadata]:
         """Discover FK relationships across Oracle EBS tables.
 
@@ -863,8 +864,8 @@ class OracleConnector(BaseConnector):
     def _map_oracle_type_to_standard(
         self,
         oracle_type: str,
-        precision: Optional[int] = None,
-        scale: Optional[int] = None,
+        precision: int | None = None,
+        scale: int | None = None,
     ) -> str:
         """Map an Oracle-native data type to a platform-standard type label.
 
@@ -939,12 +940,12 @@ class OracleConnector(BaseConnector):
         for row in rows:
             table_name_val: str = str(row[0])
             owner_val: str = str(row[1]) if row[1] else schema
-            num_rows_val: Optional[int] = int(row[2]) if row[2] is not None else None
+            num_rows_val: int | None = int(row[2]) if row[2] is not None else None
             last_analyzed_val = row[3]  # datetime or None
             table_type_val: str = str(row[4]) if row[4] else "TABLE"
-            comments_val: Optional[str] = str(row[5]) if row[5] else _ORACLE_TABLE_DESCRIPTIONS.get(table_name_val)
+            comments_val: str | None = str(row[5]) if row[5] else _ORACLE_TABLE_DESCRIPTIONS.get(table_name_val)
 
-            assigned_module: Optional[ERPModule] = self._classify_module(table_name_val)
+            assigned_module: ERPModule | None = self._classify_module(table_name_val)
 
             result.append(
                 TableMetadata(
@@ -1010,13 +1011,13 @@ class OracleConnector(BaseConnector):
         for row in rows:
             col_name: str = str(row[0])
             data_type: str = str(row[1]) if row[1] else "VARCHAR2"
-            data_length: Optional[int] = int(row[2]) if row[2] is not None else None
-            data_precision: Optional[int] = int(row[3]) if row[3] is not None else None
-            data_scale: Optional[int] = int(row[4]) if row[4] is not None else None
+            data_length: int | None = int(row[2]) if row[2] is not None else None
+            data_precision: int | None = int(row[3]) if row[3] is not None else None
+            data_scale: int | None = int(row[4]) if row[4] is not None else None
             nullable_flag: str = str(row[5]) if row[5] else "Y"
-            column_id: Optional[int] = int(row[6]) if row[6] is not None else None
-            data_default: Optional[str] = str(row[7]).strip() if row[7] is not None else None
-            comments: Optional[str] = str(row[8]) if row[8] else None
+            column_id: int | None = int(row[6]) if row[6] is not None else None
+            data_default: str | None = str(row[7]).strip() if row[7] is not None else None
+            comments: str | None = str(row[8]) if row[8] else None
 
             standard_type = self._map_oracle_type_to_standard(
                 data_type,
@@ -1073,15 +1074,15 @@ class OracleConnector(BaseConnector):
 
         result: list[RelationshipMetadata] = []
         for row in rows:
-            constraint_name: Optional[str] = str(row[0]) if row[0] else None
+            constraint_name: str | None = str(row[0]) if row[0] else None
             source_table: str = str(row[1])
             source_column: str = str(row[2])
             target_table: str = str(row[3])
             target_column: str = str(row[4])
-            delete_rule: Optional[str] = str(row[5]) if row[5] else None
+            delete_rule: str | None = str(row[5]) if row[5] else None
 
             # Map Oracle delete-rule values to standard notation.
-            on_delete: Optional[str] = None
+            on_delete: str | None = None
             if delete_rule:
                 delete_rule_upper = delete_rule.upper().strip()
                 if delete_rule_upper == "CASCADE":
@@ -1127,7 +1128,7 @@ class OracleConnector(BaseConnector):
         result: list[TableMetadata] = []
         for tbl_name in target_tables:
             description = _ORACLE_TABLE_DESCRIPTIONS.get(tbl_name, "")
-            assigned_module: Optional[ERPModule] = self._classify_module(tbl_name)
+            assigned_module: ERPModule | None = self._classify_module(tbl_name)
 
             result.append(
                 TableMetadata(
@@ -1223,7 +1224,7 @@ class OracleConnector(BaseConnector):
     def _execute_query(
         self,
         sql: str,
-        params: Optional[list[Any]] = None,
+        params: list[Any] | None = None,
     ) -> list[tuple[Any, ...]]:
         """Execute a SQL query against the JDBC connection and return all rows.
 
@@ -1282,7 +1283,7 @@ class OracleConnector(BaseConnector):
                         error=str(close_exc),
                     )
 
-    def _classify_module(self, table_name: str) -> Optional[ERPModule]:
+    def _classify_module(self, table_name: str) -> ERPModule | None:
         """Determine the ERP module for a given Oracle EBS table name.
 
         Args:

@@ -38,10 +38,9 @@ Usage::
 from __future__ import annotations
 
 import json
-import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from circuitbreaker import circuit
@@ -50,6 +49,7 @@ from flask import current_app
 from api_gateway.extensions import get_db, get_redis
 from shared.logging.structured_logger import get_logger
 
+
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ from shared.logging.structured_logger import get_logger
 COLLECTION_NAME: str = "schema_definitions"
 """MongoDB collection name for persisting discovered ERP schema definitions."""
 
-SUPPORTED_ERP_TYPES: List[str] = [
+SUPPORTED_ERP_TYPES: list[str] = [
     "sap",
     "oracle_ebs",
     "dynamics_365",
@@ -72,7 +72,7 @@ Each value maps to a dedicated connector in the Profiling Service:
     - ``legacy_jdbc`` → Generic JDBC connector for legacy systems
 """
 
-SUPPORTED_ERP_MODULES: List[str] = [
+SUPPORTED_ERP_MODULES: list[str] = [
     "financial_accounting",
     "human_resources",
     "sales_distribution",
@@ -142,8 +142,8 @@ class SchemaService:
         tenant_id: str,
         user_id: str,
         erp_type: str,
-        connection_config: Dict[str, Any],
-        modules: List[str],
+        connection_config: dict[str, Any],
+        modules: list[str],
     ) -> dict:
         """Initiate an ERP schema discovery request.
 
@@ -199,7 +199,7 @@ class SchemaService:
             )
 
         # --- Validate modules (C-005 enforcement) ---
-        invalid_modules: List[str] = [
+        invalid_modules: list[str] = [
             m for m in modules if m not in SUPPORTED_ERP_MODULES
         ]
         if invalid_modules:
@@ -223,9 +223,9 @@ class SchemaService:
 
         # --- Create discovery request record in MongoDB ---
         schema_id: str = str(uuid.uuid4())
-        now: datetime = datetime.now(timezone.utc)
+        now: datetime = datetime.now(UTC)
 
-        discovery_record: Dict[str, Any] = {
+        discovery_record: dict[str, Any] = {
             "schema_id": schema_id,
             "tenant_id": tenant_id,
             "user_id": user_id,
@@ -264,8 +264,8 @@ class SchemaService:
 
             # Update the record with any immediate response data from the
             # Profiling Service (e.g. an upstream job_id or updated status).
-            update_fields: Dict[str, Any] = {
-                "updated_at": datetime.now(timezone.utc),
+            update_fields: dict[str, Any] = {
+                "updated_at": datetime.now(UTC),
             }
             if isinstance(profiling_response, dict):
                 profiling_job_id = profiling_response.get("job_id")
@@ -292,7 +292,7 @@ class SchemaService:
                     "$set": {
                         "status": "failed",
                         "error_message": str(exc),
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(UTC),
                     }
                 },
             )
@@ -307,7 +307,7 @@ class SchemaService:
 
         # Return a sanitised response (exclude MongoDB _id and raw
         # connection_config to avoid leaking credentials).
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "schema_id": schema_id,
             "tenant_id": tenant_id,
             "erp_type": erp_type,
@@ -321,7 +321,7 @@ class SchemaService:
     # Public API — Schema Retrieval
     # ------------------------------------------------------------------
 
-    def get_schema(self, schema_id: str, tenant_id: str) -> Optional[dict]:
+    def get_schema(self, schema_id: str, tenant_id: str) -> dict | None:
         """Retrieve a schema definition by ID with tenant isolation.
 
         Checks Redis cache first for fast retrieval.  On cache miss, queries
@@ -340,7 +340,7 @@ class SchemaService:
         cache_key: str = f"{_CACHE_KEY_PREFIX}:{schema_id}"
         try:
             redis_client = get_redis()
-            cached: Optional[bytes] = redis_client.get(cache_key)
+            cached: bytes | None = redis_client.get(cache_key)
             if cached is not None:
                 schema_data: dict = json.loads(cached)
                 # Verify tenant ownership even on cached data
@@ -369,7 +369,7 @@ class SchemaService:
         # --- Fall back to MongoDB ---
         try:
             db = get_db()
-            schema: Optional[dict] = db[COLLECTION_NAME].find_one(
+            schema: dict | None = db[COLLECTION_NAME].find_one(
                 {"schema_id": schema_id, "tenant_id": tenant_id},
                 {"_id": 0},  # Exclude MongoDB internal _id
             )
@@ -406,8 +406,8 @@ class SchemaService:
     def list_schemas(
         self,
         tenant_id: str,
-        erp_type: Optional[str] = None,
-        module: Optional[str] = None,
+        erp_type: str | None = None,
+        module: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
@@ -439,7 +439,7 @@ class SchemaService:
         page_size = max(1, min(page_size, 100))
 
         # Build query filter — tenant_id is always mandatory (R-007)
-        query_filter: Dict[str, Any] = {"tenant_id": tenant_id}
+        query_filter: dict[str, Any] = {"tenant_id": tenant_id}
         if erp_type is not None:
             query_filter["erp_type"] = erp_type
         if module is not None:
@@ -459,7 +459,7 @@ class SchemaService:
                 .skip(skip)
                 .limit(page_size)
             )
-            items: List[dict] = [self._serialize_document(doc) for doc in cursor]
+            items: list[dict] = [self._serialize_document(doc) for doc in cursor]
 
             has_next: bool = (skip + page_size) < total
 
@@ -498,7 +498,7 @@ class SchemaService:
         self,
         schema_id: str,
         tenant_id: str,
-    ) -> Optional[List[dict]]:
+    ) -> list[dict] | None:
         """Retrieve the list of tables from a schema definition.
 
         Each table entry includes ``table_name``, ``columns`` (list of column
@@ -514,7 +514,7 @@ class SchemaService:
         """
         try:
             db = get_db()
-            schema: Optional[dict] = db[COLLECTION_NAME].find_one(
+            schema: dict | None = db[COLLECTION_NAME].find_one(
                 {"schema_id": schema_id, "tenant_id": tenant_id},
                 {"_id": 0, "tables": 1},
             )
@@ -526,7 +526,7 @@ class SchemaService:
                 )
                 return None
 
-            tables: List[dict] = schema.get("tables", [])
+            tables: list[dict] = schema.get("tables", [])
             self.logger.debug(
                 "schema_tables_retrieved",
                 schema_id=schema_id,
@@ -549,7 +549,7 @@ class SchemaService:
         schema_id: str,
         tenant_id: str,
         table_name: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Retrieve detailed column information for a specific table.
 
         Returns full column-level metadata including ``column_name``,
@@ -567,7 +567,7 @@ class SchemaService:
         """
         try:
             db = get_db()
-            schema: Optional[dict] = db[COLLECTION_NAME].find_one(
+            schema: dict | None = db[COLLECTION_NAME].find_one(
                 {"schema_id": schema_id, "tenant_id": tenant_id},
                 {"_id": 0, "tables": 1},
             )
@@ -581,7 +581,7 @@ class SchemaService:
                 return None
 
             # Search for the specific table in the tables array
-            tables: List[dict] = schema.get("tables", [])
+            tables: list[dict] = schema.get("tables", [])
             for table in tables:
                 if table.get("table_name") == table_name:
                     self.logger.debug(
@@ -619,7 +619,7 @@ class SchemaService:
         self,
         schema_id: str,
         tenant_id: str,
-    ) -> Optional[List[dict]]:
+    ) -> list[dict] | None:
         """Retrieve foreign key relationships from a schema definition.
 
         Each relationship dict includes ``source_table``, ``source_column``,
@@ -637,7 +637,7 @@ class SchemaService:
         """
         try:
             db = get_db()
-            schema: Optional[dict] = db[COLLECTION_NAME].find_one(
+            schema: dict | None = db[COLLECTION_NAME].find_one(
                 {"schema_id": schema_id, "tenant_id": tenant_id},
                 {"_id": 0, "relationships": 1},
             )
@@ -649,7 +649,7 @@ class SchemaService:
                 )
                 return None
 
-            relationships: List[dict] = schema.get("relationships", [])
+            relationships: list[dict] = schema.get("relationships", [])
             self.logger.debug(
                 "schema_relationships_retrieved",
                 schema_id=schema_id,
@@ -706,7 +706,7 @@ class SchemaService:
                 "schema_deleted",
                 schema_id=schema_id,
                 tenant_id=tenant_id,
-                deleted_at=datetime.now(timezone.utc).isoformat(),
+                deleted_at=datetime.now(UTC).isoformat(),
             )
             return True
         except Exception as exc:
@@ -724,7 +724,7 @@ class SchemaService:
     # ------------------------------------------------------------------
 
     @circuit(failure_threshold=5, recovery_timeout=30)
-    def _dispatch_discovery(self, discovery_request: Dict[str, Any]) -> dict:
+    def _dispatch_discovery(self, discovery_request: dict[str, Any]) -> dict:
         """Dispatch a schema discovery request to the Profiling Service.
 
         Sends a POST request to the Profiling Service's ``/api/v1/discover``
@@ -758,14 +758,14 @@ class SchemaService:
         """
         url: str = f"{self.profiling_service_url}/api/v1/discover"
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "schema_id": discovery_request["schema_id"],
             "erp_type": discovery_request["erp_type"],
             "connection_config": discovery_request["connection_config"],
             "modules": discovery_request["modules"],
         }
 
-        headers: Dict[str, str] = {
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
             "X-Tenant-ID": discovery_request["tenant_id"],
             "X-Correlation-ID": str(uuid.uuid4()),
@@ -889,7 +889,7 @@ class SchemaService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _serialize_document(doc: Dict[str, Any]) -> Dict[str, Any]:
+    def _serialize_document(doc: dict[str, Any]) -> dict[str, Any]:
         """Convert a MongoDB document to a JSON-serialisable dict.
 
         Handles ``datetime`` objects by converting them to ISO 8601 strings
@@ -902,7 +902,7 @@ class SchemaService:
         Returns:
             A new dict with all values converted to JSON-serialisable types.
         """
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         for key, value in doc.items():
             if key == "_id":
                 # Strip MongoDB internal identifier

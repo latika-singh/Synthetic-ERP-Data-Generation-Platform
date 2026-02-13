@@ -41,8 +41,8 @@ from __future__ import annotations
 import copy
 import json as json_module
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from flask import Blueprint, Response, g, jsonify, request
 from flask_jwt_extended import jwt_required
@@ -61,6 +61,7 @@ from api_gateway.utils.pagination import (
     validate_page_size,
 )
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger — structured JSON output with correlation IDs.
@@ -88,7 +89,7 @@ PLATFORM_ADMIN_ROLE: str = "Platform Admin"
 # ---------------------------------------------------------------------------
 
 
-def _build_visibility_filter(tenant_id: str) -> Dict[str, Any]:
+def _build_visibility_filter(tenant_id: str) -> dict[str, Any]:
     """Construct a MongoDB ``$or`` filter enforcing multi-tenant visibility.
 
     Returns a filter that matches documents belonging to the authenticated
@@ -113,9 +114,9 @@ def _build_visibility_filter(tenant_id: str) -> Dict[str, Any]:
 
 
 def _is_owner_or_admin(
-    template_doc: Dict[str, Any],
+    template_doc: dict[str, Any],
     user_id: str,
-    user_roles: List[str],
+    user_roles: list[str],
 ) -> bool:
     """Check whether the current user is authorised to modify or delete a template.
 
@@ -135,7 +136,7 @@ def _is_owner_or_admin(
     return template_doc.get("created_by") == user_id
 
 
-def _sanitize_validation_errors(errors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _sanitize_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Pydantic v2 validation error dicts to a JSON-serializable form.
 
     Pydantic v2's ``ValidationError.errors()`` may include a ``ctx`` entry
@@ -150,9 +151,9 @@ def _sanitize_validation_errors(errors: List[Dict[str, Any]]) -> List[Dict[str, 
     Returns:
         A new list of error dicts that is fully JSON-serializable.
     """
-    sanitized: List[Dict[str, Any]] = []
+    sanitized: list[dict[str, Any]] = []
     for err in errors:
-        clean: Dict[str, Any] = {}
+        clean: dict[str, Any] = {}
         for key, value in err.items():
             if key == "ctx" and isinstance(value, dict):
                 # Stringify non-primitive context values (e.g. ValueError).
@@ -187,7 +188,7 @@ def _error_response(
         A ``(Response, status_code)`` tuple suitable for returning from a
         Flask route handler.
     """
-    body: Dict[str, Any] = {"error": message, "code": code}
+    body: dict[str, Any] = {"error": message, "code": code}
     if details is not None:
         body["details"] = details
     return jsonify(body), status
@@ -225,7 +226,7 @@ def create_template() -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Parse request body
     # ------------------------------------------------------------------
-    body: Optional[Dict[str, Any]] = request.get_json(silent=True)
+    body: dict[str, Any] | None = request.get_json(silent=True)
     if not body:
         logger.warning(
             "template_create_missing_body",
@@ -270,10 +271,10 @@ def create_template() -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Build MongoDB document
     # ------------------------------------------------------------------
-    now: datetime = datetime.now(timezone.utc)
+    now: datetime = datetime.now(UTC)
     template_id: str = str(uuid.uuid4())
 
-    doc: Dict[str, Any] = template_req.model_dump()
+    doc: dict[str, Any] = template_req.model_dump()
     doc.update(
         {
             "template_id": template_id,
@@ -311,7 +312,7 @@ def create_template() -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Build and return response
     # ------------------------------------------------------------------
-    serialized: Dict[str, Any] = serialize_document(doc)
+    serialized: dict[str, Any] = serialize_document(doc)
     response: TemplateResponse = TemplateResponse.model_validate(serialized)
 
     logger.info(
@@ -364,27 +365,26 @@ def list_templates() -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Parse query parameters
     # ------------------------------------------------------------------
-    category: Optional[str] = request.args.get("category")
-    erp_type: Optional[str] = request.args.get("erp_type")
-    generation_method: Optional[str] = request.args.get("generation_method")
-    tags_raw: Optional[str] = request.args.get("tags")
-    is_public_str: Optional[str] = request.args.get("is_public")
-    search: Optional[str] = request.args.get("search")
+    category: str | None = request.args.get("category")
+    erp_type: str | None = request.args.get("erp_type")
+    generation_method: str | None = request.args.get("generation_method")
+    tags_raw: str | None = request.args.get("tags")
+    is_public_str: str | None = request.args.get("is_public")
+    search: str | None = request.args.get("search")
     page: int = request.args.get("page", 1, type=int)
-    page_size_raw: Optional[int] = request.args.get("page_size", type=int)
-    cursor: Optional[str] = request.args.get("cursor")
+    page_size_raw: int | None = request.args.get("page_size", type=int)
+    cursor: str | None = request.args.get("cursor")
 
     tenant_id: str = getattr(g, "tenant_id", "")
     validated_page_size: int = validate_page_size(page_size_raw)
 
     # Ensure page is at least 1
-    if page < 1:
-        page = 1
+    page = max(page, 1)
 
     # ------------------------------------------------------------------
     # Build MongoDB query filter with tenant isolation
     # ------------------------------------------------------------------
-    conditions: List[Dict[str, Any]] = [_build_visibility_filter(tenant_id)]
+    conditions: list[dict[str, Any]] = [_build_visibility_filter(tenant_id)]
 
     if category:
         conditions.append({"category": category})
@@ -393,7 +393,7 @@ def list_templates() -> tuple[Response, int]:
     if generation_method:
         conditions.append({"generation_method": generation_method})
     if tags_raw:
-        tag_list: List[str] = [
+        tag_list: list[str] = [
             tag.strip() for tag in tags_raw.split(",") if tag.strip()
         ]
         if tag_list:
@@ -411,7 +411,7 @@ def list_templates() -> tuple[Response, int]:
             }
         )
 
-    query_filter: Dict[str, Any] = (
+    query_filter: dict[str, Any] = (
         {"$and": conditions} if len(conditions) > 1 else conditions[0]
     )
 
@@ -432,7 +432,7 @@ def list_templates() -> tuple[Response, int]:
                 sort_field="updated_at",
                 sort_order=-1,
             )
-            template_models: List[TemplateResponse] = [
+            template_models: list[TemplateResponse] = [
                 TemplateResponse.model_validate(item) for item in paginated.items
             ]
             list_response: TemplateListResponse = TemplateListResponse.model_validate(
@@ -448,14 +448,14 @@ def list_templates() -> tuple[Response, int]:
             skip: int = (page - 1) * validated_page_size
             total: int = collection.count_documents(query_filter)
 
-            docs: List[Dict[str, Any]] = list(
+            docs: list[dict[str, Any]] = list(
                 collection.find(query_filter)
                 .sort("updated_at", -1)
                 .skip(skip)
                 .limit(validated_page_size)
             )
 
-            serialized_docs: List[Dict[str, Any]] = [
+            serialized_docs: list[dict[str, Any]] = [
                 serialize_document(doc) for doc in docs
             ]
             template_models = [
@@ -542,14 +542,14 @@ def get_template(template_id: str) -> tuple[Response, int]:
         collection = db[TEMPLATES_COLLECTION]
 
         # Query with tenant isolation: own templates + public templates.
-        query_filter: Dict[str, Any] = {
+        query_filter: dict[str, Any] = {
             "$and": [
                 {"template_id": template_id},
                 _build_visibility_filter(tenant_id),
             ]
         }
 
-        doc: Optional[Dict[str, Any]] = collection.find_one(query_filter)
+        doc: dict[str, Any] | None = collection.find_one(query_filter)
 
     except Exception as exc:
         logger.error(
@@ -578,7 +578,7 @@ def get_template(template_id: str) -> tuple[Response, int]:
             404,
         )
 
-    serialized: Dict[str, Any] = serialize_document(doc)
+    serialized: dict[str, Any] = serialize_document(doc)
     response: TemplateResponse = TemplateResponse.model_validate(serialized)
 
     logger.info(
@@ -623,7 +623,7 @@ def update_template(template_id: str) -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Parse request body
     # ------------------------------------------------------------------
-    body: Optional[Dict[str, Any]] = request.get_json(silent=True)
+    body: dict[str, Any] | None = request.get_json(silent=True)
     if not body:
         logger.warning(
             "template_update_missing_body",
@@ -666,7 +666,7 @@ def update_template(template_id: str) -> tuple[Response, int]:
     # ------------------------------------------------------------------
     tenant_id: str = getattr(g, "tenant_id", "")
     user_id: str = getattr(g, "user_id", "")
-    user_roles: List[str] = getattr(g, "user_roles", [])
+    user_roles: list[str] = getattr(g, "user_roles", [])
 
     # ------------------------------------------------------------------
     # Retrieve existing template (must belong to same tenant)
@@ -675,7 +675,7 @@ def update_template(template_id: str) -> tuple[Response, int]:
         db = get_db()
         collection = db[TEMPLATES_COLLECTION]
 
-        existing: Optional[Dict[str, Any]] = collection.find_one(
+        existing: dict[str, Any] | None = collection.find_one(
             {"template_id": template_id, "tenant_id": tenant_id}
         )
     except Exception as exc:
@@ -725,11 +725,11 @@ def update_template(template_id: str) -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Apply mutable field updates
     # ------------------------------------------------------------------
-    now: datetime = datetime.now(timezone.utc)
-    update_data: Dict[str, Any] = template_req.model_dump()
+    now: datetime = datetime.now(UTC)
+    update_data: dict[str, Any] = template_req.model_dump()
     current_version: int = existing.get("version", 1)
 
-    update_fields: Dict[str, Any] = {
+    update_fields: dict[str, Any] = {
         "name": update_data["name"],
         "description": update_data.get("description"),
         "category": update_data["category"],
@@ -766,7 +766,7 @@ def update_template(template_id: str) -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Retrieve and return the updated document
     # ------------------------------------------------------------------
-    updated_doc: Optional[Dict[str, Any]] = collection.find_one(
+    updated_doc: dict[str, Any] | None = collection.find_one(
         {"template_id": template_id, "tenant_id": tenant_id}
     )
 
@@ -778,7 +778,7 @@ def update_template(template_id: str) -> tuple[Response, int]:
             500,
         )
 
-    serialized: Dict[str, Any] = serialize_document(updated_doc)
+    serialized: dict[str, Any] = serialize_document(updated_doc)
     response: TemplateResponse = TemplateResponse.model_validate(serialized)
 
     logger.info(
@@ -817,7 +817,7 @@ def delete_template(template_id: str) -> tuple[Response, int]:
     """
     tenant_id: str = getattr(g, "tenant_id", "")
     user_id: str = getattr(g, "user_id", "")
-    user_roles: List[str] = getattr(g, "user_roles", [])
+    user_roles: list[str] = getattr(g, "user_roles", [])
 
     # ------------------------------------------------------------------
     # Retrieve existing template (must belong to same tenant)
@@ -826,7 +826,7 @@ def delete_template(template_id: str) -> tuple[Response, int]:
         db = get_db()
         collection = db[TEMPLATES_COLLECTION]
 
-        existing: Optional[Dict[str, Any]] = collection.find_one(
+        existing: dict[str, Any] | None = collection.find_one(
             {"template_id": template_id, "tenant_id": tenant_id}
         )
     except Exception as exc:
@@ -950,14 +950,14 @@ def clone_template(template_id: str) -> tuple[Response, int]:
         db = get_db()
         collection = db[TEMPLATES_COLLECTION]
 
-        query_filter: Dict[str, Any] = {
+        query_filter: dict[str, Any] = {
             "$and": [
                 {"template_id": template_id},
                 _build_visibility_filter(tenant_id),
             ]
         }
 
-        source: Optional[Dict[str, Any]] = collection.find_one(query_filter)
+        source: dict[str, Any] | None = collection.find_one(query_filter)
 
     except Exception as exc:
         logger.error(
@@ -989,16 +989,16 @@ def clone_template(template_id: str) -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Deep-copy the source document and reset metadata
     # ------------------------------------------------------------------
-    now: datetime = datetime.now(timezone.utc)
+    now: datetime = datetime.now(UTC)
     new_template_id: str = str(uuid.uuid4())
 
-    cloned: Dict[str, Any] = copy.deepcopy(source)
+    cloned: dict[str, Any] = copy.deepcopy(source)
 
     # Remove MongoDB internal _id to allow a fresh auto-generated one.
     cloned.pop("_id", None)
 
     # Parse optional overrides from request body (e.g. custom name).
-    clone_body: Optional[Dict[str, Any]] = request.get_json(silent=True)
+    clone_body: dict[str, Any] | None = request.get_json(silent=True)
     clone_name: str = (
         clone_body.get("name")
         if clone_body and clone_body.get("name")
@@ -1042,7 +1042,7 @@ def clone_template(template_id: str) -> tuple[Response, int]:
     # ------------------------------------------------------------------
     # Build and return response
     # ------------------------------------------------------------------
-    serialized: Dict[str, Any] = serialize_document(cloned)
+    serialized: dict[str, Any] = serialize_document(cloned)
     response: TemplateResponse = TemplateResponse.model_validate(serialized)
 
     logger.info(

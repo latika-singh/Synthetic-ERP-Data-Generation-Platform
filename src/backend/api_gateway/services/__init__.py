@@ -50,18 +50,19 @@ from api_gateway.services.export_service import ExportService
 from api_gateway.services.profile_service import ProfileService
 from api_gateway.services.schema_service import SchemaService
 
+
 # ---------------------------------------------------------------------------
 # Lazy / conditional imports for services not yet deployed by other agents.
 # Using try/except ensures the package remains importable even when
 # job_service.py or auth_service.py have not been created yet.
 # ---------------------------------------------------------------------------
 try:
-    from api_gateway.services.job_service import JobService  # noqa: F401
+    from api_gateway.services.job_service import JobService
 except ImportError:  # pragma: no cover
     JobService = None  # type: ignore[assignment,misc]
 
 try:
-    from api_gateway.services.auth_service import AuthService  # noqa: F401
+    from api_gateway.services.auth_service import AuthService
 except ImportError:  # pragma: no cover
     AuthService = None  # type: ignore[assignment,misc]
 
@@ -70,16 +71,16 @@ except ImportError:  # pragma: no cover
 # Public API
 # ---------------------------------------------------------------------------
 __all__: list[str] = [
+    "AuthService",
     "ExportService",
+    "JobService",
     "ProfileService",
     "SchemaService",
-    "JobService",
-    "AuthService",
+    "get_auth_service",
     "get_export_service",
+    "get_job_service",
     "get_profile_service",
     "get_schema_service",
-    "get_job_service",
-    "get_auth_service",
 ]
 
 

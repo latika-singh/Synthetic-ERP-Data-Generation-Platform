@@ -53,13 +53,13 @@ from __future__ import annotations
 
 import time
 import xml.etree.ElementTree as ET
-from typing import Any, Optional
+from typing import Any
 
 from profiling_service.connectors.base import (
     BaseConnector,
     ColumnMetadata,
     ConnectionConfig,
-    ConnectionError as ConnConnectionError,  # noqa: A004 — intentional alias
+    ConnectionError as ConnConnectionError,
     ConnectorError,
     DiscoveryError,
     ERPModule,
@@ -68,6 +68,7 @@ from profiling_service.connectors.base import (
 )
 from shared.logging.structured_logger import get_logger
 from shared.middleware.circuit_breaker import circuit_breaker_decorator
+
 
 # ---------------------------------------------------------------------------
 # Optional third-party dependency — httpx.
@@ -619,12 +620,12 @@ class DynamicsConnector(BaseConnector):
         self._tenant_id: str = config.tenant_id or ""
 
         # OAuth2 token state.
-        self._access_token: Optional[str] = None
+        self._access_token: str | None = None
         self._token_expires_at: float = 0.0
 
         # HTTP client handle — typed as Optional[httpx.Client] when httpx
         # is available, otherwise kept as None throughout the lifecycle.
-        self._http_client: Optional[Any] = None
+        self._http_client: Any | None = None
         self._use_live_api: bool = False
 
         # Azure AD v2.0 token endpoint for client credentials flow.
@@ -633,7 +634,7 @@ class DynamicsConnector(BaseConnector):
         )
 
         # Cached EDMX metadata from live API (populated on first $metadata call).
-        self._cached_edmx: Optional[dict[str, Any]] = None
+        self._cached_edmx: dict[str, Any] | None = None
 
         self._logger.info(
             "dynamics_connector_initialised",
@@ -706,8 +707,8 @@ class DynamicsConnector(BaseConnector):
 
     def discover_tables(
         self,
-        schema_name: Optional[str] = None,
-        module: Optional[ERPModule] = None,
+        schema_name: str | None = None,
+        module: ERPModule | None = None,
     ) -> list[TableMetadata]:
         """Discover Dynamics 365 entities for the given module.
 
@@ -750,7 +751,7 @@ class DynamicsConnector(BaseConnector):
                 ]
 
             # Attempt live API metadata retrieval first.
-            live_entities: Optional[dict[str, Any]] = None
+            live_entities: dict[str, Any] | None = None
             if self._use_live_api and self.connected:
                 live_entities = self._fetch_live_metadata()
 
@@ -802,7 +803,7 @@ class DynamicsConnector(BaseConnector):
     def discover_columns(
         self,
         table_name: str,
-        schema_name: Optional[str] = None,
+        schema_name: str | None = None,
     ) -> list[ColumnMetadata]:
         """Discover attributes for a Dynamics 365 entity.
 
@@ -896,7 +897,7 @@ class DynamicsConnector(BaseConnector):
 
     def discover_relationships(
         self,
-        schema_name: Optional[str] = None,
+        schema_name: str | None = None,
     ) -> list[RelationshipMetadata]:
         """Discover foreign-key relationships across Dynamics 365 entities.
 
@@ -1148,7 +1149,7 @@ class DynamicsConnector(BaseConnector):
 
     # -- Private Helpers: Live API Calls -----------------------------------
 
-    def _fetch_live_metadata(self) -> Optional[dict[str, Any]]:
+    def _fetch_live_metadata(self) -> dict[str, Any] | None:
         """Fetch and parse the OData $metadata EDMX document from live API.
 
         Caches the parsed result in ``self._cached_edmx`` to avoid
@@ -1190,7 +1191,7 @@ class DynamicsConnector(BaseConnector):
     def _fetch_live_entity_attributes(
         self,
         entity_name: str,
-    ) -> Optional[list[ColumnMetadata]]:
+    ) -> list[ColumnMetadata] | None:
         """Fetch attribute metadata for a specific entity from the live API.
 
         Calls ``EntityDefinitions(LogicalName='{entity}')/Attributes`` to
@@ -1270,8 +1271,8 @@ class DynamicsConnector(BaseConnector):
 
     def _fetch_live_relationships(
         self,
-        filter_entity: Optional[str] = None,
-    ) -> Optional[list[RelationshipMetadata]]:
+        filter_entity: str | None = None,
+    ) -> list[RelationshipMetadata] | None:
         """Fetch relationship metadata from the live Dynamics 365 API.
 
         For each known entity (or just *filter_entity* if specified),
@@ -1420,7 +1421,7 @@ class DynamicsConnector(BaseConnector):
 
                 # Extract Key element to determine primary key properties.
                 keys: list[str] = []
-                key_element: Optional[ET.Element] = entity_type.find(
+                key_element: ET.Element | None = entity_type.find(
                     "edm:Key",
                     _EDMX_NAMESPACES,
                 )
@@ -1443,9 +1444,9 @@ class DynamicsConnector(BaseConnector):
                     # Access additional attributes via attrib dict for
                     # MaxLength, Precision, Scale when present.
                     prop_attribs: dict[str, str] = prop.attrib
-                    max_length_str: Optional[str] = prop_attribs.get("MaxLength")
-                    precision_str: Optional[str] = prop_attribs.get("Precision")
-                    scale_str: Optional[str] = prop_attribs.get("Scale")
+                    max_length_str: str | None = prop_attribs.get("MaxLength")
+                    precision_str: str | None = prop_attribs.get("Precision")
+                    scale_str: str | None = prop_attribs.get("Scale")
 
                     properties.append({
                         "name": prop_name,
@@ -1480,7 +1481,7 @@ class DynamicsConnector(BaseConnector):
 
                     # Check for Annotation elements that provide descriptions.
                     annotation_text: str = ""
-                    annotation: Optional[ET.Element] = nav_prop.find(
+                    annotation: ET.Element | None = nav_prop.find(
                         "edm:Annotation",
                         _EDMX_NAMESPACES,
                     )
@@ -1499,7 +1500,7 @@ class DynamicsConnector(BaseConnector):
 
                 # Determine entity description from Annotation on EntityType.
                 entity_desc: str = ""
-                entity_annotation: Optional[ET.Element] = entity_type.find(
+                entity_annotation: ET.Element | None = entity_type.find(
                     "edm:Annotation",
                     _EDMX_NAMESPACES,
                 )
@@ -1523,7 +1524,7 @@ class DynamicsConnector(BaseConnector):
 
     # -- Private Helpers: Utility ------------------------------------------
 
-    def _classify_module(self, entity_name: str) -> Optional[ERPModule]:
+    def _classify_module(self, entity_name: str) -> ERPModule | None:
         """Determine the ERP module for a Dynamics 365 entity.
 
         Looks up the entity name in :data:`DYNAMICS_MODULE_ENTITIES` to

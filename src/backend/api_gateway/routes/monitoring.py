@@ -41,8 +41,10 @@ from __future__ import annotations
 
 import datetime
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+# Third-party HTTP client for downstream service health checks.
+import requests as http_requests
 from flask import Blueprint, Response, current_app, jsonify, request
 from flask_jwt_extended import jwt_required
 from prometheus_client import (
@@ -68,9 +70,6 @@ from shared.observability.metrics import (
     HTTP_REQUEST_TOTAL,
     record_error,
 )
-
-# Third-party HTTP client for downstream service health checks.
-import requests as http_requests
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +181,7 @@ SERVICE_INFO.info(
 # Downstream service definitions — used by /status and /services endpoints.
 # ===========================================================================
 
-_DOWNSTREAM_SERVICES: List[Dict[str, Any]] = [
+_DOWNSTREAM_SERVICES: list[dict[str, Any]] = [
     {
         "name": "generation-engine",
         "url": "http://generation-engine:5001/health",
@@ -230,7 +229,7 @@ _HEALTH_CHECK_TIMEOUT: int = 5
     recovery_timeout=30,
     max_retries=0,
 )
-def _check_service_health(url: str, timeout: int = _HEALTH_CHECK_TIMEOUT) -> Dict[str, Any]:
+def _check_service_health(url: str, timeout: int = _HEALTH_CHECK_TIMEOUT) -> dict[str, Any]:
     """Perform an HTTP GET health check against a downstream service.
 
     Protected by a circuit breaker to prevent blocking the monitoring
@@ -261,9 +260,9 @@ def _check_service_health(url: str, timeout: int = _HEALTH_CHECK_TIMEOUT) -> Dic
     is_healthy: bool = response.status_code == 200
 
     # Attempt to extract detail from JSON body.
-    detail: Optional[str] = None
+    detail: str | None = None
     try:
-        body: Dict[str, Any] = response.json()
+        body: dict[str, Any] = response.json()
         detail = body.get("status", body.get("message"))
     except (ValueError, AttributeError):
         pass
@@ -276,7 +275,7 @@ def _check_service_health(url: str, timeout: int = _HEALTH_CHECK_TIMEOUT) -> Dic
     }
 
 
-def _safe_check_service(service: Dict[str, Any]) -> Dict[str, Any]:
+def _safe_check_service(service: dict[str, Any]) -> dict[str, Any]:
     """Execute a health check against a single downstream service with full
     error handling.
 
@@ -299,7 +298,7 @@ def _safe_check_service(service: Dict[str, Any]) -> Dict[str, Any]:
         service["url"],
     )
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "name": service["name"],
         "display_name": service["display_name"],
         "url": url,
@@ -310,7 +309,7 @@ def _safe_check_service(service: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     try:
-        check_result: Dict[str, Any] = _check_service_health(url)
+        check_result: dict[str, Any] = _check_service_health(url)
         result.update(check_result)
 
     except CircuitBreakerError:
@@ -382,7 +381,7 @@ def _safe_check_service(service: Dict[str, Any]) -> Dict[str, Any]:
 # ===========================================================================
 
 
-def _get_mongodb_status() -> Dict[str, Any]:
+def _get_mongodb_status() -> dict[str, Any]:
     """Retrieve MongoDB connection pool and health information.
 
     Queries the MongoDB client's ``server_info()`` and connection pool
@@ -395,7 +394,7 @@ def _get_mongodb_status() -> Dict[str, Any]:
     try:
         db = get_db()
         client = db.client
-        server_info: Dict[str, Any] = client.server_info()
+        server_info: dict[str, Any] = client.server_info()
 
         # Extract pool stats from the MongoClient options.
         pool_options = client.options.pool_options
@@ -424,7 +423,7 @@ def _get_mongodb_status() -> Dict[str, Any]:
         }
 
 
-def _get_redis_status() -> Dict[str, Any]:
+def _get_redis_status() -> dict[str, Any]:
     """Retrieve Redis client health and memory utilisation statistics.
 
     Calls ``INFO`` on the Redis client to collect connected clients, used
@@ -436,7 +435,7 @@ def _get_redis_status() -> Dict[str, Any]:
     """
     try:
         redis_client = get_redis()
-        info: Dict[str, Any] = redis_client.info()
+        info: dict[str, Any] = redis_client.info()
 
         return {
             "status": "connected",
@@ -646,7 +645,7 @@ def system_status() -> tuple[Response, int]:
         2,
     )
 
-    api_gateway_status: Dict[str, Any] = {
+    api_gateway_status: dict[str, Any] = {
         "version": app_version,
         "environment": environment,
         "uptime_seconds": uptime_seconds,
@@ -658,15 +657,15 @@ def system_status() -> tuple[Response, int]:
     }
 
     # --- MongoDB status ---
-    mongodb_status: Dict[str, Any] = _get_mongodb_status()
+    mongodb_status: dict[str, Any] = _get_mongodb_status()
 
     # --- Redis status ---
-    redis_status: Dict[str, Any] = _get_redis_status()
+    redis_status: dict[str, Any] = _get_redis_status()
 
     # --- Downstream services ---
-    downstream_results: Dict[str, Dict[str, Any]] = {}
+    downstream_results: dict[str, dict[str, Any]] = {}
     for svc in _DOWNSTREAM_SERVICES:
-        result: Dict[str, Any] = _safe_check_service(svc)
+        result: dict[str, Any] = _safe_check_service(svc)
         downstream_results[svc["name"]] = {
             "status": result["status"],
             "latency_ms": result["latency_ms"],
@@ -685,7 +684,7 @@ def system_status() -> tuple[Response, int]:
 
     overall_status: str = "healthy" if all_healthy else "degraded"
 
-    response_body: Dict[str, Any] = {
+    response_body: dict[str, Any] = {
         "status": overall_status,
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "api_gateway": api_gateway_status,
@@ -765,10 +764,10 @@ def service_health() -> tuple[Response, int]:
         remote_addr=request.remote_addr,
     )
 
-    services_results: List[Dict[str, Any]] = []
+    services_results: list[dict[str, Any]] = []
 
     for svc in _DOWNSTREAM_SERVICES:
-        result: Dict[str, Any] = _safe_check_service(svc)
+        result: dict[str, Any] = _safe_check_service(svc)
         services_results.append(result)
 
     healthy_count: int = sum(
@@ -776,7 +775,7 @@ def service_health() -> tuple[Response, int]:
     )
     unhealthy_count: int = len(services_results) - healthy_count
 
-    response_body: Dict[str, Any] = {
+    response_body: dict[str, Any] = {
         "services": services_results,
         "checked_at": datetime.datetime.utcnow().isoformat() + "Z",
         "healthy_count": healthy_count,

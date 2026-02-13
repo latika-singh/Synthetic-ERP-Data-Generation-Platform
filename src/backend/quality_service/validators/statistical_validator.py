@@ -35,21 +35,21 @@ Usage::
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy import stats
-
 from great_expectations.core import ExpectationSuite
 from great_expectations.data_context import EphemeralDataContext
 from great_expectations.data_context.types.base import (
     DataContextConfig,
     InMemoryStoreBackendDefaults,
 )
+from scipy import stats
 
 from quality_service.validators.base import BaseValidator, ValidationResult
 from shared.logging.structured_logger import get_logger
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger (structured JSON, correlation-ID–aware)
@@ -142,7 +142,7 @@ class StatisticalValidator(BaseValidator):
     # Construction
     # ------------------------------------------------------------------
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Initialise the validator with thresholds and GE context.
 
         Args:
@@ -185,7 +185,7 @@ class StatisticalValidator(BaseValidator):
         )
 
         # --- Great Expectations context (in-memory) ---
-        self._ge_context: Optional[EphemeralDataContext] = None
+        self._ge_context: EphemeralDataContext | None = None
         self._initialize_ge_context()
 
         self.logger.info(
@@ -1364,7 +1364,7 @@ class StatisticalValidator(BaseValidator):
         kwargs: dict[str, Any],
     ) -> bool:
         """Evaluate one expectation against *data*, returning True if passed."""
-        column: Optional[str] = kwargs.get("column")
+        column: str | None = kwargs.get("column")
 
         if column is not None and column not in data.columns:
             return False
