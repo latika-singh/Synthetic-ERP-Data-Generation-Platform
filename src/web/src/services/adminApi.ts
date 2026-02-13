@@ -390,7 +390,7 @@ export async function getUsers(
     ...filters,
   };
 
-  return apiClient.get<ApiResponse<PaginatedResult<User>>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/users`,
     { params },
   );
@@ -411,7 +411,7 @@ export async function getUsers(
 export async function getUserById(
   userId: string,
 ): Promise<ApiResponse<User>> {
-  return apiClient.get<ApiResponse<User>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/users/${encodeURIComponent(userId)}`,
   );
 }
@@ -440,7 +440,7 @@ export async function getUserById(
 export async function createUser(
   data: CreateUserRequest,
 ): Promise<ApiResponse<User>> {
-  return apiClient.post<ApiResponse<User>>(
+  return apiClient.post(
     `${ADMIN_BASE_PATH}/users`,
     data,
   );
@@ -470,7 +470,7 @@ export async function updateUser(
   userId: string,
   data: UpdateUserRequest,
 ): Promise<ApiResponse<User>> {
-  return apiClient.put<ApiResponse<User>>(
+  return apiClient.put(
     `${ADMIN_BASE_PATH}/users/${encodeURIComponent(userId)}`,
     data,
   );
@@ -495,7 +495,7 @@ export async function updateUser(
 export async function deactivateUser(
   userId: string,
 ): Promise<ApiResponse<User>> {
-  return apiClient.delete<ApiResponse<User>>(
+  return apiClient.delete(
     `${ADMIN_BASE_PATH}/users/${encodeURIComponent(userId)}`,
   );
 }
@@ -535,7 +535,7 @@ export async function getTenants(
     ...filters,
   };
 
-  return apiClient.get<ApiResponse<PaginatedResult<Tenant>>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/tenants`,
     { params },
   );
@@ -557,7 +557,7 @@ export async function getTenants(
 export async function getTenantById(
   tenantId: string,
 ): Promise<ApiResponse<Tenant>> {
-  return apiClient.get<ApiResponse<Tenant>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/tenants/${encodeURIComponent(tenantId)}`,
   );
 }
@@ -591,7 +591,7 @@ export async function getTenantById(
 export async function createTenant(
   data: CreateTenantRequest,
 ): Promise<ApiResponse<Tenant>> {
-  return apiClient.post<ApiResponse<Tenant>>(
+  return apiClient.post(
     `${ADMIN_BASE_PATH}/tenants`,
     data,
   );
@@ -625,7 +625,7 @@ export async function updateTenantConfig(
   tenantId: string,
   data: UpdateTenantConfigRequest,
 ): Promise<ApiResponse<Tenant>> {
-  return apiClient.put<ApiResponse<Tenant>>(
+  return apiClient.put(
     `${ADMIN_BASE_PATH}/tenants/${encodeURIComponent(tenantId)}`,
     data,
   );
@@ -652,7 +652,7 @@ export async function updateTenantConfig(
 export async function getTenantResourceUsage(
   tenantId: string,
 ): Promise<ApiResponse<ResourceUsage>> {
-  return apiClient.get<ApiResponse<ResourceUsage>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/tenants/${encodeURIComponent(tenantId)}/usage`,
   );
 }
@@ -677,7 +677,7 @@ export async function getTenantResourceUsage(
  * ```
  */
 export async function getSystemSettings(): Promise<ApiResponse<SystemSettings>> {
-  return apiClient.get<ApiResponse<SystemSettings>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/settings`,
   );
 }
@@ -704,7 +704,7 @@ export async function getSystemSettings(): Promise<ApiResponse<SystemSettings>> 
 export async function updateSystemSettings(
   data: Partial<SystemSettings>,
 ): Promise<ApiResponse<SystemSettings>> {
-  return apiClient.put<ApiResponse<SystemSettings>>(
+  return apiClient.put(
     `${ADMIN_BASE_PATH}/settings`,
     data,
   );
@@ -744,7 +744,7 @@ export async function getAuditLogs(
     ...filters,
   };
 
-  return apiClient.get<ApiResponse<PaginatedResult<AuditLogEntry>>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/audit-logs`,
     { params },
   );
@@ -770,7 +770,7 @@ export async function getAuditLogs(
  * ```
  */
 export async function getSystemHealth(): Promise<ApiResponse<SystemHealthStatus>> {
-  return apiClient.get<ApiResponse<SystemHealthStatus>>(
+  return apiClient.get(
     `${ADMIN_BASE_PATH}/health`,
   );
 }
