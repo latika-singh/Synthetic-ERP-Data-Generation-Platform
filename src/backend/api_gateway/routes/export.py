@@ -274,18 +274,30 @@ def create_export():
         }), 400
 
     try:
-        validated: ExportRequest = ExportRequest.model_validate(body)
+        # Disable strict mode for JSON input: Pydantic v2 strict mode
+        # rejects plain strings for StrEnum fields, but JSON
+        # deserialisation naturally produces strings (e.g. "csv") rather
+        # than ExportFormat enum instances.  Using strict=False allows
+        # Pydantic to coerce string values to their corresponding enum
+        # members while still enforcing all other validation rules.
+        validated: ExportRequest = ExportRequest.model_validate(
+            body, strict=False,
+        )
     except ValidationError as exc:
+        # Use include_context=False to strip non-JSON-serializable
+        # ValueError / TypeError objects from the Pydantic v2 error
+        # payload (the ``ctx`` dict entry can contain raw exceptions).
+        safe_errors = exc.errors(include_context=False, include_input=False)
         logger.warning(
             "export_create_validation_error",
             tenant_id=tenant_id,
             user_id=user_id,
-            errors=exc.errors(),
+            errors=safe_errors,
         )
         return jsonify({
             "error": "Validation failed",
             "code": "validation_error",
-            "details": exc.errors(),
+            "details": safe_errors,
         }), 422
 
     # ------------------------------------------------------------------
