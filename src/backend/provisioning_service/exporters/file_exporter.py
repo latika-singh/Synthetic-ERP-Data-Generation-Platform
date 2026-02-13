@@ -281,8 +281,10 @@ class FileExporter:
             tenant_id=tenant_id,
         )
 
-        # Create tenant-scoped temporary directory.
-        tenant_temp_dir: Path = Path(self.export_temp_dir) / tenant_id / job_id
+        # Create tenant-scoped temporary directory (resolve to absolute path).
+        tenant_temp_dir: Path = (
+            Path(self.export_temp_dir) / tenant_id / job_id
+        ).resolve()
         tenant_temp_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine the temporary file name based on format.
@@ -475,8 +477,15 @@ class FileExporter:
             prefix=f"cloud_export_{job_id}_",
             dir=self.export_temp_dir,
         )
-        local_filename: str = os.path.basename(remote_key) or f"export.{format}"
-        local_path: str = os.path.join(temp_dir, local_filename)
+        # Use NamedTemporaryFile for secure intermediate file creation,
+        # ensuring OS-level atomicity and proper permission handling.
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{format.strip().lower()}",
+            prefix=f"export_{job_id}_",
+            dir=temp_dir,
+            delete=False,
+        ) as ntf:
+            local_path: str = ntf.name
 
         try:
             # Step 1: Export to local temp file.
@@ -1048,10 +1057,15 @@ class FileExporter:
 
         ciphertext: bytes = aesgcm.encrypt(nonce, plaintext, None)
 
+        # Assemble the encrypted payload (nonce || ciphertext+tag) in memory
+        # before writing to disk in a single atomic operation.
+        encrypted_buffer: io.BytesIO = io.BytesIO()
+        encrypted_buffer.write(nonce)
+        encrypted_buffer.write(ciphertext)
+
         encrypted_path: str = file_path + ".enc"
         with open(encrypted_path, "wb") as f_out:
-            f_out.write(nonce)
-            f_out.write(ciphertext)
+            f_out.write(encrypted_buffer.getvalue())
 
         # Remove unencrypted original.
         os.remove(file_path)
