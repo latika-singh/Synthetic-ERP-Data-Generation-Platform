@@ -67,17 +67,22 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
-from shared.database.redis_client import get_redis_client
-from shared.logging.structured_logger import get_logger
-from shared.middleware.circuit_breaker import CircuitBreakerError, create_circuit_breaker
-from provisioning_service.config import ProvisioningServiceConfig
 from provisioning_service.connectors import (
     BaseConnector,
     get_connector,
     get_supported_databases,
 )
+from shared.database.redis_client import get_redis_client
+from shared.logging.structured_logger import get_logger
+from shared.middleware.circuit_breaker import CircuitBreakerError, create_circuit_breaker
+
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from provisioning_service.config import ProvisioningServiceConfig
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +104,7 @@ _MAX_BATCH_SIZE: int = 100000
 _DEFAULT_MAX_RETRIES: int = 3
 """Default number of retry attempts for transient database errors."""
 
-_REQUIRED_TARGET_FIELDS: Tuple[str, ...] = (
+_REQUIRED_TARGET_FIELDS: tuple[str, ...] = (
     "db_type",
     "host",
     "port",
@@ -123,9 +128,9 @@ class DatabaseExporter:
 
     The exporter supports four target database platforms:
 
-    * **PostgreSQL** (12 – 16)
-    * **Oracle** (19c – 23ai)
-    * **SQL Server** (2019 – 2022)
+    * **PostgreSQL** (12 - 16)
+    * **Oracle** (19c - 23ai)
+    * **SQL Server** (2019 - 2022)
     * **SAP HANA** (2.0 SPS 07+)
 
     All operations are instrumented with structured JSON logging, circuit
@@ -186,7 +191,7 @@ class DatabaseExporter:
         self._max_retries: int = _DEFAULT_MAX_RETRIES
 
         # Active connector cache for connection reuse across operations.
-        self._active_connectors: Dict[str, BaseConnector] = {}
+        self._active_connectors: dict[str, BaseConnector] = {}
 
         # Circuit breaker protecting external database calls.
         self._circuit_breaker = create_circuit_breaker(
@@ -196,7 +201,7 @@ class DatabaseExporter:
         )
 
         # Internal state for tracking provisioned row counts per table.
-        self._table_row_counts: Dict[str, int] = {}
+        self._table_row_counts: dict[str, int] = {}
 
         self._logger.info(
             "database_exporter_initialised",
@@ -213,12 +218,12 @@ class DatabaseExporter:
     def provision(
         self,
         data: Generator,
-        target_config: Dict[str, Any],
-        schema: Dict[str, Any],
+        target_config: dict[str, Any],
+        schema: dict[str, Any],
         job_id: str,
         tenant_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Provision synthetic data to a target relational database.
 
         This is the primary entry point for direct database provisioning.
@@ -290,7 +295,7 @@ class DatabaseExporter:
         """
         options = options or {}
         start_time: float = time.time()
-        errors: List[Dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
 
         self._logger.info(
             "provisioning_started",
@@ -326,18 +331,18 @@ class DatabaseExporter:
             )
 
             # Step 5: Create tables from schema definition.
-            tables_created: List[str] = self._create_tables(
+            tables_created: list[str] = self._create_tables(
                 connector, schema, options
             )
 
             # Step 6: Insert data in batches.
-            batch_result: Dict[str, Any] = self._batch_provision(
+            batch_result: dict[str, Any] = self._batch_provision(
                 connector, data, schema, job_id, options
             )
             errors.extend(batch_result.get("errors", []))
 
             # Step 7: Verify provisioned data counts.
-            verification: Dict[str, Any] = self._verify_provisioning(
+            verification: dict[str, Any] = self._verify_provisioning(
                 connector, schema
             )
 
@@ -374,7 +379,7 @@ class DatabaseExporter:
                     error=str(redis_exc),
                 )
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "db_type": db_type,
                 "host": host,
                 "database": database,
@@ -478,7 +483,7 @@ class DatabaseExporter:
             connectors_closed=connector_count,
         )
 
-    def health_check(self, target_config: Dict[str, Any]) -> Dict[str, Any]:
+    def health_check(self, target_config: dict[str, Any]) -> dict[str, Any]:
         """Check the health of a target database.
 
         Creates a temporary connector for the specified database, executes
@@ -497,12 +502,12 @@ class DatabaseExporter:
             ``db_type`` and error information if the check failed.
         """
         db_type: str = target_config.get("db_type", "unknown")
-        connector: Optional[BaseConnector] = None
+        connector: BaseConnector | None = None
 
         try:
             connector = get_connector(db_type, target_config)
             connector.ensure_connected()
-            health: Dict[str, Any] = connector.health_check()
+            health: dict[str, Any] = connector.health_check()
             health["db_type"] = db_type
             return health
 
@@ -530,7 +535,7 @@ class DatabaseExporter:
                         error=str(disc_exc),
                     )
 
-    def get_supported_databases(self) -> List[str]:
+    def get_supported_databases(self) -> list[str]:
         """Return the list of supported target database types.
 
         Delegates to :func:`provisioning_service.connectors.get_supported_databases`
@@ -542,7 +547,7 @@ class DatabaseExporter:
         """
         return get_supported_databases()
 
-    def get_provisioning_progress(self, job_id: str) -> Dict[str, Any]:
+    def get_provisioning_progress(self, job_id: str) -> dict[str, Any]:
         """Retrieve the current provisioning progress for a job from Redis.
 
         Reads the progress hash stored in Redis by :meth:`_update_progress`
@@ -560,14 +565,14 @@ class DatabaseExporter:
         progress_key: str = f"{_PROGRESS_KEY_PREFIX}{job_id}"
 
         try:
-            raw_data: Dict[str, str] = self._redis_client.hgetall(
+            raw_data: dict[str, str] = self._redis_client.hgetall(
                 progress_key
             )
             if not raw_data:
                 return {}
 
             # Deserialise string values back to native types.
-            progress: Dict[str, Any] = {
+            progress: dict[str, Any] = {
                 "job_id": raw_data.get("job_id", job_id),
                 "records_provisioned": int(
                     raw_data.get("records_provisioned", "0")
@@ -597,7 +602,7 @@ class DatabaseExporter:
     # Context Manager Protocol
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "DatabaseExporter":
+    def __enter__(self) -> DatabaseExporter:
         """Enter the runtime context.
 
         Returns:
@@ -607,8 +612,8 @@ class DatabaseExporter:
 
     def __exit__(
         self,
-        exc_type: Optional[type],
-        exc_val: Optional[BaseException],
+        exc_type: type | None,
+        exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
         """Exit the runtime context — disconnect all active connectors.
@@ -635,7 +640,7 @@ class DatabaseExporter:
     # Private Methods
     # ------------------------------------------------------------------
 
-    def _validate_target_config(self, target_config: Dict[str, Any]) -> None:
+    def _validate_target_config(self, target_config: dict[str, Any]) -> None:
         """Validate that the target configuration contains all required fields.
 
         Args:
@@ -644,7 +649,7 @@ class DatabaseExporter:
         Raises:
             ValueError: If any required field is missing from the config.
         """
-        missing: List[str] = [
+        missing: list[str] = [
             field
             for field in _REQUIRED_TARGET_FIELDS
             if field not in target_config
@@ -659,7 +664,7 @@ class DatabaseExporter:
             )
 
     def _get_connector(
-        self, db_type: str, config: Dict[str, Any]
+        self, db_type: str, config: dict[str, Any]
     ) -> BaseConnector:
         """Get or create a database connector, with connection reuse.
 
@@ -787,9 +792,9 @@ class DatabaseExporter:
     def _create_tables(
         self,
         connector: BaseConnector,
-        schema: Dict[str, Any],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> List[str]:
+        schema: dict[str, Any],
+        options: dict[str, Any] | None = None,
+    ) -> list[str]:
         """Create tables in the target database from the schema definition.
 
         Tables are created in topological (dependency) order so that tables
@@ -811,24 +816,24 @@ class DatabaseExporter:
             Ordered list of table names that were created or prepared.
         """
         options = options or {}
-        tables: List[Dict[str, Any]] = schema.get("tables", [])
+        tables: list[dict[str, Any]] = schema.get("tables", [])
         if not tables:
             self._logger.warning("no_tables_in_schema")
             return []
 
         # Resolve creation order based on foreign-key dependencies.
-        ordered_table_names: List[str] = self._resolve_table_order(schema)
-        created_tables: List[str] = []
+        ordered_table_names: list[str] = self._resolve_table_order(schema)
+        created_tables: list[str] = []
         drop_existing: bool = options.get("drop_existing", False)
         truncate_existing: bool = options.get("truncate_existing", False)
 
         # Build a lookup from table name to table definition.
-        table_map: Dict[str, Dict[str, Any]] = {
+        table_map: dict[str, dict[str, Any]] = {
             t["name"]: t for t in tables if "name" in t
         }
 
         for table_name in ordered_table_names:
-            table_def: Optional[Dict[str, Any]] = table_map.get(table_name)
+            table_def: dict[str, Any] | None = table_map.get(table_name)
             if table_def is None:
                 self._logger.warning(
                     "table_definition_not_found",
@@ -836,7 +841,7 @@ class DatabaseExporter:
                 )
                 continue
 
-            columns: List[Dict[str, Any]] = table_def.get("columns", [])
+            columns: list[dict[str, Any]] = table_def.get("columns", [])
             if not columns:
                 self._logger.warning(
                     "table_has_no_columns",
@@ -911,10 +916,10 @@ class DatabaseExporter:
         self,
         connector: BaseConnector,
         data: Generator,
-        schema: Dict[str, Any],
+        schema: dict[str, Any],
         job_id: str,
-        options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Insert data into target tables using batched transactions.
 
         Consumes records from the data generator, organises them by table,
@@ -929,14 +934,14 @@ class DatabaseExporter:
 
                 * A ``dict`` mapping table names to lists of row tuples.
                 * A ``tuple`` representing a single row (when provisioning
-                  a single table only — the first table in schema).
+                  a single table only - the first table in schema).
 
             schema: Schema definition dictionary with table and column info.
             job_id: Job identifier for Redis progress tracking.
             options: Optional dictionary with:
 
-                * ``on_error`` (str) — ``"abort"`` | ``"skip"`` | ``"log"``.
-                * ``batch_size`` (int) — Override default batch size.
+                * ``on_error`` (str) - ``"abort"`` | ``"skip"`` | ``"log"``.
+                * ``batch_size`` (int) - Override default batch size.
 
         Returns:
             Summary dictionary::
@@ -951,190 +956,241 @@ class DatabaseExporter:
         """
         options = options or {}
         on_error: str = options.get("on_error", "abort")
-        effective_batch_size: int = options.get("batch_size", self._batch_size)
-        effective_batch_size = max(
-            _MIN_BATCH_SIZE, min(effective_batch_size, _MAX_BATCH_SIZE)
+        effective_batch_size: int = max(
+            _MIN_BATCH_SIZE,
+            min(options.get("batch_size", self._batch_size), _MAX_BATCH_SIZE),
         )
 
-        ordered_table_names: List[str] = self._resolve_table_order(schema)
-        tables: List[Dict[str, Any]] = schema.get("tables", [])
-        table_map: Dict[str, Dict[str, Any]] = {
-            t["name"]: t for t in tables if "name" in t
+        ordered_table_names: list[str] = self._resolve_table_order(schema)
+        table_map: dict[str, dict[str, Any]] = {
+            t["name"]: t for t in schema.get("tables", []) if "name" in t
         }
 
-        total_records: int = 0
-        batches_processed: int = 0
-        tables_provisioned: List[str] = []
-        errors: List[Dict[str, Any]] = []
-        skipped_records: int = 0
+        # Accumulator state shared across per-table processing.
+        state: dict[str, Any] = {
+            "total_records": 0,
+            "batches_processed": 0,
+            "tables_provisioned": [],
+            "errors": [],
+            "skipped_records": 0,
+        }
 
         # Consume the generator and organise data by table.
-        table_data: Dict[str, List[tuple]] = self._organise_data_by_table(
+        table_data: dict[str, list[tuple]] = self._organise_data_by_table(
             data, ordered_table_names
         )
 
         for table_name in ordered_table_names:
-            table_def: Optional[Dict[str, Any]] = table_map.get(table_name)
+            table_def: dict[str, Any] | None = table_map.get(table_name)
             if table_def is None:
                 continue
 
-            column_defs: List[Dict[str, Any]] = table_def.get("columns", [])
-            column_names: List[str] = [
-                col["name"] for col in column_defs if "name" in col
+            column_names: list[str] = [
+                col["name"]
+                for col in table_def.get("columns", [])
+                if "name" in col
             ]
-
-            rows: List[tuple] = table_data.get(table_name, [])
+            rows: list[tuple] = table_data.get(table_name, [])
             if not rows:
-                self._logger.debug(
-                    "no_data_for_table",
-                    table_name=table_name,
-                )
+                self._logger.debug("no_data_for_table", table_name=table_name)
                 continue
 
-            self._logger.info(
-                "batch_provision_table_start",
+            self._provision_single_table(
+                connector=connector,
                 table_name=table_name,
-                total_rows=len(rows),
+                column_names=column_names,
+                rows=rows,
                 batch_size=effective_batch_size,
-            )
-
-            # Update progress with current table context.
-            self._update_progress(
+                on_error=on_error,
                 job_id=job_id,
-                records_provisioned=total_records,
-                status="provisioning",
-                current_table=table_name,
+                state=state,
             )
 
-            # Process rows in batches.
-            table_rows_inserted: int = 0
-            batch_number: int = 0
+        return state
 
-            for batch_start in range(0, len(rows), effective_batch_size):
-                batch_end: int = min(
-                    batch_start + effective_batch_size, len(rows)
+    def _provision_single_table(
+        self,
+        connector: BaseConnector,
+        table_name: str,
+        column_names: list[str],
+        rows: list[tuple],
+        batch_size: int,
+        on_error: str,
+        job_id: str,
+        state: dict[str, Any],
+    ) -> None:
+        """Provision all rows for a single table in batches.
+
+        Iterates over *rows* in chunks of *batch_size*, calling
+        :meth:`_insert_batch_with_retry` for each chunk.  Accumulates
+        totals, errors, and skipped-record counts into *state*.
+
+        Args:
+            connector: An active database connector.
+            table_name: Target table name.
+            column_names: Ordered column names for the insert statement.
+            rows: List of row tuples to insert.
+            batch_size: Number of rows per batch.
+            on_error: Error strategy (``"abort"`` | ``"skip"`` | ``"log"``).
+            job_id: Job identifier for Redis progress tracking.
+            state: Mutable accumulator dictionary updated in-place.
+        """
+        self._logger.info(
+            "batch_provision_table_start",
+            table_name=table_name,
+            total_rows=len(rows),
+            batch_size=batch_size,
+        )
+        self._update_progress(
+            job_id=job_id,
+            records_provisioned=state["total_records"],
+            status="provisioning",
+            current_table=table_name,
+        )
+
+        table_rows_inserted: int = 0
+        batch_number: int = 0
+
+        for batch_start in range(0, len(rows), batch_size):
+            batch_data: list[tuple] = rows[batch_start : batch_start + batch_size]
+            batch_number += 1
+
+            succeeded, inserted, last_error = self._insert_batch_with_retry(
+                connector=connector,
+                table_name=table_name,
+                column_names=column_names,
+                batch_data=batch_data,
+                batch_size=batch_size,
+                batch_number=batch_number,
+                job_id=job_id,
+                current_total=state["total_records"],
+            )
+
+            if succeeded:
+                table_rows_inserted += inserted
+                state["total_records"] += inserted
+                state["batches_processed"] += 1
+            elif last_error is not None:
+                error_result = self._handle_batch_error(
+                    error=last_error,
+                    table_name=table_name,
+                    batch_number=batch_number,
+                    on_error=on_error,
                 )
-                batch_data: List[tuple] = rows[batch_start:batch_end]
-                batch_number += 1
+                state["errors"].append({
+                    "table": table_name,
+                    "batch_number": batch_number,
+                    "error": str(last_error),
+                    "error_type": type(last_error).__name__,
+                    "rows_in_batch": len(batch_data),
+                    "retries_attempted": self._max_retries,
+                })
+                if error_result is True:
+                    state["skipped_records"] += len(batch_data)
 
-                # Retry loop for transient errors (deadlocks, timeouts).
-                batch_succeeded: bool = False
-                last_error: Optional[Exception] = None
+        self._table_row_counts[table_name] = table_rows_inserted
+        state["tables_provisioned"].append(table_name)
+        self._logger.info(
+            "batch_provision_table_complete",
+            table_name=table_name,
+            rows_inserted=table_rows_inserted,
+            batches=batch_number,
+        )
 
-                for attempt in range(1, self._max_retries + 1):
-                    try:
-                        inserted: int = self._circuit_breaker.call(
-                            connector.batch_insert,
-                            table_name,
-                            column_names,
-                            batch_data,
-                            effective_batch_size,
-                        )
-                        table_rows_inserted += inserted
-                        total_records += inserted
-                        batches_processed += 1
-                        batch_succeeded = True
+    def _insert_batch_with_retry(
+        self,
+        connector: BaseConnector,
+        table_name: str,
+        column_names: list[str],
+        batch_data: list[tuple],
+        batch_size: int,
+        batch_number: int,
+        job_id: str,
+        current_total: int,
+    ) -> tuple[bool, int, Exception | None]:
+        """Attempt to insert a single batch with transient-error retries.
 
-                        self._logger.debug(
-                            "batch_inserted",
-                            table_name=table_name,
-                            batch_number=batch_number,
-                            attempt=attempt,
-                            rows_in_batch=len(batch_data),
-                            rows_inserted=inserted,
-                            total_records=total_records,
-                        )
+        Retries up to ``max_retries`` times with exponential backoff when a
+        transient error (deadlock, timeout, etc.) is detected.  Immediately
+        re-raises :class:`CircuitBreakerError` without retrying.
 
-                        # Report progress after each batch.
-                        self._update_progress(
-                            job_id=job_id,
-                            records_provisioned=total_records,
-                            status="provisioning",
-                            current_table=table_name,
-                        )
-                        break  # Success — exit retry loop.
+        Args:
+            connector: An active database connector.
+            table_name: Target table name.
+            column_names: Ordered column names.
+            batch_data: Row tuples to insert.
+            batch_size: Effective batch size for the connector call.
+            batch_number: Sequential batch number (for logging).
+            job_id: Job identifier for progress tracking.
+            current_total: Running total of records inserted so far.
 
-                    except CircuitBreakerError:
-                        self._logger.error(
-                            "batch_insert_circuit_breaker_open",
-                            table_name=table_name,
-                            batch_number=batch_number,
-                            attempt=attempt,
-                        )
-                        raise
+        Returns:
+            A three-element tuple ``(succeeded, inserted, last_error)``:
 
-                    except Exception as exc:
-                        last_error = exc
-                        is_transient: bool = self._is_transient_error(exc)
+            * *succeeded* — ``True`` if the batch was inserted.
+            * *inserted* — Number of rows actually inserted (0 on failure).
+            * *last_error* — The last exception encountered, or ``None``.
+        """
+        last_error: Exception | None = None
 
-                        if is_transient and attempt < self._max_retries:
-                            # Exponential backoff: 2^(attempt-1) seconds.
-                            backoff_seconds: float = float(
-                                2 ** (attempt - 1)
-                            )
-                            self._logger.warning(
-                                "batch_insert_transient_error_retry",
-                                table_name=table_name,
-                                batch_number=batch_number,
-                                attempt=attempt,
-                                max_retries=self._max_retries,
-                                backoff_seconds=backoff_seconds,
-                                error_type=type(exc).__name__,
-                                error=str(exc),
-                            )
-                            time.sleep(backoff_seconds)
-                            continue  # Retry the batch.
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                inserted: int = self._circuit_breaker.call(
+                    connector.batch_insert,
+                    table_name,
+                    column_names,
+                    batch_data,
+                    batch_size,
+                )
+                self._logger.debug(
+                    "batch_inserted",
+                    table_name=table_name,
+                    batch_number=batch_number,
+                    attempt=attempt,
+                    rows_in_batch=len(batch_data),
+                    rows_inserted=inserted,
+                    total_records=current_total + inserted,
+                )
+                self._update_progress(
+                    job_id=job_id,
+                    records_provisioned=current_total + inserted,
+                    status="provisioning",
+                    current_table=table_name,
+                )
+                return True, inserted, None
 
-                        # Non-transient error, or final retry attempt.
-                        break  # Exit retry loop — handle below.
+            except CircuitBreakerError:
+                self._logger.error(
+                    "batch_insert_circuit_breaker_open",
+                    table_name=table_name,
+                    batch_number=batch_number,
+                    attempt=attempt,
+                )
+                raise
 
-                # If all retries exhausted or non-transient error, handle it.
-                if not batch_succeeded and last_error is not None:
-                    error_result: Optional[bool] = self._handle_batch_error(
-                        error=last_error,
+            except Exception as exc:
+                last_error = exc
+                if self._is_transient_error(exc) and attempt < self._max_retries:
+                    backoff: float = float(2 ** (attempt - 1))
+                    self._logger.warning(
+                        "batch_insert_transient_error_retry",
                         table_name=table_name,
                         batch_number=batch_number,
-                        on_error=on_error,
+                        attempt=attempt,
+                        max_retries=self._max_retries,
+                        backoff_seconds=backoff,
+                        error_type=type(exc).__name__,
+                        error=str(exc),
                     )
+                    time.sleep(backoff)
+                    continue
+                break  # Non-transient or final attempt.
 
-                    error_entry: Dict[str, Any] = {
-                        "table": table_name,
-                        "batch_number": batch_number,
-                        "error": str(last_error),
-                        "error_type": type(last_error).__name__,
-                        "rows_in_batch": len(batch_data),
-                        "retries_attempted": self._max_retries,
-                    }
-                    errors.append(error_entry)
-
-                    if error_result is True:
-                        # Skip or log mode — continue processing.
-                        skipped_records += len(batch_data)
-                        continue
-                    # abort mode — error was re-raised by _handle_batch_error.
-
-            # Track per-table counts for verification.
-            self._table_row_counts[table_name] = table_rows_inserted
-            tables_provisioned.append(table_name)
-
-            self._logger.info(
-                "batch_provision_table_complete",
-                table_name=table_name,
-                rows_inserted=table_rows_inserted,
-                batches=batch_number,
-            )
-
-        return {
-            "total_records": total_records,
-            "batches_processed": batches_processed,
-            "tables_provisioned": tables_provisioned,
-            "errors": errors,
-            "skipped_records": skipped_records,
-        }
+        return False, 0, last_error
 
     def _verify_provisioning(
-        self, connector: BaseConnector, schema: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, connector: BaseConnector, schema: dict[str, Any]
+    ) -> dict[str, Any]:
         """Verify that provisioned row counts match expected counts.
 
         Executes ``SELECT COUNT(*) FROM <table>`` for each table in the
@@ -1157,8 +1213,8 @@ class DatabaseExporter:
                     ...
                 }
         """
-        tables: List[Dict[str, Any]] = schema.get("tables", [])
-        verification: Dict[str, Any] = {}
+        tables: list[dict[str, Any]] = schema.get("tables", [])
+        verification: dict[str, Any] = {}
 
         for table_def in tables:
             table_name: str = table_def.get("name", "")
@@ -1168,15 +1224,21 @@ class DatabaseExporter:
             expected: int = self._table_row_counts.get(table_name, 0)
 
             try:
-                count_sql: str = f"SELECT COUNT(*) AS row_count FROM {table_name}"
-                result: List[Dict[str, Any]] = self._circuit_breaker.call(
+                # Sanitise table_name to prevent SQL injection: allow only
+                # alphanumerics, underscores, dots, and hyphens.
+                sanitised_name: str = self._sanitise_identifier(table_name)
+                count_sql: str = (
+                    "SELECT COUNT(*) AS row_count FROM "  # noqa: S608
+                    + sanitised_name
+                )
+                result: list[dict[str, Any]] = self._circuit_breaker.call(
                     connector.execute_query, count_sql
                 )
 
                 actual: int = 0
                 if result and len(result) > 0:
                     # Handle different possible result formats.
-                    row: Dict[str, Any] = result[0]
+                    row: dict[str, Any] = result[0]
                     actual = int(
                         row.get("row_count", row.get("count", row.get("COUNT(*)", 0)))
                     )
@@ -1230,7 +1292,7 @@ class DatabaseExporter:
 
         return verification
 
-    def _resolve_table_order(self, schema: Dict[str, Any]) -> List[str]:
+    def _resolve_table_order(self, schema: dict[str, Any]) -> list[str]:
         """Determine the correct table creation and insertion order.
 
         Performs a topological sort on the table dependency graph defined
@@ -1249,22 +1311,22 @@ class DatabaseExporter:
             ValueError: If the dependency graph contains circular
                 dependencies that cannot be resolved.
         """
-        tables: List[Dict[str, Any]] = schema.get("tables", [])
+        tables: list[dict[str, Any]] = schema.get("tables", [])
         if not tables:
             return []
 
         # Build adjacency list: table_name -> set of tables it depends on.
-        all_table_names: List[str] = [
+        all_table_names: list[str] = [
             t["name"] for t in tables if "name" in t
         ]
-        dependencies: Dict[str, set] = {name: set() for name in all_table_names}
+        dependencies: dict[str, set] = {name: set() for name in all_table_names}
 
         for table_def in tables:
             table_name: str = table_def.get("name", "")
             if not table_name:
                 continue
 
-            foreign_keys: List[Dict[str, Any]] = table_def.get(
+            foreign_keys: list[dict[str, Any]] = table_def.get(
                 "foreign_keys", []
             )
             for fk in foreign_keys:
@@ -1276,13 +1338,13 @@ class DatabaseExporter:
                     dependencies[table_name].add(ref_table)
 
         # Kahn's algorithm for topological sort.
-        in_degree: Dict[str, int] = {
+        in_degree: dict[str, int] = {
             name: len(deps) for name, deps in dependencies.items()
         }
-        queue: List[str] = [
+        queue: list[str] = [
             name for name, degree in in_degree.items() if degree == 0
         ]
-        ordered: List[str] = []
+        ordered: list[str] = []
 
         while queue:
             # Sort for deterministic ordering among tables with same in-degree.
@@ -1298,7 +1360,7 @@ class DatabaseExporter:
                         queue.append(name)
 
         if len(ordered) != len(all_table_names):
-            unresolved: List[str] = [
+            unresolved: list[str] = [
                 name for name in all_table_names if name not in ordered
             ]
             self._logger.error(
@@ -1320,8 +1382,8 @@ class DatabaseExporter:
     def _organise_data_by_table(
         self,
         data: Generator,
-        table_names: List[str],
-    ) -> Dict[str, List[tuple]]:
+        table_names: list[str],
+    ) -> dict[str, list[tuple]]:
         """Consume a data generator and organise records by table name.
 
         Supports two generator output formats:
@@ -1338,7 +1400,7 @@ class DatabaseExporter:
         Returns:
             Dictionary mapping table names to lists of row tuples.
         """
-        result: Dict[str, List[tuple]] = {name: [] for name in table_names}
+        result: dict[str, list[tuple]] = {name: [] for name in table_names}
         default_table: str = table_names[0] if table_names else ""
 
         for item in data:
@@ -1353,12 +1415,11 @@ class DatabaseExporter:
                             )
                         elif isinstance(rows, tuple):
                             result[tbl_name].append(rows)
-            elif isinstance(item, (tuple, list)):
+            elif isinstance(item, (tuple, list)) and default_table:
                 # Single-table format: one row tuple.
-                if default_table:
-                    result[default_table].append(
-                        item if isinstance(item, tuple) else tuple(item)
-                    )
+                result[default_table].append(
+                    item if isinstance(item, tuple) else tuple(item)
+                )
 
         total_rows: int = sum(len(rows) for rows in result.values())
         self._logger.info(
@@ -1374,9 +1435,9 @@ class DatabaseExporter:
         self,
         job_id: str,
         records_provisioned: int,
-        total_records: Optional[int] = None,
+        total_records: int | None = None,
         status: str = "provisioning",
-        current_table: Optional[str] = None,
+        current_table: str | None = None,
     ) -> None:
         """Update provisioning progress in Redis for real-time monitoring.
 
@@ -1402,7 +1463,7 @@ class DatabaseExporter:
 
         # Use json.dumps for structured serialisation of complex fields
         # and consistent typing in Redis hash values.
-        progress_data: Dict[str, str] = {
+        progress_data: dict[str, str] = {
             "job_id": job_id,
             "records_provisioned": str(records_provisioned),
             "total_records": str(total_records) if total_records else "0",
@@ -1436,7 +1497,7 @@ class DatabaseExporter:
         table_name: str,
         batch_number: int,
         on_error: str = "abort",
-    ) -> Optional[bool]:
+    ) -> bool | None:
         """Handle errors that occur during batch insert processing.
 
         Implements the configurable error strategy:
@@ -1525,6 +1586,32 @@ class DatabaseExporter:
         raise error
 
     @staticmethod
+    def _sanitise_identifier(identifier: str) -> str:
+        """Sanitise a SQL identifier to prevent injection.
+
+        Strips all characters that are not alphanumeric, underscores,
+        dots (for schema-qualified names), or hyphens.  Raises
+        :class:`ValueError` if the result is empty.
+
+        Args:
+            identifier: The raw SQL identifier (e.g. table or schema name).
+
+        Returns:
+            Sanitised identifier safe for direct inclusion in SQL text.
+
+        Raises:
+            ValueError: If the sanitised identifier is empty.
+        """
+        sanitised: str = "".join(
+            c for c in identifier if c.isalnum() or c in ("_", ".", "-")
+        )
+        if not sanitised:
+            raise ValueError(
+                f"Invalid SQL identifier after sanitisation: '{identifier}'"
+            )
+        return sanitised
+
+    @staticmethod
     def _is_transient_error(error: Exception) -> bool:
         """Determine whether an exception represents a transient error.
 
@@ -1537,7 +1624,7 @@ class DatabaseExporter:
         Returns:
             ``True`` if the error is likely transient and retryable.
         """
-        transient_indicators: Tuple[str, ...] = (
+        transient_indicators: tuple[str, ...] = (
             "deadlock",
             "lock timeout",
             "connection reset",
