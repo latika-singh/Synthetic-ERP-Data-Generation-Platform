@@ -1231,6 +1231,9 @@ function QualityReports(): React.JSX.Element {
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Data quality validation results with weighted composite scoring
+            {jobs.length > 0 && (
+              <span> &mdash; {jobs.length} generation job{jobs.length !== 1 ? 's' : ''} tracked</span>
+            )}
           </p>
         </div>
       </div>
