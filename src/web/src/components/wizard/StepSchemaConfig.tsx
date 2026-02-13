@@ -30,7 +30,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import type { SchemaDefinition, ERPType, ERPModule, TableDefinition } from '@/types/schema';
+import type { SchemaDefinition, ERPModule, TableDefinition } from '@/types/schema';
 import type { TableGenerationConfig } from '@/types/generation';
 import { useSchemaStore } from '@/store/schemaStore';
 
@@ -651,6 +651,5 @@ const StepSchemaConfig: React.FC<StepSchemaConfigProps> = ({
 // Exports
 // ---------------------------------------------------------------------------
 
-export type { StepSchemaConfigProps };
 export { StepSchemaConfig };
 export default StepSchemaConfig;
