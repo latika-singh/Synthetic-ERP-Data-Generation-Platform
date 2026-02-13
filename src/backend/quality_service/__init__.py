@@ -7,7 +7,7 @@ weighted scoring model:
 - **30%** Business rules compliance  (format, cross-field, domain, temporal)
 - **30%** Referential integrity  (FK validity, orphan detection, cascade chains)
 
-The composite quality score targets ≥ 95% fidelity for production-grade
+The composite quality score targets >= 95% fidelity for production-grade
 synthetic data.
 
 Usage::
@@ -19,8 +19,8 @@ Usage::
 
 Subpackages:
 
-- ``quality_service.validators`` — Pluggable validation strategies
-- ``quality_service.scoring`` — Composite scoring and report generation
+- ``quality_service.validators`` -- Pluggable validation strategies
+- ``quality_service.scoring`` -- Composite scoring and report generation
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ try:
     from quality_service.app import create_app
 except ImportError:
     # app.py may not yet exist during incremental build or testing.
-    create_app = None
+    create_app = None  # type: ignore[assignment]
 
 __all__: list[str] = [
     "__version__",

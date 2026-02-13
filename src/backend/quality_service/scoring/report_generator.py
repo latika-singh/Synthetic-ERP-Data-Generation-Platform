@@ -33,13 +33,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-from quality_service.validators.base import ValidationResult
 from shared.database.mongodb import get_mongo_db
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    from quality_service.validators.base import ValidationResult
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +271,7 @@ class ReportGenerator:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _get_collection(self):
+    def _get_collection(self) -> Any:
         """Return the MongoDB collection handle, raising if unavailable.
 
         Attempts lazy reconnection when the initial ``__init__`` connection
@@ -474,7 +477,7 @@ class ReportGenerator:
         result = collection.delete_one(
             {"report_id": report_id, "tenant_id": tenant_id}
         )
-        deleted = result.deleted_count > 0
+        deleted: bool = bool(result.deleted_count > 0)
 
         self.logger.info(
             "quality_report_deleted" if deleted else "quality_report_delete_not_found",

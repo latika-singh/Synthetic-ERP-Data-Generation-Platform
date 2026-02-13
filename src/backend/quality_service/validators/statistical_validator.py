@@ -8,7 +8,7 @@ of source statistical profiles captured by the Profiling Service.
 
 Scoring model::
 
-    Q = 0.4 × S_statistical + 0.3 × S_business_rules + 0.3 × S_referential_integrity
+    Q = 0.4 * S_statistical + 0.3 * S_business_rules + 0.3 * S_referential_integrity
 
 The validator employs three complementary comparison strategies:
 
@@ -35,12 +35,11 @@ Usage::
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
 from great_expectations.core import ExpectationSuite
-from great_expectations.data_context import EphemeralDataContext
+from great_expectations.data_context import EphemeralDataContext  # type: ignore[attr-defined]
 from great_expectations.data_context.types.base import (
     DataContextConfig,
     InMemoryStoreBackendDefaults,
@@ -51,8 +50,12 @@ from quality_service.validators.base import BaseValidator, ValidationResult
 from shared.logging.structured_logger import get_logger
 
 
+if TYPE_CHECKING:
+    import pandas as pd
+
+
 # ---------------------------------------------------------------------------
-# Module-level logger (structured JSON, correlation-ID–aware)
+# Module-level logger (structured JSON, correlation-ID-aware)
 # ---------------------------------------------------------------------------
 logger = get_logger(__name__)
 
@@ -231,7 +234,7 @@ class StatisticalValidator(BaseValidator):
 
     def validate(
         self,
-        generated_data: pd.DataFrame,
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
         profile: dict[str, Any],
     ) -> ValidationResult:
         """Run full statistical fidelity validation.
@@ -242,7 +245,10 @@ class StatisticalValidator(BaseValidator):
         is executed to supplement the scores.
 
         Args:
-            generated_data: Synthetic data to validate.
+            generated_data: Synthetic data to validate.  Accepts a single
+                DataFrame or a dict of table-name to DataFrame.  When a dict
+                is provided, the first DataFrame is used for statistical
+                profiling (single-table mode).
             profile: Statistical profile from the Profiling Service.
                 Expected to contain a ``"columns"`` key mapping column
                 names to per-column statistical metadata dictionaries.
@@ -251,10 +257,19 @@ class StatisticalValidator(BaseValidator):
             A :class:`ValidationResult` with an aggregate fidelity score,
             per-column breakdowns, errors, and warnings.
         """
-        errors: list[str] = []
-        warnings: list[str] = []
-        column_details: dict[str, Any] = {}
-        column_scores: dict[str, float] = {}
+        # When a dict of tables is provided, extract the first DataFrame
+        # so column-level statistical validation can proceed in single-table
+        # mode.
+        if isinstance(generated_data, dict):
+            if not generated_data:
+                return self.create_result(
+                    score=0.0,
+                    details={"error": "Empty dict of DataFrames provided"},
+                    errors=["No tables provided for statistical validation"],
+                    records_validated=0,
+                    records_passed=0,
+                )
+            generated_data = next(iter(generated_data.values()))
 
         profile_columns: dict[str, Any] = profile.get("columns", {})
 
@@ -275,10 +290,9 @@ class StatisticalValidator(BaseValidator):
         total_records: int = len(generated_data)
         generated_columns: set[str] = set(generated_data.columns)
         profile_column_names: set[str] = set(profile_columns.keys())
-
-        # Determine validatable column intersection
         columns_to_validate: set[str] = generated_columns & profile_column_names
 
+        warnings: list[str] = []
         if not columns_to_validate:
             warnings.append(
                 f"No overlapping columns between generated data "
@@ -293,14 +307,58 @@ class StatisticalValidator(BaseValidator):
                 records_passed=0,
             )
 
-        # Report column coverage gaps
+        # Report column coverage gaps and log start
+        self._report_coverage_gaps(
+            warnings, generated_columns, profile_column_names
+        )
+        missing_count = len(profile_column_names - generated_columns)
+        extra_count = len(generated_columns - profile_column_names)
+        self.logger.info(
+            "statistical_validation_started",
+            total_columns=len(columns_to_validate),
+            total_records=total_records,
+            missing_columns=missing_count,
+            extra_columns=extra_count,
+        )
+
+        # ---- Per-column validation ----
+        errors: list[str] = []
+        column_details: dict[str, Any] = {}
+        column_scores: dict[str, float] = {}
+        self._run_column_validations(
+            generated_data, profile_columns, columns_to_validate,
+            errors, column_details, column_scores,
+        )
+
+        # ---- Great Expectations supplementary validation ----
+        ge_score = self._run_ge_validation(
+            generated_data, profile, column_details, warnings,
+        )
+
+        # ---- Final score aggregation ----
+        return self._build_final_result(
+            column_scores, column_details, ge_score,
+            total_records, columns_to_validate,
+            missing_count, extra_count, errors, warnings,
+        )
+
+    # ------------------------------------------------------------------
+    # validate() helper: column coverage gap reporting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _report_coverage_gaps(
+        warnings: list[str],
+        generated_columns: set[str],
+        profile_column_names: set[str],
+    ) -> None:
+        """Append coverage-gap warnings for missing or extra columns."""
         missing_from_generated = profile_column_names - generated_columns
         if missing_from_generated:
             warnings.append(
                 f"Columns in profile but absent from generated data: "
                 f"{sorted(missing_from_generated)}"
             )
-
         extra_in_generated = generated_columns - profile_column_names
         if extra_in_generated:
             warnings.append(
@@ -308,15 +366,20 @@ class StatisticalValidator(BaseValidator):
                 f"{sorted(extra_in_generated)}"
             )
 
-        self.logger.info(
-            "statistical_validation_started",
-            total_columns=len(columns_to_validate),
-            total_records=total_records,
-            missing_columns=len(missing_from_generated),
-            extra_columns=len(extra_in_generated),
-        )
+    # ------------------------------------------------------------------
+    # validate() helper: per-column validation loop
+    # ------------------------------------------------------------------
 
-        # ---- Per-column validation ----
+    def _run_column_validations(
+        self,
+        generated_data: pd.DataFrame,
+        profile_columns: dict[str, Any],
+        columns_to_validate: set[str],
+        errors: list[str],
+        column_details: dict[str, Any],
+        column_scores: dict[str, float],
+    ) -> None:
+        """Run per-column five-check validation, populating results in-place."""
         for col_name in sorted(columns_to_validate):
             try:
                 col_profile = profile_columns[col_name]
@@ -347,29 +410,57 @@ class StatisticalValidator(BaseValidator):
                 }
                 column_scores[col_name] = 0.0
 
-        # ---- Great Expectations supplementary validation ----
-        ge_results: dict[str, Any] = {}
-        ge_score: float = 1.0
-        if self._ge_context is not None:
-            try:
-                ge_suite = self._build_great_expectations_suite(profile)
-                ge_results = self._run_great_expectations_validation(
-                    data=generated_data, suite=ge_suite
-                )
-                ge_score = ge_results.get("success_ratio", 1.0)
-                column_details["great_expectations"] = ge_results
-            except Exception as exc:
-                self.logger.warning(
-                    "great_expectations_validation_failed",
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                )
-                warnings.append(
-                    f"Great Expectations validation skipped: {exc}"
-                )
-                ge_score = 1.0  # do not penalise when GE is unavailable
+    # ------------------------------------------------------------------
+    # validate() helper: Great Expectations supplementary validation
+    # ------------------------------------------------------------------
 
-        # ---- Final score aggregation ----
+    def _run_ge_validation(
+        self,
+        generated_data: pd.DataFrame,
+        profile: dict[str, Any],
+        column_details: dict[str, Any],
+        warnings: list[str],
+    ) -> float:
+        """Execute GE supplementary validation and return the GE score."""
+        if self._ge_context is None:
+            return 1.0
+
+        try:
+            ge_suite = self._build_great_expectations_suite(profile)
+            ge_results = self._run_great_expectations_validation(
+                data=generated_data, suite=ge_suite
+            )
+            ge_score = float(ge_results.get("success_ratio", 1.0))
+            column_details["great_expectations"] = ge_results
+        except Exception as exc:
+            self.logger.warning(
+                "great_expectations_validation_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            warnings.append(
+                f"Great Expectations validation skipped: {exc}"
+            )
+            ge_score = 1.0  # do not penalise when GE is unavailable
+        return ge_score
+
+    # ------------------------------------------------------------------
+    # validate() helper: final result construction
+    # ------------------------------------------------------------------
+
+    def _build_final_result(
+        self,
+        column_scores: dict[str, float],
+        column_details: dict[str, Any],
+        ge_score: float,
+        total_records: int,
+        columns_to_validate: set[str],
+        missing_count: int,
+        extra_count: int,
+        errors: list[str],
+        warnings: list[str],
+    ) -> ValidationResult:
+        """Aggregate column scores, blend with GE, and build the result."""
         statistical_score = self._aggregate_column_scores(column_scores)
         ge_blend_weight = float(
             self.config.get("ge_blend_weight", _DEFAULT_GE_BLEND_WEIGHT)
@@ -392,8 +483,8 @@ class StatisticalValidator(BaseValidator):
             "great_expectations_score": float(ge_score),
             "final_blended_score": float(final_score),
             "columns_validated": len(columns_to_validate),
-            "columns_missing": len(missing_from_generated),
-            "columns_extra": len(extra_in_generated),
+            "columns_missing": missing_count,
+            "columns_extra": extra_count,
         }
 
         self.logger.info(
@@ -421,7 +512,7 @@ class StatisticalValidator(BaseValidator):
 
     def _validate_column(
         self,
-        col_name: str,
+        _col_name: str,
         generated_series: pd.Series,
         profile_column: dict[str, Any],
     ) -> dict[str, Any]:
@@ -607,15 +698,15 @@ class StatisticalValidator(BaseValidator):
 
         # Build unified category set
         all_categories = sorted(
-            set(str(k) for k in profiled_distribution)
-            | set(str(v) for v in generated_counts.index)
+            {str(k) for k in profiled_distribution}
+            | {str(v) for v in generated_counts.index}
         )
 
         if len(all_categories) < _MIN_SAMPLE_SIZE:
-            return 1.0  # single category — trivially matching
+            return 1.0  # single category - trivially matching
 
-        total_generated = float(np.sum(generated_counts.values))
-        total_profiled = float(np.sum(list(profiled_distribution.values())))
+        total_generated = float(np.sum(np.asarray(generated_counts.values)))
+        total_profiled = float(np.sum(np.asarray(list(profiled_distribution.values()))))
 
         if total_profiled == 0.0 or total_generated == 0.0:
             return 0.0
@@ -686,8 +777,8 @@ class StatisticalValidator(BaseValidator):
 
         gen_mean = float(clean_generated.mean())
         gen_std = float(clean_generated.std())
-        gen_skew = float(clean_generated.skew())
-        gen_kurtosis = float(clean_generated.kurtosis())
+        gen_skew = float(clean_generated.skew())  # type: ignore[arg-type]
+        gen_kurtosis = float(clean_generated.kurtosis())  # type: ignore[arg-type]
 
         prof_mean = profile_column.get("mean")
         prof_std = profile_column.get("std")
@@ -1198,7 +1289,7 @@ class StatisticalValidator(BaseValidator):
         in some GE versions.
         """
         try:
-            from great_expectations.core import ExpectationConfiguration
+            from great_expectations.core import ExpectationConfiguration  # noqa: PLC0415
 
             config = ExpectationConfiguration(
                 expectation_type=expectation_type, kwargs=kwargs
@@ -1322,7 +1413,7 @@ class StatisticalValidator(BaseValidator):
         failed: list[dict[str, Any]] = []
 
         for exp in expectations:
-            # Normalise access — ExpectationConfiguration or dict
+            # Normalise access - ExpectationConfiguration or dict
             try:
                 exp_type = getattr(exp, "expectation_type", None)
                 exp_kwargs = getattr(exp, "kwargs", None)
@@ -1332,6 +1423,7 @@ class StatisticalValidator(BaseValidator):
                 if exp_kwargs is None:
                     exp_kwargs = {}
             except Exception:
+                logger.debug("skipping_malformed_expectation", exp=str(exp))
                 continue
 
             if exp_type is None:
@@ -1403,7 +1495,7 @@ class StatisticalValidator(BaseValidator):
             float(max_val) if max_val is not None else series.max(),
         )
         ratio = float(in_range.sum()) / len(series)
-        return ratio >= mostly
+        return bool(ratio >= mostly)
 
     @staticmethod
     def _eval_mean_between(
@@ -1442,7 +1534,7 @@ class StatisticalValidator(BaseValidator):
         data: pd.DataFrame, kwargs: dict[str, Any]
     ) -> bool:
         col = kwargs["column"]
-        value_set = set(str(v) for v in kwargs.get("value_set", []))
+        value_set = {str(v) for v in kwargs.get("value_set", [])}
         if not value_set:
             return True
         actual_values = set(data[col].dropna().astype(str).unique())

@@ -37,10 +37,9 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
-from typing import Any, Optional, Union
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 from pydantic import BaseModel, Field
 
 from quality_service.scoring.report_generator import (
@@ -52,6 +51,12 @@ from quality_service.validators.base import BaseValidator, ValidationResult
 from shared.database.mongodb import get_mongo_db
 from shared.database.redis_client import get_redis_client
 from shared.logging.structured_logger import get_logger
+
+
+if TYPE_CHECKING:
+    import pandas as pd
+    import redis as redis_lib
+    from pymongo.database import Database
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +143,7 @@ class QualityScoringResult(BaseModel):
         description="Map of validator_name -> weight used in scoring.",
     )
     scored_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp of scoring completion (ISO 8601).",
     )
     execution_time_ms: float = Field(
@@ -206,7 +211,7 @@ class QualityScorer:
     _DEFAULT_CACHE_TTL: int = 3600
     _SCORING_RESULTS_COLLECTION: str = "scoring_results"
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config: dict[str, Any] = config if config is not None else {}
         self.logger = get_logger(self.__class__.__name__)
 
@@ -264,8 +269,8 @@ class QualityScorer:
         # MongoDB and Redis connections are established lazily so the scorer
         # can be constructed in environments where they are temporarily
         # unavailable (unit tests, CLI tools, startup race conditions).
-        self._db = None
-        self._redis = None
+        self._db: Database[Any] | None = None
+        self._redis: redis_lib.Redis | None = None
         self._init_data_stores()
 
         self.logger.info(
@@ -359,9 +364,9 @@ class QualityScorer:
         self,
         job_id: str,
         tenant_id: str,
-        generated_data: Union[pd.DataFrame, dict[str, pd.DataFrame]],
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
         profile: dict[str, Any],
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> QualityScoringResult:
         """Run all validators and compute the composite quality score.
 
@@ -457,7 +462,7 @@ class QualityScorer:
             threshold=self.minimum_threshold,
             validation_results=all_results,
             weights=weights_map,
-            scored_at=datetime.now(timezone.utc),
+            scored_at=datetime.now(UTC),
             execution_time_ms=round(elapsed_ms, 3),
             metadata=metadata if metadata is not None else {},
         )
@@ -483,9 +488,9 @@ class QualityScorer:
         self,
         job_id: str,
         tenant_id: str,
-        generated_data: Union[pd.DataFrame, dict[str, pd.DataFrame]],
+        generated_data: pd.DataFrame | dict[str, pd.DataFrame],
         profile: dict[str, Any],
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[QualityScoringResult, QualityReport]:
         """Score generated data and produce a detailed quality report.
 
@@ -556,7 +561,7 @@ class QualityScorer:
 
         Implements the quality scoring formula::
 
-            Q = Σ(result.score × result.weight)  for each result
+            Q = sum(result.score * result.weight)  for each result
 
         Validates that the sum of weights used equals 1.0 and clamps the
         final result to the [0.0, 1.0] range to guard against
@@ -583,7 +588,7 @@ class QualityScorer:
                 validators=[r.validator_name for r in validation_results],
             )
 
-        # Compute the weighted sum: Q = Σ(score_i × weight_i)
+        # Compute the weighted sum: Q = sum(score_i * weight_i)
         composite: float = sum(
             r.score * r.weight for r in validation_results
         )
@@ -646,7 +651,7 @@ class QualityScorer:
 
     def get_cached_score(
         self, job_id: str, tenant_id: str,
-    ) -> Optional[QualityScoringResult]:
+    ) -> QualityScoringResult | None:
         """Retrieve a cached quality score from Redis.
 
         Looks up the quality score keyed by
@@ -665,7 +670,7 @@ class QualityScorer:
 
         try:
             key: str = self._cache_key(tenant_id, job_id)
-            raw: Optional[str] = self._redis.get(key)
+            raw: Any = self._redis.get(key)
             if raw is None:
                 self.logger.debug(
                     "quality_score_cache_miss",
@@ -712,7 +717,7 @@ class QualityScorer:
 
         try:
             key: str = self._cache_key(tenant_id, job_id)
-            deleted: int = self._redis.delete(key)
+            deleted: Any = self._redis.delete(key)
             was_deleted: bool = bool(deleted)
             self.logger.info(
                 "quality_score_cache_invalidated" if was_deleted
@@ -789,7 +794,7 @@ class QualityScorer:
 
     def get_stored_score(
         self, job_id: str, tenant_id: str,
-    ) -> Optional[QualityScoringResult]:
+    ) -> QualityScoringResult | None:
         """Retrieve a stored quality score from MongoDB.
 
         Queries the ``scoring_results`` collection with both ``job_id`` and
@@ -808,7 +813,7 @@ class QualityScorer:
 
         try:
             collection = self._db[self._SCORING_RESULTS_COLLECTION]
-            doc: Optional[dict[str, Any]] = collection.find_one(
+            doc: dict[str, Any] | None = collection.find_one(
                 {"job_id": job_id, "tenant_id": tenant_id},
             )
             if doc is None:
@@ -864,8 +869,8 @@ class QualityScorer:
             for doc in cursor:
                 doc.pop("_id", None)
                 try:
-                    doc = self._reconstruct_validation_results(doc)
-                    results.append(QualityScoringResult.model_validate(doc))
+                    reconstructed = self._reconstruct_validation_results(doc)
+                    results.append(QualityScoringResult.model_validate(reconstructed))
                 except Exception as reconstruct_exc:
                     self.logger.warning(
                         "quality_score_history_reconstruction_failed",

@@ -70,6 +70,12 @@ from typing import Any
 # Core imports — base classes and result model
 # ---------------------------------------------------------------------------
 from quality_service.validators.base import BaseValidator, ValidationResult
+from quality_service.validators.business_rules_validator import (
+    BusinessRulesValidator,
+)
+from quality_service.validators.referential_integrity_validator import (
+    ReferentialIntegrityValidator,
+)
 
 # ---------------------------------------------------------------------------
 # Concrete validator imports
@@ -77,12 +83,7 @@ from quality_service.validators.base import BaseValidator, ValidationResult
 from quality_service.validators.statistical_validator import (
     StatisticalValidator,
 )
-from quality_service.validators.business_rules_validator import (
-    BusinessRulesValidator,
-)
-from quality_service.validators.referential_integrity_validator import (
-    ReferentialIntegrityValidator,
-)
+
 
 # ---------------------------------------------------------------------------
 # Module-level logger
@@ -329,12 +330,12 @@ def register_validator(
 # ---------------------------------------------------------------------------
 
 __all__: list[str] = [
+    "VALIDATOR_REGISTRY",
     "BaseValidator",
-    "ValidationResult",
-    "StatisticalValidator",
     "BusinessRulesValidator",
     "ReferentialIntegrityValidator",
-    "VALIDATOR_REGISTRY",
+    "StatisticalValidator",
+    "ValidationResult",
     "get_all_validators",
     "get_validator",
     "register_validator",

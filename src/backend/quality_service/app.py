@@ -149,9 +149,9 @@ def validate_data() -> tuple[Response, int]:
     )
 
     try:
-        import pandas as pd
+        import pandas as pd  # noqa: PLC0415
 
-        from quality_service.scoring import QualityScorer
+        from quality_service.scoring import QualityScorer  # noqa: PLC0415
 
         profile: dict[str, Any] = body.get("profile", {})
         metadata: dict[str, Any] = body.get("metadata", {})
@@ -247,7 +247,7 @@ def get_score(job_id: str) -> tuple[Response, int]:
     )
 
     try:
-        from quality_service.scoring import QualityScorer
+        from quality_service.scoring import QualityScorer  # noqa: PLC0415
 
         scorer = QualityScorer()
 
@@ -326,7 +326,7 @@ def get_score_history() -> tuple[Response, int]:
     limit: int = min(200, max(1, int(request.args.get("limit", "50"))))
 
     try:
-        from quality_service.scoring import QualityScorer
+        from quality_service.scoring import QualityScorer  # noqa: PLC0415
 
         scorer = QualityScorer()
         results = scorer.get_score_history(tenant_id=tenant_id, limit=limit)
@@ -341,7 +341,10 @@ def get_score_history() -> tuple[Response, int]:
                     "scored_at": r.scored_at,
                 })
             except Exception:
-                pass
+                logger.debug(
+                    "score_history_item_serialization_skipped",
+                    error_type="serialization",
+                )
 
         return jsonify({
             "status": "success",
@@ -394,7 +397,7 @@ def get_report(report_id: str) -> tuple[Response, int]:
         }), 400
 
     try:
-        from quality_service.scoring import ReportGenerator
+        from quality_service.scoring import ReportGenerator  # noqa: PLC0415
 
         generator = ReportGenerator()
         report = generator.get_report(report_id=report_id, tenant_id=tenant_id)
@@ -449,7 +452,7 @@ def get_reports_by_job(job_id: str) -> tuple[Response, int]:
         }), 400
 
     try:
-        from quality_service.scoring import ReportGenerator
+        from quality_service.scoring import ReportGenerator  # noqa: PLC0415
 
         generator = ReportGenerator()
         reports = generator.get_reports_by_job(job_id=job_id, tenant_id=tenant_id)
@@ -459,7 +462,10 @@ def get_reports_by_job(job_id: str) -> tuple[Response, int]:
             try:
                 reports_data.append(report.model_dump())
             except Exception:
-                pass
+                logger.debug(
+                    "report_serialization_skipped",
+                    error_type="serialization",
+                )
 
         return jsonify({
             "status": "success",
@@ -509,7 +515,7 @@ def delete_report(report_id: str) -> tuple[Response, int]:
         }), 400
 
     try:
-        from quality_service.scoring import ReportGenerator
+        from quality_service.scoring import ReportGenerator  # noqa: PLC0415
 
         generator = ReportGenerator()
         deleted = generator.delete_report(report_id=report_id, tenant_id=tenant_id)
@@ -784,7 +790,7 @@ def _register_error_handlers(app: Flask) -> None:
         (e.g. 405 Method Not Allowed), the original HTTP status code is
         preserved so that Flask/Werkzeug semantics are respected.
         """
-        from werkzeug.exceptions import HTTPException
+        from werkzeug.exceptions import HTTPException  # noqa: PLC0415
 
         if isinstance(error, HTTPException):
             return jsonify({
@@ -845,7 +851,7 @@ def _register_request_hooks(app: Flask) -> None:
 
         # Bind correlation ID to structlog context for this request scope
         try:
-            from shared.logging.structured_logger import bind_context
+            from shared.logging.structured_logger import bind_context  # noqa: PLC0415
 
             bind_context(
                 correlation_id=correlation_id,
@@ -888,7 +894,7 @@ def _register_request_hooks(app: Flask) -> None:
 
         # Clear structlog context to prevent cross-request contamination
         try:
-            from shared.logging.structured_logger import clear_context
+            from shared.logging.structured_logger import clear_context  # noqa: PLC0415
 
             clear_context()
         except ImportError:
