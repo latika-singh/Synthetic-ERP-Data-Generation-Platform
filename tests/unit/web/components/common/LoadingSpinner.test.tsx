@@ -145,7 +145,9 @@ describe('LoadingSpinner', () => {
   describe('Loading Message', () => {
     it('renders message text when message prop is provided', () => {
       renderSpinner({ message: 'Loading data...' });
-      expect(screen.getByText('Loading data...')).toBeInTheDocument();
+      // Use selector: 'p' because the message text also appears in a
+      // visually-hidden <span class="sr-only"> for screen readers
+      expect(screen.getByText('Loading data...', { selector: 'p' })).toBeInTheDocument();
     });
 
     it('does not render message element when message is undefined', () => {
@@ -162,7 +164,8 @@ describe('LoadingSpinner', () => {
 
     it('renders message with correct text content', () => {
       renderSpinner({ message: 'Please wait...' });
-      const messageEl = screen.getByText('Please wait...');
+      // Target the <p> element specifically to avoid duplicate match with sr-only span
+      const messageEl = screen.getByText('Please wait...', { selector: 'p' });
       expect(messageEl).toHaveTextContent('Please wait...');
     });
 
@@ -278,7 +281,8 @@ describe('LoadingSpinner', () => {
       expect(container).toHaveClass('fixed');
       expect(container).toHaveClass('inset-0');
       expect(container).toHaveClass('z-50');
-      expect(screen.getByText('Loading page...')).toBeInTheDocument();
+      // Target the visible <p> message to avoid duplicate match with sr-only span
+      expect(screen.getByText('Loading page...', { selector: 'p' })).toBeInTheDocument();
     });
 
     it('renders overlay with message correctly', () => {
@@ -286,7 +290,8 @@ describe('LoadingSpinner', () => {
       const container = screen.getByRole('status');
       expect(container).toHaveClass('bg-white/75');
       expect(container).toHaveClass('backdrop-blur-sm');
-      expect(screen.getByText('Processing...')).toBeInTheDocument();
+      // Target the visible <p> message to avoid duplicate match with sr-only span
+      expect(screen.getByText('Processing...', { selector: 'p' })).toBeInTheDocument();
     });
 
     it('renders fullScreen + overlay + message all together', () => {
@@ -311,8 +316,8 @@ describe('LoadingSpinner', () => {
       expect(container).toHaveClass('items-center');
       expect(container).toHaveClass('justify-center');
 
-      // message text
-      expect(screen.getByText('Saving changes...')).toBeInTheDocument();
+      // message text — target visible <p> to avoid duplicate match with sr-only span
+      expect(screen.getByText('Saving changes...', { selector: 'p' })).toBeInTheDocument();
     });
   });
 
@@ -378,8 +383,10 @@ describe('LoadingSpinner', () => {
       renderSpinner({ message: 'Loading records...' });
       const statusRegion = screen.getByRole('status');
       // Message paragraph is a child of the role="status" container,
-      // making it part of the accessible status region
-      const messageEl = screen.getByText('Loading records...');
+      // making it part of the accessible status region.
+      // Use selector: 'p' to target the visible paragraph and avoid
+      // the duplicate match with the sr-only <span>.
+      const messageEl = screen.getByText('Loading records...', { selector: 'p' });
       expect(statusRegion).toContainElement(messageEl);
     });
   });
