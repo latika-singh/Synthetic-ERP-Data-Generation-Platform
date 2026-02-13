@@ -64,6 +64,7 @@ from typing import Any, Dict, List, Optional
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from pydantic import BaseModel, Field
 
 from compliance_service.certification.audit_logger import AuditEventType, AuditLogger
@@ -358,11 +359,17 @@ class ComplianceCertifier:
         self._pii_detector: PIIDetector = pii_detector or PIIDetector()
         self._audit_logger: AuditLogger = audit_logger or AuditLogger()
         self._signing_key: str | None = signing_key
-        self._rsa_private_key = None
+        self._rsa_private_key: RSAPrivateKey | None = None
         if rsa_private_key_pem:
-            self._rsa_private_key = serialization.load_pem_private_key(
+            _loaded_key = serialization.load_pem_private_key(
                 rsa_private_key_pem, password=None,
             )
+            if not isinstance(_loaded_key, RSAPrivateKey):
+                raise TypeError(
+                    "Provided PEM key is not an RSA private key. "
+                    f"Got {type(_loaded_key).__name__}.",
+                )
+            self._rsa_private_key = _loaded_key
         self._logger = get_logger(__name__)
         self._logger.info("compliance_certifier_initialised")
 

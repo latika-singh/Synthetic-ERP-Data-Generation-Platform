@@ -642,7 +642,7 @@ class TestComplianceCertifier:
             nlp_findings_count=1 if pii_has_pii else 0,
             pattern_findings_count=2 if pii_has_pii else 0,
         )
-        mock_pii.detect_batch.return_value = mock_pii_result
+        mock_pii.detect_pii.return_value = mock_pii_result
 
         # Mock audit logger
         mock_audit = MagicMock()
